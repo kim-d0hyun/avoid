@@ -174,6 +174,19 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         }
 
         updater.onChange = { [weak self] in self?.refreshMenu() }
+        // 시험용. 업데이트 길을 사람 손 없이 끝까지 밟아 본다 — 못 고치는 업데이터는
+        // 없느니만 못해서, 이 길은 반드시 실제로 굴려 보고 내보낸다.
+        if env["DDONG_DEBUG"] != nil, env["DDONG_UPDATE_NOW"] != nil {
+            updater.onChange = { [weak self] in
+                self?.refreshMenu()
+                if self?.updater.pending != nil, self?.updater.busy == false {
+                    self?.updater.install()
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.updater.check(quiet: true)
+            }
+        }
         updater.start()
 
         NotificationCenter.default.addObserver(
