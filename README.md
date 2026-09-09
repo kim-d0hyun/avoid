@@ -89,7 +89,7 @@ K3P9@192.168.0.7
 
 ## 설치
 
-[Releases](../../releases) 에서 `똥피하기.dmg` 를 받아 마운트하고 `Applications` 로 끌어 넣는다.
+[Releases](../../releases) 에서 `ddong-dodge.dmg` 를 받아 마운트하고 `Applications` 로 끌어 넣는다.
 
 서명·공증을 하지 않은 앱이라 처음 열 때 한 번 막힌다. **우클릭 → 열기 → 열기** 로 지나가면
 그다음부터는 그냥 열린다. 그래도 「손상되었다」고 하면:
@@ -98,7 +98,20 @@ K3P9@192.168.0.7
 xattr -dr com.apple.quarantine /Applications/똥피하기.app
 ```
 
-실행하면 메뉴 막대에 💩 이 뜬다. 조작 창구는 그것뿐이다 (보이기·기록·띄울 화면·종료).
+실행하면 메뉴 막대에 💩 이 뜬다. 조작 창구는 그것뿐이다 (보이기·기록·방·업데이트·종료).
+
+### 업데이트는 알아서 된다
+
+깔고 나면 앱이 뜰 때와 하루 한 번 [Releases](../../releases) 를 확인한다. 새 버전이 있으면
+메뉴 막대 💩 에 **새 버전 받기** 가 뜨고, 누르면 받아서 스스로 갈아 끼운 뒤 다시 뜬다.
+dmg 를 다시 받아 설치할 필요가 없다. 급하면 **업데이트 확인** 으로 지금 볼 수도 있다.
+
+반영 시점은 **다음에 켤 때** 또는 확인 주기가 돌아올 때다. 켜져 있는 앱에 즉시 밀어 넣으려면
+중계 서버가 있어야 하는데, 그건 이 게임에 과하다.
+
+**버전이 다르면 같이 못 한다.** 꾸러미 모양이 바뀐 업데이트가 나가면 구버전은 방에 못 들어오고
+「방장은 v1.3.0, 이 앱은 v1.2.0」이라고 알려 준다. 조용히 어긋난 채로 노는 것보다 낫다.
+사무실에서 몇 명만 업데이트한 상황이 실제로 잘 생긴다.
 
 ## 기록은 어디에 저장되나
 
@@ -151,12 +164,30 @@ npm run dmg         # dist/똥피하기.dmg
 Xcode 또는 커맨드라인 도구가 필요하다. 커맨드라인 도구 쪽 툴체인이 깨져 있으면
 (`redefinition of module 'SwiftBridging'`) 빌드 스크립트가 알아서 Xcode 툴체인으로 넘어간다.
 
+### 새 버전 내보내기
+
+사람 손이 닿는 곳은 **태그 하나뿐**이다.
+
+```sh
+# 1. mac/Info.plist 의 CFBundleShortVersionString 과 package.json 의 version 을 올린다
+# 2. 꾸러미 모양을 바꿨으면 mac/Sources/net.swift 의 netProtocol 도 올린다
+git commit -am "v1.3.0"
+git tag v1.3.0 && git push --follow-tags
+```
+
+밀면 GitHub Actions 가 맥 러너에서 유니버설로 빌드해 `ddong-dodge.dmg` 와
+`ddong-dodge-mac.zip` 을 릴리스에 붙인다. 깔려 있는 앱들은 그걸 보고 스스로 갱신한다.
+태그와 `Info.plist` 버전이 다르면 CI 가 먼저 멈춘다 — 어긋나면 앱이 자기가 최신인 줄 알고
+업데이트를 영영 안 받기 때문이다.
+
 ### 구조
 
 ```
 mac/Sources/main.swift   창·전역 핫키·메뉴 막대·기록 저장. 게임 규칙은 하나도 모른다.
 mac/Sources/net.swift    Bonjour 로 방을 알리고 TCP 로 잇는다. 게임을 하나도 모른다 —
                          나중에 이 파일만 갈아 끼우면 중계 서버 방식으로 바뀐다.
+mac/Sources/update.swift GitHub 릴리스를 보고 스스로 갈아 끼운다
+.github/workflows/       태그를 밀면 빌드해서 릴리스에 붙인다
 mac/build.sh             swiftc 로 컴파일하고 .app 을 손으로 조립
 mac/dmg.sh               .app → dmg
 src/index.html           캔버스 하나. 배경은 절대 칠하지 않는다

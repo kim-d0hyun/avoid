@@ -11,6 +11,9 @@ import Foundation
 import Network
 
 let netServiceType = "_ddong._tcp"
+/// 주고받는 꾸러미의 모양 번호. **꾸러미에 칸을 더하거나 뜻을 바꾸면 반드시 올린다.**
+/// 이게 없으면 몇 명만 업데이트한 사무실에서 구·신 버전이 아무 말 없이 붙어 조용히 어긋난다.
+let netProtocol = 1
 /// 고정 포트. Bonjour 가 막힌 망에서 `코드@192.168.0.7` 로 직접 붙을 수 있어야 해서 고정한다.
 let netDefaultPort: UInt16 = 51301
 
@@ -184,7 +187,9 @@ final class Net {
             guard let self else { return }
             switch state {
             case .ready:
-                self.line(peer, #"{"t":"__join","name":"\#(Net.escape(self.myName))"}"#)
+                let hello = #"{"t":"__join","name":"\#(Net.escape(self.myName))","#
+                    + #""p":\#(netProtocol),"v":"\#(Net.escape(appVersion))"}"#
+                self.line(peer, hello)
             case .failed(let error):
                 self.leave()
                 self.delegate?.netRoleChanged(role: "off", code: nil, myId: 0,
@@ -258,10 +263,28 @@ final class Net {
     private func handle(_ peer: Peer, _ text: String) {
         // 이 층이 아는 말은 둘뿐이다. 나머지는 열어 보지 않고 위로 올린다.
         if text.hasPrefix(#"{"t":"__join""#) {
+            // 꾸러미 모양이 다르면 들이지 않는다. 붙여 놓고 이상하게 노는 것보다 낫다.
+            let theirs = Int(Net.field(text, "p") ?? "") ?? 0
+            guard theirs == netProtocol else {
+                line(peer, #"{"t":"__deny","v":"\#(Net.escape(appVersion))"}"#)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.drop(peer.id)
+                }
+                return
+            }
             peer.name = Net.field(text, "name") ?? "누군가"
             peer.ready = true
             line(peer, #"{"t":"__id","id":\#(peer.id),"code":"\#(code ?? "")"}"#)
             delegate?.netPeerChanged(id: peer.id, name: peer.name, joined: true)
+            return
+        }
+        if text.hasPrefix(#"{"t":"__deny""#) {
+            let hostVersion = Net.field(text, "v") ?? "?"
+            leave()
+            delegate?.netRoleChanged(
+                role: "off", code: nil, myId: 0,
+                note: "방장은 v\(hostVersion), 이 앱은 v\(appVersion) 이라 같이 못 한다. "
+                    + "메뉴 막대 💩 → 업데이트 확인 으로 새 버전을 받아라.")
             return
         }
         if text.hasPrefix(#"{"t":"__id""#) {

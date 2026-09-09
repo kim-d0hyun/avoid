@@ -114,6 +114,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     private var autoRoom = false
     private var counterTick: TimeInterval = 0
 
+    private let updater = Updater()
+
     private lazy var net: Net = {
         let net = Net(name: playerName)
         net.delegate = self
@@ -170,6 +172,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.poll()
         }
+
+        updater.onChange = { [weak self] in self?.refreshMenu() }
+        updater.start()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -375,6 +380,19 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         }
 
         menu.addItem(.separator())
+        if let note = updater.note {
+            let item = NSMenuItem(title: note, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        } else if let pending = updater.pending {
+            menu.addItem(withTitle: "새 버전 \(pending.version) 받기",
+                         action: #selector(installUpdate), keyEquivalent: "").target = self
+        } else {
+            menu.addItem(withTitle: "업데이트 확인  (v\(appVersion))",
+                         action: #selector(checkUpdate), keyEquivalent: "").target = self
+        }
+
+        menu.addItem(.separator())
         menu.addItem(withTitle: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
     }
@@ -555,6 +573,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             try? data.write(to: shotDir.appendingPathComponent(name))
         }
     }
+
+    @objc private func checkUpdate() { updater.check(quiet: false) }
+    @objc private func installUpdate() { updater.install() }
 
     // MARK: 같이 하기
 

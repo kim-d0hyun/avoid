@@ -69,4 +69,14 @@ fi
 codesign --force --deep --sign - "$app" 2>/dev/null && echo "› 임시 서명" || echo "› 서명 건너뜀"
 
 du -sh "$app" | awk '{print "› 앱 크기 " $1}'
+
+# 자동 업데이트가 받아 가는 것은 zip 이다 — dmg 를 마운트해 자기를 갈아 끼우면
+# 실패할 자리가 너무 많다. 이름은 아스키로 둔다(깃허브 릴리스 자산 이름 때문).
+if [ "${1:-}" = "--zip" ]; then
+  zip="$root/dist/ddong-dodge-mac.zip"
+  rm -f "$zip"
+  (cd "$out" && ditto -c -k --keepParent "$name.app" "$zip")
+  du -h "$zip" | awk '{print "› zip " $1}'
+fi
+
 echo "› $app"
