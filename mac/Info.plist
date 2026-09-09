@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>똥피하기</string>
+  <key>CFBundleDisplayName</key>
+  <string>똥피하기</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.turban.ddong-dodge</string>
+  <key>CFBundleExecutable</key>
+  <string>DdongDodge</string>
+  <key>CFBundleIconFile</key>
+  <string>icon</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.2.0</string>
+  <key>CFBundleVersion</key>
+  <string>3</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <!-- Dock 아이콘도 메뉴 막대 메뉴도 없는 보조 앱. 조작 창구는 상태 아이콘뿐이다. -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <!-- 같이 하기. 이 둘이 없으면 macOS 15 부터 Bonjour 광고·탐색이 조용히 실패한다. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>같은 와이파이에 있는 사람들과 같이 하려면 필요합니다. 방을 만든 맥에 직접 붙습니다.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_ddong._tcp</string>
+  </array>
+</dict>
+</plist>

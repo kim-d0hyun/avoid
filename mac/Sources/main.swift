@@ -1,0 +1,734 @@
+// 똥피하기 — macOS 셸.
+//
+// 게임은 전부 web/ 안의 Canvas·JS다. 이 파일이 하는 일은 그걸 얹을 자리를 만드는 것뿐이다:
+// 바탕화면을 덮는 투명·클릭 통과 오버레이, 전역 핫키, 메뉴바 아이콘, 기록 저장.
+// Electron 을 쓰지 않는 이유는 하나다 — 몰래 하는 게임이 크로미움을 끼고 다니면 안 된다.
+
+import AppKit
+import Carbon.HIToolbox
+import WebKit
+
+// MARK: - 상수
+
+private let webScheme = "ddong"
+private let bestMsKey = "bestMs"
+private let bestDodgedKey = "bestDodged"
+private let screenKey = "screenNumber"
+private let nameKey = "playerName"
+
+/// 키를 아직 잡고 있는지 확인하는 주기. 상태를 물어보기만 하므로 손쉬운 사용 권한이 필요 없다.
+private let pollInterval: TimeInterval = 1.0 / 60.0
+
+/// 조작키. 사용자가 요청한 ⌥ 고정이다.
+private enum HK {
+    static let toggle: UInt32 = 1   // ⌥H  — 언제나 걸려 있다
+    static let left: UInt32 = 2     // ⌥←
+    static let right: UInt32 = 3    // ⌥→
+    static let jump: UInt32 = 4     // ⌥↑
+    static let duck: UInt32 = 5     // ⌥↓
+    static let restart: UInt32 = 6  // ⌥R
+    static let menu: UInt32 = 7     // ⌥M — 게임 안 메뉴
+
+    /// 게임 중에만 거는 것들. 숨기면 반드시 푼다 — ⌥←/⌥→ 는 맥에서 「단어 단위 이동」이라
+    /// 계속 잡고 있으면 남의 글쓰기를 망친다. 창이 안 보이면 그 키는 원래 주인에게 돌려준다.
+    static let play: [(id: UInt32, code: Int, action: String)] = [
+        (left, kVK_LeftArrow, "left"),
+        (right, kVK_RightArrow, "right"),
+        (jump, kVK_UpArrow, "jump"),
+        (duck, kVK_DownArrow, "duck"),
+        (restart, kVK_ANSI_R, "restart"),
+        (menu, kVK_ANSI_M, "menu"),
+    ]
+
+    static func action(_ id: UInt32) -> String? { play.first { $0.id == id }?.action }
+    static func code(_ action: String) -> CGKeyCode? {
+        play.first { $0.action == action }.map { CGKeyCode($0.code) }
+    }
+}
+
+func debugLog(_ text: String) {
+    guard ProcessInfo.processInfo.environment["DDONG_DEBUG"] != nil else { return }
+    FileHandle.standardError.write("[ddong] \(text)\n".data(using: .utf8)!)
+}
+
+// MARK: - 번들 안의 웹 파일을 넘겨주는 핸들러
+
+/// file:// 로 열면 ES 모듈 import 가 막힌다. 커스텀 스킴을 하나 만들어 번들
+/// Resources/web 아래 파일을 그대로 내준다 — 포트를 여는 것보다 조용하다.
+final class WebAssetHandler: NSObject, WKURLSchemeHandler {
+    private let root: URL
+    init(root: URL) { self.root = root }
+
+    private static let mimeTypes = [
+        "html": "text/html", "js": "text/javascript", "css": "text/css",
+        "json": "application/json", "png": "image/png",
+    ]
+
+    func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+        guard let url = task.request.url else { return }
+        let relative = (url.path.isEmpty || url.path == "/") ? "/index.html" : url.path
+        let file = root.appendingPathComponent(relative).standardized
+
+        // 번들 밖으로 나가는 경로는 거절한다.
+        guard file.path.hasPrefix(root.path), let data = try? Data(contentsOf: file) else {
+            task.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        let mime = Self.mimeTypes[file.pathExtension] ?? "application/octet-stream"
+        task.didReceive(URLResponse(url: url, mimeType: mime,
+                                    expectedContentLength: data.count, textEncodingName: "utf-8"))
+        task.didReceive(data)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+}
+
+// MARK: - 앱
+
+final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
+    static var shared: App?
+
+    private var window: NSWindow!
+    private var webView: WKWebView!
+    private var statusItem: NSStatusItem!
+
+    private var eventHandler: EventHandlerRef?
+    private var toggleHotKey: EventHotKeyRef?
+    private var playHotKeys: [EventHotKeyRef?] = []
+
+    /// 아직 게임에 안 넘긴 꾸러미. 60Hz 로 한 번에 몰아서 넘긴다 —
+    /// 사람이 여덟이면 초당 사백 번 자바스크립트를 부르게 되고, 그 값이 곧 렉이다.
+    private var inbound: [String] = []
+
+    /// 지금 눌려 있는 방향과 누른 시각.
+    private var held: [String: TimeInterval] = [:]
+    private var pollTimer: Timer?
+    /// 시연 녹화용 프레임 받아 적기. DDONG_SHOTS 로 폴더를 주면 켜진다.
+    private var shotDir: URL?
+    private var shotIndex = 0
+    private var shotBackground = "#f6f5f2"
+    private var shotTimer: Timer?
+
+    /// 개발용 자동 입장 중인가. 그때는 알림 창 대신 stderr 로만 알린다 — 창이 뜨면 시험이 멈춘다.
+    private var autoRoom = false
+    private var counterTick: TimeInterval = 0
+
+    private lazy var net: Net = {
+        let net = Net(name: playerName)
+        net.delegate = self
+        return net
+    }()
+
+    /// 다른 사람 화면에 뜰 이름. 안 정하면 맥 사용자 이름의 첫 낱말을 쓴다.
+    private var playerName: String {
+        get {
+            let env = ProcessInfo.processInfo.environment
+            if env["DDONG_DEBUG"] != nil, let forced = env["DDONG_NAME"] { return String(forced.prefix(6)) }
+            if let saved = UserDefaults.standard.string(forKey: nameKey), !saved.isEmpty { return saved }
+            // 머리 위에 뜰 이름이라 짧아야 한다. 길면 옆 사람 이름표와 겹친다.
+            let full = NSFullUserName().split(separator: " ").first.map(String.init) ?? "익명"
+            return String(full.prefix(5))
+        }
+        set {
+            let trimmed = String(newValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(6))
+            UserDefaults.standard.set(trimmed, forKey: nameKey)
+            net.myName = trimmed
+            pushNetRole()
+            refreshMenu()
+        }
+    }
+
+    private var bestMs: Int {
+        get { UserDefaults.standard.integer(forKey: bestMsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: bestMsKey) }
+    }
+    private var bestDodged: Int {
+        get { UserDefaults.standard.integer(forKey: bestDodgedKey) }
+        set { UserDefaults.standard.set(newValue, forKey: bestDodgedKey) }
+    }
+
+    // MARK: 시작
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        buildWindow()
+        buildStatusItem()
+        installHotKeyHandler()
+
+        // 시험용. 한 맥에서 여럿 띄워 볼 때, 화면에 낼 하나만 빼고 숨겨 둔다.
+        // 숨어 있어도 같이 하는 중이면 계속 도니까 진짜 상대 노릇을 한다.
+        let env = ProcessInfo.processInfo.environment
+        let headless = env["DDONG_DEBUG"] != nil && env["DDONG_HIDDEN"] != nil
+        if headless {
+            isHidden = true
+            window.orderOut(nil)
+        } else {
+            registerToggleHotKey()
+            registerPlayHotKeys()
+        }
+
+        pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+            self?.poll()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.moveToChosenScreen()
+            self?.refreshMenu()
+        }
+
+        // 시연 녹화. 창을 화면에 내지 않고 「그 사람 화면」을 파일로 뽑는다.
+        if env["DDONG_DEBUG"] != nil, let dir = env["DDONG_SHOTS"] {
+            shotDir = URL(fileURLWithPath: dir, isDirectory: true)
+            shotBackground = env["DDONG_SHOT_BG"] ?? "#f6f5f2"
+            try? FileManager.default.createDirectory(at: shotDir!, withIntermediateDirectories: true)
+            shotTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
+                self?.grabShot()
+            }
+        }
+
+        // 개발용. DDONG_DEBUG 와 **같이** 줬을 때만 본다. 사람이 메뉴에서 고르는 것과 같은 길이다.
+        //   DDONG_ROOM=host   → 방을 연다 (코드는 stderr 로)
+        //   DDONG_ROOM=K3P9   → 그 방에 들어간다
+        if env["DDONG_DEBUG"] != nil, let room = env["DDONG_ROOM"] {
+            autoRoom = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in
+                if room == "host" {
+                    debugLog("방 코드 \(net.host() ?? "실패")")
+                } else {
+                    net.join(room)
+                }
+                refreshMenu()
+            }
+        }
+    }
+
+    // MARK: 창
+
+    private func buildWindow() {
+        let frame = chosenScreen().visibleFrame // 메뉴 막대와 Dock 자리는 비워 둔다
+
+        window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.ignoresMouseEvents = true // 마우스는 전부 밑의 앱으로. 조작은 키보드뿐이다.
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)))
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        window.isReleasedWhenClosed = false
+        // 화면 공유·녹화에는 안 잡힌다. 회의 중에 화면을 띄워도 남에게는 안 보인다.
+        // 개발할 때만 DDONG_CAPTURE=1 로 풀어 스크린샷을 찍는다.
+        window.sharingType = ProcessInfo.processInfo.environment["DDONG_CAPTURE"] != nil ? .readOnly : .none
+
+        let config = WKWebViewConfiguration()
+        let web = Bundle.main.resourceURL!.appendingPathComponent("web")
+        config.setURLSchemeHandler(WebAssetHandler(root: web), forURLScheme: webScheme)
+        config.userContentController.add(self, name: "ddong")
+        config.userContentController.addUserScript(
+            WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        if ProcessInfo.processInfo.environment["DDONG_DEBUG"] != nil {
+            config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        }
+
+        webView = WKWebView(frame: window.contentView!.bounds, configuration: config)
+        webView.autoresizingMask = [.width, .height]
+        // 웹뷰 자체 배경을 지워야 창의 투명이 살아난다.
+        webView.setValue(false, forKey: "drawsBackground")
+        if #available(macOS 12.0, *) { webView.underPageBackgroundColor = .clear }
+        webView.load(URLRequest(url: URL(string: "\(webScheme)://app/index.html")!))
+
+        window.contentView?.addSubview(webView)
+        window.orderFrontRegardless() // 포커스는 절대 가져가지 않는다
+    }
+
+    /// 게임이 기대하는 window.ddong 을 만들어 준다.
+    private func bridgeScript() -> String {
+        """
+        window.ddong = {
+          debug: \(ProcessInfo.processInfo.environment["DDONG_DEBUG"] != nil),
+          bot: \(ProcessInfo.processInfo.environment["DDONG_BOT"] != nil),
+          best: { ms: \(bestMs), dodged: \(bestDodged) },
+          saveBest: (b) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'best', ms: b.ms, dodged: b.dodged,
+          }),
+          log: (text) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'log', text: String(text),
+          }),
+          onInput: (handler) => { window.__ddongInput = handler },
+          // 게임 안 메뉴에서 고른 것. 방을 열거나 앱을 끝내는 일은 셸만 할 수 있다.
+          menu: (action) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'menu', action,
+          }),
+          onVisible: (handler) => { window.__ddongVisible = handler },
+          net: {
+            role: 'off', code: null, id: 0, name: '\(Net.escape(playerName))', peers: [],
+            // to 를 안 주면 모두에게. 손님이 부르면 어차피 받는 곳은 호스트 하나다.
+            send: (message, to) => window.webkit.messageHandlers.ddong.postMessage({
+              type: 'net', to: to === undefined ? -1 : to, payload: JSON.stringify(message),
+            }),
+            onMessage: (handler) => { window.__ddongNetMsg = handler },
+            onRole: (handler) => { window.__ddongNetRole = handler },
+            onPeer: (handler) => { window.__ddongNetPeer = handler },
+          },
+        }
+        // 셸이 한 프레임치를 모아서 한 번에 넣는다. 안은 이미 풀린 객체다.
+        window.__ddongNetBatch = (text) => {
+          if (!window.__ddongNetMsg) return
+          let rows
+          try { rows = JSON.parse(text) } catch (error) { return }
+          for (const row of rows) window.__ddongNetMsg(row[0], row[1])
+        }
+        """
+    }
+
+    /// 남이 보낸 문자열을 자바스크립트 소스에 끼워 넣어야 한다. 반드시 문자열 리터럴로
+    /// 감싸서 넘긴다 — 그대로 이으면 남의 이름 한 줄로 내 앱에서 코드가 돈다.
+    private func jsLiteral(_ text: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [text]),
+              let wrapped = String(data: data, encoding: .utf8)
+        else { return "\"\"" }
+        return String(wrapped.dropFirst().dropLast())
+    }
+
+    private func pushNetRole() {
+        let code = net.code.map { "'\($0)'" } ?? "null"
+        webView.evaluateJavaScript("""
+        window.__ddongNetRole && window.__ddongNetRole('\(net.role)', \(code), \(net.myId), \(jsLiteral(playerName)))
+        """)
+    }
+
+    private func chosenScreen() -> NSScreen {
+        let saved = UserDefaults.standard.integer(forKey: screenKey)
+        if saved != 0, let match = NSScreen.screens.first(where: { $0.number == saved }) { return match }
+        return NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first ?? NSScreen.main!
+    }
+
+    private func moveToChosenScreen() {
+        window.setFrame(chosenScreen().visibleFrame, display: true)
+    }
+
+    // MARK: 메뉴바
+
+    private func buildStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.title = "💩"
+        statusItem.button?.toolTip = "똥피하기 — ⌥H 숨기기 · ⌥M 메뉴"
+        refreshMenu()
+    }
+
+    private func refreshMenu() {
+        let menu = NSMenu()
+        menu.addItem(withTitle: isHidden ? "보이기  ⌥H" : "숨기기  ⌥H",
+                     action: #selector(toggleWindow), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+
+        let record = NSMenuItem(title: "최고 기록  \(formatMs(bestMs))  ·  피한 똥 \(bestDodged)개",
+                                action: nil, keyEquivalent: "")
+        record.isEnabled = false
+        menu.addItem(record)
+        menu.addItem(withTitle: "기록 지우기", action: #selector(clearRecord), keyEquivalent: "").target = self
+
+        menu.addItem(.separator())
+
+        // 같이 하기. 방을 연 맥이 곧 서버라 켜는 것 말고 준비할 게 없다.
+        switch net.role {
+        case "host":
+            let title = NSMenuItem(title: "방 \(net.code ?? "")  ·  \(net.peerCount)명 접속",
+                                   action: nil, keyEquivalent: "")
+            title.isEnabled = false
+            menu.addItem(title)
+            menu.addItem(withTitle: "코드 복사", action: #selector(copyCode), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "방 닫기", action: #selector(leaveRoom), keyEquivalent: "").target = self
+        case "guest":
+            let title = NSMenuItem(title: "방 \(net.code ?? "") 에 들어가 있음", action: nil, keyEquivalent: "")
+            title.isEnabled = false
+            menu.addItem(title)
+            menu.addItem(withTitle: "나가기", action: #selector(leaveRoom), keyEquivalent: "").target = self
+        default:
+            menu.addItem(withTitle: "방 만들기", action: #selector(makeRoom), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "코드로 입장…", action: #selector(askJoin), keyEquivalent: "").target = self
+        }
+        menu.addItem(withTitle: "이름 바꾸기…  (\(playerName))",
+                     action: #selector(askName), keyEquivalent: "").target = self
+
+        menu.addItem(.separator())
+        let help = NSMenuItem(title: "⌥←→ 이동 · ⌥↑ 점프 · ⌥↓ 웅크리기 · ⌥R 다시 · ⌥M 메뉴",
+                              action: nil, keyEquivalent: "")
+        help.isEnabled = false
+        menu.addItem(help)
+
+        if NSScreen.screens.count > 1 {
+            menu.addItem(.separator())
+            let screens = NSMenu()
+            for (index, screen) in NSScreen.screens.enumerated() {
+                let item = NSMenuItem(title: "\(index + 1)번 화면  (\(Int(screen.frame.width))×\(Int(screen.frame.height)))",
+                                      action: #selector(pickScreen(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = screen.number
+                item.state = screen.number == chosenScreen().number ? .on : .off
+                screens.addItem(item)
+            }
+            let parent = NSMenuItem(title: "띄울 화면", action: nil, keyEquivalent: "")
+            parent.submenu = screens
+            menu.addItem(parent)
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        statusItem.menu = menu
+    }
+
+    private func formatMs(_ ms: Int) -> String {
+        String(format: "%02d:%02d.%02d", ms / 60000, (ms / 1000) % 60, (ms % 1000) / 10)
+    }
+
+    @objc private func clearRecord() {
+        bestMs = 0
+        bestDodged = 0
+        webView.evaluateJavaScript("window.__ddongBest && window.__ddongBest(0, 0)")
+        refreshMenu()
+    }
+
+    @objc private func pickScreen(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(sender.tag, forKey: screenKey)
+        moveToChosenScreen()
+        refreshMenu()
+    }
+
+    // MARK: 입력
+
+    /// 누름과 놓음을 **둘 다** 받는다. 놓음까지 받아야 방향키를 잡고 있는 동안만 달린다 —
+    /// 누름만 받으면 한 번 누를 때마다 한 걸음씩 튀는, 못 피하는 게임이 된다.
+    private func installHotKeyHandler() {
+        var specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ -> OSStatus in
+            guard let event else { return noErr }
+            var hotKey = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                              nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKey)
+            App.shared?.hotKey(hotKey.id, pressed: GetEventKind(event) == UInt32(kEventHotKeyPressed))
+            return noErr
+        }, 2, &specs, nil, &eventHandler)
+    }
+
+    private func registerToggleHotKey() {
+        var ref: EventHotKeyRef?
+        let id = EventHotKeyID(signature: OSType(0x44444F47), id: HK.toggle) // 'DDOG'
+        let status = RegisterEventHotKey(UInt32(kVK_ANSI_H), UInt32(optionKey), id,
+                                         GetApplicationEventTarget(), 0, &ref)
+        debugLog("⌥H status=\(status)")
+        toggleHotKey = ref
+    }
+
+    /// 게임용 키는 창이 보일 때만 건다. 숨기는 순간 풀어 ⌥←→ 를 원래 쓰임으로 돌려준다.
+    private func registerPlayHotKeys() {
+        guard playHotKeys.isEmpty else { return }
+        for key in HK.play {
+            var ref: EventHotKeyRef?
+            let id = EventHotKeyID(signature: OSType(0x44444F47), id: key.id)
+            let status = RegisterEventHotKey(UInt32(key.code), UInt32(optionKey), id,
+                                             GetApplicationEventTarget(), 0, &ref)
+            debugLog("⌥\(key.action) status=\(status)")
+            playHotKeys.append(ref)
+        }
+    }
+
+    private func unregisterPlayHotKeys() {
+        for ref in playHotKeys where ref != nil { UnregisterEventHotKey(ref!) }
+        playHotKeys.removeAll()
+        releaseAll()
+    }
+
+    fileprivate func hotKey(_ id: UInt32, pressed: Bool) {
+        if id == HK.toggle {
+            if pressed { toggleWindow() }
+            return
+        }
+        guard let action = HK.action(id), !isHidden else { return }
+
+        if pressed {
+            guard held[action] == nil else { return } // 키 반복은 한 번만 센다
+            held[action] = Date.timeIntervalSinceReferenceDate
+            send(action, true)
+        } else {
+            release(action)
+        }
+    }
+
+    private func send(_ action: String, _ pressed: Bool) {
+        webView.evaluateJavaScript("window.__ddongInput && window.__ddongInput('\(action)', \(pressed))")
+    }
+
+    private func release(_ action: String) {
+        guard held.removeValue(forKey: action) != nil else { return }
+        send(action, false)
+    }
+
+    /// 손을 뗐는지 **직접 물어본다.** 핫키의 놓음 이벤트만 믿으면 안 되는 자리가 둘 있다:
+    /// ⌥ 를 먼저 놓으면 그 조합은 더 이상 핫키가 아니라 방향키 놓음이 아예 안 오고,
+    /// 창을 숨기며 핫키를 풀면 그 뒤의 놓음은 받을 데가 없다. 둘 다 캐릭터가 계속 달린다.
+    ///
+    /// CGEventSource.keyState 와 NSEvent.modifierFlags 는 상태를 묻는 것이라
+    /// 손쉬운 사용 권한이 필요 없다 — 키를 가로채는 이벤트 탭과 다르다.
+    private func poll() {
+        // 숨어 있는 동안 게임을 굴려 주는 자리. 웹뷰의 자체 루프는 이때 거의 멈춰 있지만,
+        // 네이티브에서 부르는 자바스크립트는 그대로 돈다.
+        if isHidden, net.role != "off" {
+            webView.evaluateJavaScript("window.__ddongTick && window.__ddongTick()")
+        }
+        flushInbound()
+        if autoRoom {
+            counterTick += pollInterval
+            if counterTick >= 1 {
+                counterTick = 0
+                let counts = net.drainCounters()
+                debugLog("역할=\(net.role) 코드=\(net.code ?? "-") 상대=\(net.peerCount) "
+                       + "보냄=\(counts.sent)/s 받음=\(counts.received)/s")
+            }
+        }
+        guard !isHidden, !held.isEmpty else { return }
+        if !NSEvent.modifierFlags.contains(.option) {
+            releaseAll()
+            return
+        }
+        // 누른 직후 잠깐은 봐준다. keyState 가 어떤 이유로든 눌림을 못 보는 기기에서도
+        // 한 번 누르면 한 걸음은 나가게 하는 하한선이다 — 최악이 「안 움직임」이 되면 안 된다.
+        let now = Date.timeIntervalSinceReferenceDate
+        for (action, since) in held where now - since > 0.12 && !isDown(action) {
+            release(action)
+        }
+    }
+
+    private func isDown(_ action: String) -> Bool {
+        guard let code = HK.code(action) else { return false }
+        return CGEventSource.keyState(.combinedSessionState, key: code)
+    }
+
+    private func releaseAll() {
+        for action in held.keys { send(action, false) }
+        held.removeAll()
+    }
+
+    /// 지금 숨어 있나.
+    private var isHidden = false
+
+    /// 숨기기.
+    ///
+    /// 창을 화면에서 빼면 macOS 가 그 웹뷰의 requestAnimationFrame 을 초당 몇 번으로 죽인다.
+    /// 혼자 할 때는 어차피 판이 멈추니 상관없지만 **같이 하는 중에는 그러면 안 된다** —
+    /// 내 캐릭터가 남들 화면에서 굳고, 내가 방장이면 모두의 똥이 멈춘다.
+    /// 창을 투명하게만 두는 것도 소용없다(투명한 창도 안 보이는 것으로 친다).
+    /// 그래서 숨어 있는 동안은 **셸이 직접 60Hz 로 게임을 굴린다** — 아래 poll 을 보라.
+    private func setHidden(_ hidden: Bool) {
+        isHidden = hidden
+        if hidden {
+            window.orderOut(nil)
+            unregisterPlayHotKeys()
+        } else {
+            moveToChosenScreen()
+            window.orderFrontRegardless()
+            registerPlayHotKeys()
+        }
+        webView.evaluateJavaScript("window.__ddongVisible && window.__ddongVisible(\(!hidden))")
+        refreshMenu()
+    }
+
+    @objc private func toggleWindow() {
+        setHidden(!isHidden)
+    }
+
+    /// 웹뷰가 그린 것을 그대로 받아 파일로 떨군다. 시험 도구다.
+    private func grabShot() {
+        guard let shotDir else { return }
+        let index = shotIndex
+        shotIndex += 1
+        webView.evaluateJavaScript("window.__ddongShot && window.__ddongShot('\(shotBackground)', 0.6)") { value, _ in
+            guard let text = value as? String,
+                  let comma = text.firstIndex(of: ","),
+                  let data = Data(base64Encoded: String(text[text.index(after: comma)...]))
+            else { return }
+            let name = String(format: "f%05d.jpg", index)
+            try? data.write(to: shotDir.appendingPathComponent(name))
+        }
+    }
+
+    // MARK: 같이 하기
+
+    @objc private func makeRoom() {
+        guard let code = net.host() else { return }
+        refreshMenu()
+        alert(title: "방을 열었다", body: """
+        입장 코드는  \(code)  다.
+
+        같은 와이파이에 있는 사람이 메뉴 막대 💩 → 코드로 입장 에서 이 네 글자를 치면 들어온다.
+        회사 와이파이가 단말끼리의 통신을 막아 못 찾으면, \(code)@\(localAddress() ?? "내IP") 처럼 쳐서 붙으면 된다.
+        """, copy: code)
+    }
+
+    @objc private func copyCode() {
+        guard let code = net.code else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+    }
+
+    @objc private func leaveRoom() {
+        net.leave()
+        pushNetRole()
+        refreshMenu()
+    }
+
+    @objc private func askJoin() {
+        guard let typed = ask(title: "코드로 입장", body: "네 자리 코드를 친다. 방이 안 잡히면 코드@호스트IP 로.",
+                              placeholder: "K3P9", initial: "")
+        else { return }
+        net.join(typed)
+        refreshMenu()
+    }
+
+    @objc private func askName() {
+        guard let typed = ask(title: "이름 바꾸기", body: "같이 하는 사람들 머리 위에 뜨는 이름이다. 여섯 자까지.",
+                              placeholder: "이름", initial: playerName), !typed.isEmpty
+        else { return }
+        playerName = typed
+    }
+
+    /// 코드를 불러 줄 때 같이 알려 줄 내 주소. Bonjour 가 막힌 망에서 쓴다.
+    private func localAddress() -> String? {
+        var pointer: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&pointer) == 0, let first = pointer else { return nil }
+        defer { freeifaddrs(pointer) }
+        for item in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let flags = Int32(item.pointee.ifa_flags)
+            guard flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0,
+                  item.pointee.ifa_addr?.pointee.sa_family == UInt8(AF_INET),
+                  let name = item.pointee.ifa_name.map({ String(cString: $0) }),
+                  name.hasPrefix("en") else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(item.pointee.ifa_addr, socklen_t(item.pointee.ifa_addr.pointee.sa_len),
+                           &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+                return String(cString: host)
+            }
+        }
+        return nil
+    }
+
+    // MARK: 창 띄우기
+
+    /// 오버레이는 포커스를 안 가져가서 글자를 못 받는다. 코드를 칠 자리는 이렇게 따로 연다.
+    private func ask(title: String, body: String, placeholder: String, initial: String) -> String? {
+        let panel = NSAlert()
+        panel.messageText = title
+        panel.informativeText = body
+        panel.addButton(withTitle: "확인")
+        panel.addButton(withTitle: "취소")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = placeholder
+        field.stringValue = initial
+        panel.accessoryView = field
+        NSApp.activate(ignoringOtherApps: true)
+        panel.window.initialFirstResponder = field
+        guard panel.runModal() == .alertFirstButtonReturn else { return nil }
+        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func alert(title: String, body: String, copy: String? = nil) {
+        let panel = NSAlert()
+        panel.messageText = title
+        panel.informativeText = body
+        panel.addButton(withTitle: "확인")
+        if copy != nil { panel.addButton(withTitle: "코드 복사") }
+        NSApp.activate(ignoringOtherApps: true)
+        if panel.runModal() == .alertSecondButtonReturn, let copy {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(copy, forType: .string)
+        }
+    }
+
+    // MARK: 저장
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+
+        switch type {
+        case "log":
+            FileHandle.standardError.write("[web] \(body["text"] as? String ?? "")\n".data(using: .utf8)!)
+        case "menu":
+            switch body["action"] as? String {
+            case "host": makeRoom()
+            case "join": askJoin()
+            case "leave": leaveRoom()
+            case "hide": toggleWindow()
+            case "quit": NSApp.terminate(nil)
+            default: break
+            }
+        case "net":
+            // 게임이 짠 꾸러미를 그대로 흘려보낸다. 셸은 안을 열어 보지 않는다.
+            if let payload = body["payload"] as? String {
+                let to = body["to"] as? Int ?? -1
+                net.send(payload, to: to < 0 ? nil : to)
+            }
+        case "best":
+            // 시간과 개수는 따로 갱신한다 — 오래 버틴 판과 많이 피한 판이 늘 같지는 않다.
+            if let ms = body["ms"] as? Int, ms > bestMs { bestMs = ms }
+            if let dodged = body["dodged"] as? Int, dodged > bestDodged { bestDodged = dodged }
+            refreshMenu()
+        default:
+            break
+        }
+    }
+}
+
+// MARK: - 전송 계층에서 올라오는 것들
+
+extension App: NetDelegate {
+    func netRoleChanged(role: String, code: String?, myId: Int, note: String?) {
+        pushNetRole()
+        refreshMenu()
+        guard let note else { return }
+        debugLog("알림: \(note)")
+        if !autoRoom { alert(title: "같이 하기", body: note) }
+    }
+
+    func netPeerChanged(id: Int, name: String, joined: Bool) {
+        debugLog("\(name)(\(id)) \(joined ? "들어옴" : "나감")")
+        webView.evaluateJavaScript(
+            "window.__ddongNetPeer && window.__ddongNetPeer(\(id), \(jsLiteral(name)), \(joined))")
+        refreshMenu()
+    }
+
+    /// 바로 안 넘기고 모은다. 넘기는 일은 60Hz 짜리 poll 이 한다.
+    func netReceived(from: Int, json: String) {
+        // 남이 보낸 글자다. **JSON 인지 여기서 확인하고** 아니면 버린다 —
+        // 확인 없이 배열에 이어 붙이면 깨진 한 줄이 그 프레임 전체를 날린다.
+        guard let data = json.data(using: .utf8),
+              (try? JSONSerialization.jsonObject(with: data)) != nil
+        else { return }
+        inbound.append("[\(from),\(json)]")
+        if inbound.count > 512 { inbound.removeFirst(inbound.count - 512) }
+    }
+
+    private func flushInbound() {
+        guard !inbound.isEmpty else { return }
+        let batch = "[" + inbound.joined(separator: ",") + "]"
+        inbound.removeAll(keepingCapacity: true)
+        webView.evaluateJavaScript("window.__ddongNetBatch && window.__ddongNetBatch(\(jsLiteral(batch)))")
+    }
+}
+
+private extension NSScreen {
+    var number: Int { (deviceDescription[.init("NSScreenNumber")] as? NSNumber)?.intValue ?? 0 }
+}
+
+// MARK: - 시작
+
+let app = NSApplication.shared
+let delegate = App()
+App.shared = delegate
+app.delegate = delegate
+// Dock 아이콘도 메뉴 막대 메뉴도 없다. 조작 창구는 상태 아이콘뿐 (Info.plist 의 LSUIElement 와 같은 뜻).
+app.setActivationPolicy(.accessory)
+app.run()

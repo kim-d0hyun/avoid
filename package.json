@@ -1,0 +1,12 @@
+{
+  "name": "ddong-dodge",
+  "version": "1.2.0",
+  "private": true,
+  "description": "업무 화면 위로 똥이 떨어진다. ⌥+방향키로 피하고 ⌥H로 즉시 숨긴다. 같은 와이파이면 네 자리 코드로 같이 한다. (macOS)",
+  "scripts": {
+    "icon": "node scripts/make-icon.mjs",
+    "start": "./mac/build.sh && { pkill -f 'MacOS/DdongDodge' || true; } && sleep 0.4 && open 'dist/mac/똥피하기.app'",
+    "build:mac": "./mac/build.sh",
+    "dmg": "./mac/dmg.sh"
+  }
+}
