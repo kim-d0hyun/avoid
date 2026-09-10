@@ -281,10 +281,14 @@ final class Net {
         if text.hasPrefix(#"{"t":"__deny""#) {
             let hostVersion = Net.field(text, "v") ?? "?"
             leave()
-            delegate?.netRoleChanged(
-                role: "off", code: nil, myId: 0,
-                note: "방장은 v\(hostVersion), 이 앱은 v\(appVersion) 이라 같이 못 한다. "
-                    + "메뉴 막대 💩 → 업데이트 확인 으로 새 버전을 받아라.")
+            // 규약 번호만 다르고 버전 문자열이 같을 수도 있다(직접 빌드한 것 등).
+            // 그때 「v1.2.0 과 v1.2.0 이 다르다」고 하면 사람이 어리둥절해진다.
+            let note = hostVersion == appVersion
+                ? "방장과 이 앱의 내부 규약이 달라 같이 못 한다. 둘 다 최신으로 맞춰야 한다 "
+                    + "(메뉴 막대 💩 → 업데이트 확인)."
+                : "버전이 달라 같이 못 한다. 방장 v\(hostVersion) · 이 앱 v\(appVersion). "
+                    + "메뉴 막대 💩 → 업데이트 확인 으로 새 버전을 받아라."
+            delegate?.netRoleChanged(role: "off", code: nil, myId: 0, note: note)
             return
         }
         if text.hasPrefix(#"{"t":"__id""#) {

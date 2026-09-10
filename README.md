@@ -225,6 +225,9 @@ scripts/make-icon.mjs    아이콘 PNG 를 픽셀부터 직접 찍는다
 | `DDONG_BOT=1` | 봇이 대신 조작한다 |
 | `DDONG_HIDDEN=1` | 창을 안 띄운다 (같이 하는 중에는 계속 돈다) |
 | `DDONG_CAPTURE=1` | 화면 녹화에 잡히게 한다 (평소엔 안 잡힌다) |
+| `DDONG_SHOTS=<폴더>` | 매 프레임을 그 폴더에 jpg 로 떨군다 (창을 안 띄우고 시연 녹화) |
+| `DDONG_SHOT_BG=#f6f5f2` | 그 프레임의 배경색 |
+| `DDONG_UPDATE_NOW=1` | 뜨자마자 업데이트를 확인하고 있으면 바로 받아 갈아 끼운다 |
 
 한 맥에서 네 명이 붙은 상태를 만들려면:
 
