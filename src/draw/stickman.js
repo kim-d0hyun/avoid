@@ -72,6 +72,18 @@ function pose(p, time) {
     };
   }
 
+  // 몸을 던진 자세. 거의 눕다시피 해서 팔을 앞으로 뻗는다 —
+  // 서서 못 받는 공을 받는 동작이라, 낮고 길어 보여야 뜻이 통한다.
+  if (p.slide > 0) {
+    const go = Math.min(1, p.slide / 0.42);
+    return {
+      hipY: HIP_Y * 0.34, lean: 1.18, bob: 0,
+      legs: [[-0.55, -0.30], [-0.20, 0.34]],
+      arms: [[1.52, 1.66], [1.34, 1.52]],
+      slide: go,
+    };
+  }
+
   const run = Math.min(Math.abs(p.vx) / 520, 1);
 
   // 붙잡고 있으면 앞팔을 상대 쪽으로 뻗는다. 뻗은 팔 하나로 상황이 다 읽힌다.
@@ -134,6 +146,8 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
     ctx.rotate(p.facing * ease * Math.PI * 0.46);
   }
   ctx.scale(p.facing, 1); // 뒤집힌 공간 안에서는 +x 가 언제나 「앞」이다
+  // 몸을 던지면 앞으로 쏠린다. 발이 뒤에 남고 어깨가 앞으로 나간다.
+  if (p.slide > 0) ctx.translate(-6, 0);
 
   const s = pose(p, time);
   const hipY = s.hipY + s.bob;
@@ -182,6 +196,17 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   drawFace(ctx, headX, headY, p, time, seed);
   ctx.restore();
 
+  if (p.slide > 0) {
+    // 미끄러진 자국. 뒤로 흩날리는 짧은 선 몇 개.
+    const feet = p.groundY - p.air;
+    for (let i = 0; i < 3; i++) {
+      const back = -p.facing * (16 + i * 13);
+      const up = 2 + i * 3;
+      stroke(ctx, [[p.x + back, feet - up], [p.x + back - p.facing * 12, feet - up - 3]],
+             { width: 1.8, color: PENCIL, seed: seed + 90 + i, amp: 0.7, halo: false,
+               alpha: 0.5 * Math.min(1, p.slide / 0.2) });
+    }
+  }
   if (p.dead && !waiting) drawImpact(ctx, p, seed);
   if (opts.name) drawTag(ctx, p, opts);
   if (opts.faded) setFade(1);

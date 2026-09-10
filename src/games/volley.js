@@ -14,6 +14,7 @@
 
 import { INK, RED, PENCIL, stroke, circle, text } from '../draw/ink.js';
 import { BODY_H } from '../draw/stickman.js';
+import { startSlide } from '../game/world.js';
 
 // 편은 옷 색으로 가른다. 번호가 아니라 **보이는 것**으로 갈라야 한 눈에 읽힌다.
 //
@@ -52,9 +53,6 @@ const SMASH_UP = 1.6;       // ⌥↑ 를 누르고 때리면 위로 (넘겨 주
 const SPIKE_REACH = 88;     // 손이 닿는 거리
 const MAX_SPEED = 2600 * SLOW;
 const WALL_KEEP = 0.98;     // 옆벽·천장은 거의 손실 없이 반사한다
-const GROUND_KEEP = 0.52;   // 바닥은 많이 죽는다. 두어 번 튀고 만다
-const GROUND_ROLL = 0.86;   // 바닥에 끌리며 가로 속도가 줄어든다
-const LAND_SHOW = 1.0;      // 떨어진 뒤 보여 주는 시간. 이만큼은 굴러다닌다
 // 바닥에서 네트 꼭대기까지.
 //
 // 사람 키가 60, 점프해서 머리가 125까지 간다. 95 로 두면 **서서는 못 넘기고 뛰면 넘긴다** —
@@ -83,7 +81,11 @@ const teamName = (side) => (side === 0 ? '빨강' : '파랑');
 /// 손으로 바꾼 사람은 그 선택을 지켜 준다 — 방장에게 알려 두면 다음 명단부터 반영된다.
 function rosterSides(world) {
   const mp = world.mp;
-  const ids = [mp.myId, ...mp.others.keys()].sort((a, b) => a - b);
+  // 관전 중인 사람은 뺀다. 아직 이 세트에 안 낀 사람까지 세면 편이 어그러진다.
+  const ids = [
+    ...(mp.waiting ? [] : [mp.myId]),
+    ...[...mp.others.keys()].filter((id) => !mp.others.get(id)?.waiting),
+  ].sort((a, b) => a - b);
   const picked = world.bag.picked ?? new Map();
   const out = new Map();
   let auto = 0;
@@ -98,7 +100,7 @@ function rosterSides(world) {
 export function teams(world) {
   const rows = [[], []];
   const add = (name, x, mine) => rows[sideOfX(world, x)].push({ name, mine });
-  add(world.mp.myName || '나', world.player.x, true);
+  if (!world.mp.waiting) add(world.mp.myName || '나', world.player.x, true);
   for (const other of world.mp.others.values()) {
     if (other.waiting) continue;
     add(other.name || '?', other.x, false);
@@ -114,8 +116,6 @@ function serve(world, toSide) {
   b.ball.vy = -SERVE_UP;
   b.ball.spin = 0;
   b.ball.spinV = (Math.random() - 0.5) * 2;
-  b.landed = undefined;
-  b.rest = 0;
   b.tail = [];
   b.wait = RESET_WAIT;
 }
@@ -123,8 +123,11 @@ function serve(world, toSide) {
 /// 공이 사람 몸에 닿았나. 몸은 세로로 긴 알약이라 가로·세로를 따로 본다.
 function touches(ball, p) {
   const feet = p.groundY - p.air;
-  const top = feet - BODY_H * (1 - 0.44 * p.crouch);
-  const cx = Math.max(p.x - 11, Math.min(ball.x, p.x + 11));
+  // 미끄러지는 몸은 낮고 길다. 그래서 서서 못 받는 공을 받는다 — 그게 슬라이딩의 값이다.
+  const sliding = (p.slide ?? 0) > 0;
+  const top = feet - BODY_H * (sliding ? 0.42 : (1 - 0.44 * p.crouch));
+  const half = sliding ? 42 : 11;
+  const cx = Math.max(p.x - half, Math.min(ball.x, p.x + half));
   const cy = Math.max(top, Math.min(ball.y, feet));
   const dx = ball.x - cx;
   const dy = ball.y - cy;
@@ -198,6 +201,14 @@ export function spike(world) {
   const p = world.player;
   if (!b?.ball || world.state !== 'play' || p.dead || b.wait > 0) return false;
 
+  // 손이 안 닿으면 **몸을 던진다.** 같은 키로 치기와 슬라이딩이 갈리는 기준은 거리다 —
+  // 닿으면 치고, 안 닿으면 그쪽으로 미끄러진다. 원판도 달리며 누르면 다이빙이 나간다.
+  const gap = b.ball.x - p.x;
+  const dyNow = b.ball.y - (p.groundY - p.air - BODY_H * 0.7);
+  if (gap * gap + dyNow * dyNow > SPIKE_REACH * SPIKE_REACH && p.air <= 0) {
+    return startSlide(world, Math.sign(gap) || p.facing);
+  }
+
   const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0 };
   const want = {
     held: (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0),
@@ -234,6 +245,12 @@ function report(world, b, dt) {
     + ` v=${Math.round(Math.hypot(b.ball.vx, b.ball.vy))} 점수=${b.score.join(':')}`);
 }
 
+/// 맞은 자국·강타 번쩍임이 시간에 따라 사그라든다.
+function ball0(b, dt) {
+  b.ball.hit = Math.max(0, (b.ball.hit ?? 0) - dt * 4);
+  b.ball.smash = Math.max(0, (b.ball.smash ?? 0) - dt * 2.2);
+}
+
 function point(world, toSide) {
   const b = world.bag;
   b.score[toSide]++;
@@ -248,15 +265,26 @@ export default {
   keys: [['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
          ['⌥ Space', '때리기 — 뛰어서 누르면 강타'],
          ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↓', '내리꽂기'],
+         ['⌥ Space (멀 때)', '슬라이딩 — 몸을 던져 받는다'],
          ['⌥ M', '편 바꾸기']],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
   noGrab: true,
   /// 편 이름. 이게 있으면 메뉴에 「편 고르기」가 생긴다.
   teamNames: ['빨강', '파랑'],
-  /// 판 도중에 누가 들어오면 그 판을 접고 다 같이 다시 시작한다.
-  /// 2대2 하다가 한 명 늘면 편이 어그러지는데, 그걸 다음 판까지 끌고 갈 이유가 없다.
-  restartOnJoin: true,
+
+  /// 판을 열 수 있나. 못 열면 그 이유를 돌려준다.
+  ///
+  /// **2대1도 된다.** 편이 안 맞아도 하고 싶으면 하는 것이다 — 사무실에서 셋이 모이면
+  /// 그렇게 논다. 다만 **한쪽이 비면 안 된다.** 상대 없이 넘기는 건 배구가 아니고,
+  /// 공이 빈 코트에 떨어지면 그냥 점수만 쌓인다.
+  blocked(world) {
+    if (!world.mp.on) return null;              // 혼자면 연습이니 막지 않는다
+    const rows = teams(world);
+    if (!rows[0].length) return '빨강 편에 아무도 없다';
+    if (!rows[1].length) return '파랑 편에 아무도 없다';
+    return null;
+  },
   /// 옷 색은 번호가 아니라 **선 자리**로 정한다. 왼쪽은 빨강, 오른쪽은 파랑.
   shirt: (world, x) => TEAM_INK[sideOfX(world, x)],
   /// ⌥Space 를 이 게임이 가져간다.
@@ -266,6 +294,7 @@ export default {
   /// 이름뿐이고, 결국 다 같이 공 하나를 쫓는 게임이 된다. 언제나 자기 구역 안이다.
   /// 편을 바꾸려면 ⌥M → 편 바꾸기.
   confine(world, p) {
+    if (world.mp.waiting) return;      // 관전 중에는 아무 데나 서 있어도 된다
     const side = world.team ?? 0;
     const half = world.w / 2;
     if (side === 0 && p.x > half - NET_GAP) { p.x = half - NET_GAP; p.vx = Math.min(0, p.vx); }
@@ -292,7 +321,6 @@ export default {
     ball: { x: 0, y: 0, vx: 0, vy: 0, spin: 0, spinV: 0, hit: 0, smash: 0, hitX: 0, hitY: 0 },
     tail: [], tailT: 0,
     score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false,
-    landed: undefined, rest: 0,
     // 손님이 받은 공을 부드럽게 따라가려고 남겨 두는 것.
     age: 0, errorX: 0, errorY: 0, baseX: undefined,
   }),
@@ -328,11 +356,14 @@ export default {
       b.ball.x = b.baseX + b.baseVX * b.age + b.errorX;
       b.ball.y = b.baseY + b.baseVY * b.age + 0.5 * GRAVITY * b.age * b.age + b.errorY;
       b.ball.spin += b.ball.spinV * dt;
+      ball0(b, dt);
       trail(b, dt);
       report(world, b, dt);
       return;
     }
 
+    // 자국은 서브를 기다리는 동안에도 사그라든다. 안 그러면 그 자리에 얼어붙는다.
+    ball0(b, dt);
     if (b.wait > 0) { b.wait -= dt; return; }
 
     const ball = b.ball;
@@ -340,8 +371,6 @@ export default {
     ball.x += ball.vx * dt;
     ball.y += ball.vy * dt;
     ball.spin += ball.spinV * dt;
-    ball.hit = Math.max(0, (ball.hit ?? 0) - dt * 4);
-    ball.smash = Math.max(0, (ball.smash ?? 0) - dt * 2.2);
 
     // 옆벽과 천장. **들어간 만큼 되접는다** — 벽에 자리를 붙여 버리면 안 된다.
     //
@@ -379,31 +408,11 @@ export default {
       if (touches(ball, p)) { bounceOff(ball, p); break; }
     }
 
-    // 바닥. **공이 진짜로 떨어져 구르는 것까지 보여 주고** 판을 끊는다.
-    //
-    // 닿는 순간 공을 없애고 점수를 올리면 뚝 끊긴다. 한 번 튀기고, 두 번 튀기고,
-    // 힘이 빠져 구르다 서는 것까지 보인 다음에 다음 서브로 넘어간다.
+    // 바닥에 **닿는 순간** 끝이다. 떨어진 자리에 자국만 남기고 곧바로 다음 서브로 넘어간다.
     if (ball.y + BALL_R >= world.groundY) {
-      ball.y = world.groundY - BALL_R;
-      if (b.landed === undefined) {
-        // 처음 닿았다. 여기서 점수가 갈린다.
-        b.landed = ball.x < netX ? 1 : 0;
-        b.rest = 0;
-        ball.hit = 1; ball.hitX = ball.x; ball.hitY = world.groundY;
-      }
-      ball.vy = -Math.abs(ball.vy) * GROUND_KEEP;
-      ball.vx *= GROUND_ROLL;
-      if (Math.abs(ball.vy) < 120) { ball.vy = 0; ball.vx *= 0.86; }
-    }
-    if (b.landed !== undefined) {
-      b.rest += dt;
-      // 다 굴렀거나 시간이 다 되면 정리한다.
-      if (b.rest > LAND_SHOW || (Math.abs(ball.vy) < 60 && Math.abs(ball.vx) < 60)) {
-        const side = b.landed;
-        b.landed = undefined;
-        point(world, side);
-        return;
-      }
+      ball.hit = 1; ball.hitX = ball.x; ball.hitY = world.groundY - BALL_R * 0.3;
+      point(world, ball.x < netX ? 1 : 0);
+      return;
     }
 
     if (b.score[0] >= WIN_AT || b.score[1] >= WIN_AT) {

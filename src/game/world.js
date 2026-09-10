@@ -61,6 +61,14 @@ const ESCAPE_SHOVE = 540;   // 붙잡고 있던 쪽이 밀려나는 세기
 const ESCAPE_KICK = 300;    // 뿌리친 쪽이 반동으로 물러나는 세기
 const KNOCK_TAU = 0.17;     // 밀려남이 잦아드는 시간
 
+// 슬라이딩. 몸을 던져 못 닿을 공을 받는다.
+//
+// 달리기로는 못 닿는 자리가 있어야 몸을 던지는 게 뜻이 생긴다. 그래서 **달리기보다 빠르되
+// 방향을 못 바꾸고**, 끝나면 잠깐 못 움직인다. 공짜로 빠른 이동이 되면 아무도 안 걷는다.
+const SLIDE_SPEED = 880;
+const SLIDE_TIME = 0.42;
+const SLIDE_COOL = 0.55;
+
 /// 이긴 사람이 만세를 부르는 시간. 이 동안은 다음 판을 못 시작한다 —
 /// 이겼다는 걸 볼 새도 없이 다음 판이 시작되면 이길 이유가 없어진다.
 export const VICTORY_SECONDS = 3;
@@ -109,6 +117,8 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
       knock: 0,
       /// 팔이 향할 쪽(-1/0/1). 걸음과 따로 논다 — 오른쪽 사람을 잡은 채 왼쪽으로 끌고 갈 수 있다.
       grabAim: 0,
+      /// 슬라이딩. 남은 시간과 미끄러지는 쪽. 배구에서 못 닿는 공을 몸을 던져 받는 동작이다.
+      slide: 0, slideDir: 1, slideCool: 0,
     },
   };
 }
@@ -126,6 +136,18 @@ export function resize(world, w, h) {
 
 /// 지금 하고 있는 게임.
 export function gameOf(world) { return gameById(world.gameId); }
+
+/// 몸을 던진다. 땅에 발이 붙어 있을 때만, 그리고 쉬는 시간이 끝났을 때만.
+/// 미끄러지는 쪽은 **누르는 순간의 방향**으로 굳는다 — 도중에 못 튼다.
+export function startSlide(world, dir) {
+  const p = world.player;
+  if (p.dead || p.air > 0 || p.slide > 0 || p.slideCool > 0) return false;
+  p.slide = SLIDE_TIME;
+  p.slideDir = dir || p.facing || 1;
+  p.facing = p.slideDir;
+  p.vx = p.slideDir * SLIDE_SPEED;
+  return true;
+}
 
 /// 게임을 갈아 끼운다. 판은 처음부터 다시 시작한다.
 export function pickGame(world, gameId) {
@@ -209,6 +231,22 @@ function movePlayer(world, dt) {
   const p = world.player;
   const input = world.input;
   const grounded = p.air <= 0;
+
+  p.slideCool = Math.max(0, p.slideCool - dt);
+  if (p.slide > 0) {
+    // 미끄러지는 동안은 방향키도 점프도 안 듣는다. 던진 몸은 되돌릴 수 없다.
+    p.slide -= dt;
+    p.vx = p.slideDir * SLIDE_SPEED * Math.max(0.25, p.slide / SLIDE_TIME);
+    p.x += p.vx * dt;
+    const lo = HALF_W + 9;
+    const hi = world.w - HALF_W - 9;
+    if (p.x < lo) { p.x = lo; p.slide = 0; }
+    if (p.x > hi) { p.x = hi; p.slide = 0; }
+    gameOf(world).confine?.(world, p);
+    p.walk += Math.abs(p.vx) * dt * 0.052;
+    if (p.slide <= 0) { p.slide = 0; p.slideCool = SLIDE_COOL; p.vx *= 0.3; }
+    return;
+  }
 
   const wantCrouch = input.duck && grounded ? 1 : 0;
   p.crouch += (wantCrouch - p.crouch) * Math.min(1, dt * 16);
@@ -614,6 +652,8 @@ export function press(world, action, down) {
 
   if (!down) return;
   if (world.state === 'ready') {
+    // 아직 열 수 없는 판이면 아무 키도 안 먹는다. 이유는 시작 안내에 떠 있다.
+    if (gameOf(world).blocked?.(world)) return;
     // 편을 고르는 게임은 방향키로 시작하지 않는다. 시작 전에 걸어서 자기 편으로 가야 하는데,
     // 한 걸음 떼자마자 판이 열리면 편을 고를 틈이 없다. ⌥R 로 시작한다.
     // 같이 할 때 판을 여는 건 방장이다. 손님이 누르면 방장에게 부탁이 간다.

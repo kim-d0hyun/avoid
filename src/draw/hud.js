@@ -62,8 +62,9 @@ export function drawIntro(ctx, world, time) {
   const x = 72;
   const y = world.groundY - 196;
   const rows = [...gameOf(world).keys, ['⌥ H', '숨기기'], ['⌥ M', '메뉴 · 게임 바꾸기']];
-  const hint = world.mp.on && world.mp.role !== 'host'
-    ? '방장이 시작하기를 기다리는 중'
+  const stop = gameOf(world).blocked?.(world);
+  const hint = stop ? `${stop} — ⌥M 에서 편을 고른다`
+    : world.mp.on && world.mp.role !== 'host' ? '방장이 시작하기를 기다리는 중'
     : world.mp.on ? '⌥R 로 판 시작 (방장만)' : '아무 방향키나 누르면 시작';
   // 종이는 **제일 긴 줄**에 맞춘다. 안내 문구만 재면 설명이 종이 밖으로 삐져나간다.
   ctx.font = `600 16px ${HAN}`;

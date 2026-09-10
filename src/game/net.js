@@ -398,6 +398,8 @@ export function startRound(world, shell, api) {
   // **판을 여는 건 방장뿐이다.** 손님이 아무 때나 열면 아직 준비 안 된 사람이 끌려 들어간다 —
   // 편을 고르는 중일 수도, 방금 들어와 자리를 잡는 중일 수도 있다.
   if (mp.role !== 'host') return;
+  // 게임이 「아직 안 된다」고 하면 안 연다 (배구에서 한쪽 편이 비었을 때).
+  if (gameOf(world).blocked?.(world)) return;
   mp.round++;
   mp.results = null;
   mp.winner = null;
@@ -436,14 +438,6 @@ export function peerChanged(world, shell, id, name, joined, api) {
     mp.names.set(id, name);
     mp.alive.set(id, false); // 다음 판부터
     mp.others.set(id, blankOther(id, name));
-    // 어떤 게임은 판 도중에 누가 들어오면 **그 판을 접고 다 같이 다시 시작한다.**
-    // 배구가 그렇다 — 2대2 하다 한 명 늘면 편이 어그러지는데, 그걸 판 끝까지 끌고 갈
-    // 이유가 없다. 똥피하기는 그냥 다음 판에 끼면 되니 접지 않는다.
-    if (mp.role === 'host' && world.state === 'play' && gameOf(world).restartOnJoin) {
-      endRound(world, shell, { winner: null, results: mp.roundResults ?? [] });
-      // 세리머니 없이 곧바로 새 판. 들어온 사람 자리까지 잡아 준다.
-      setTimeout(() => startRound(world, shell, api), 700);
-    }
   } else {
     mp.names.delete(id);
     mp.alive.delete(id);
