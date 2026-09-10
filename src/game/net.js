@@ -243,6 +243,10 @@ export function handleMessage(world, shell, from, message, api) {
       // 시계는 방장 것이 맞다. 확 끌어당기면 숫자가 튀므로 조금씩 맞춘다.
       const hostSeconds = message.ms / 1000;
       world.elapsed += (hostSeconds - world.elapsed) * 0.25;
+      // 방장이 말한 시각을 날것 그대로 남겨 둔다. 화면끼리 얼마나 같은지 잴 때
+      // 이게 있어야 **같은 순간**을 견줄 수 있다 — 내 시계는 방장 쪽으로 끌려가는 중이라
+      // 순간마다 조금씩 다르다.
+      mp.hostMs = message.ms;
       mp.round = message.r;
       // 방장이 다른 게임을 하고 있으면 따라간다. 방 전체가 같은 게임을 하는 게 규칙이다.
       if (message.g && message.g !== world.gameId) pickGame(world, message.g);

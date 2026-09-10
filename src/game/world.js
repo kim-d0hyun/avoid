@@ -138,10 +138,10 @@ export function restart(world) {
   // 누르고 있는 키와 기록 콜백은 그대로 넘긴다 — 방향키를 잡은 채 다시 시작하면
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
-          mp, menu, screens, gameId, pick, fade, team } = world;
+          mp, menu, screens, gameId, pick, fade, team, debug, log, send } = world;
   Object.assign(world, createWorld(best, gameId),
                 { w, h, input, onRecord, onDeath, onMenu, onGameOver,
-                  mp, menu, screens, pick, fade, team });
+                  mp, menu, screens, pick, fade, team, debug, log, send });
   world.state = 'ready';
   resize(world, w, h);
   spread(world);

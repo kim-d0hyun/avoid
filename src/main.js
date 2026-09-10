@@ -73,6 +73,10 @@ world.onGameOver = (result) => {
   }
 };
 
+world.debug = !!shell.debug;
+// 게임이 방장에게 직접 말을 걸어야 할 때 (배구에서 손님이 「내가 때렸다」고 알릴 때).
+world.send = (message) => shell.net.send(message);
+world.log = (text) => shell.log(text);
 world.fade = shell.fade ?? 1;
 window.__ddongFade = (value) => { world.fade = value; };
 world.screens = shell.screens ?? [];
@@ -225,43 +229,48 @@ function makeBot(seed) {
     const p = world.player;
     if (p.dead) { hold('left', false); hold('right', false); hold('jump', false); return; }
 
-    // 배구는 쫓아갈 것이 똥이 아니라 공이다. 공 밑으로 달려가서 닿으면 때린다.
+    // 배구는 쫓아갈 것이 똥이 아니라 공이다.
+    //
+    // **공을 쫓아가면 늦는다.** 초당 1700픽셀로 날아가는 공을 지금 자리로 쫓으면 늘 뒤를
+    // 따라간다. 떨어질 자리를 미리 풀어서 거기로 간다 — 사람이 하는 것도 그것이다.
     const ball = world.bag?.ball;
     if (ball && world.gameId === 'volley') {
-      const mine = Math.sign(p.x - world.w / 2) || 1;
-      const theirs = Math.sign(ball.x - world.w / 2) || 1;
-      // 우리 코트로 오는 공만 쫓는다. 남의 코트까지 넘어가면 네트에 막힌다.
-      const goTo = mine === theirs ? ball.x : world.w / 2 + mine * world.w * 0.2;
-      const gap = goTo - p.x;
-      hold('left', gap < -14);
-      hold('right', gap > 14);
-      const close = Math.abs(ball.x - p.x) < 70 && ball.y > world.groundY - 220;
-      hold('jump', close && ball.y < world.groundY - 90);
-      grabWait -= dt;
-      if (close && grabWait <= 0) { tap('grab'); grabWait = 0.25; }
-      return;
-    }
+      const G = 2180;
+      const half = world.w / 2;
+      const mySide = world.team ?? 0;
+      const mine = (x) => (mySide === 0 ? x < half : x >= half);
 
-    // 붙잡혔으면 잠깐 버티다 뿌리친다. 바로 풀면 붙잡는 장면이 안 보인다.
-    grabWait -= dt;
-    if (p.heldBy >= 0) {
-      if (grabWait <= 0) { tap('grab'); grabWait = 1.2 + seed; }
-      hold('left', false); hold('right', false);
+      // 내 머리 높이(치기 좋은 높이)까지 내려오는 데 걸리는 시간
+      const headY = world.groundY - 70;
+      let t = 0;
+      const c = ball.y - headY;
+      const disc = ball.vy * ball.vy - 2 * G * c;
+      if (disc >= 0) t = (-ball.vy + Math.sqrt(disc)) / G;
+      t = Math.max(0, Math.min(2.5, t));
+      let landing = ball.x + ball.vx * t;
+      // 벽에 튕기는 것까지 접어 준다. 한 번만 접어도 대부분 맞는다.
+      if (landing < 0) landing = -landing;
+      if (landing > world.w) landing = 2 * world.w - landing;
+
+      // 공이 아직 남의 코트에 있어도 **떨어질 자리로 미리 간다.** 넘어온 뒤에 움직이면
+      // 초당 1700픽셀짜리 공은 절대 못 따라잡는다. 사람도 미리 자리를 잡는다.
+      const goTo = mine(landing) ? landing
+        : mine(ball.x) ? ball.x
+        : half + (mySide === 0 ? -1 : 1) * world.w * 0.22;
+      const want = Math.max(20, Math.min(world.w - 20, goTo));
+      const gap = want - p.x;
+      hold('left', gap < -12);
+      hold('right', gap > 12);
+
+      // 닿을 만하면 뛰어서 때린다. 뛰는 시점은 공이 머리 위로 내려올 때.
+      const near = Math.abs(ball.x - p.x) < 110;
+      const coming = mine(ball.x) && ball.vy > 0;
+      // 뛰는 시점은 공이 머리 위로 내려오기 조금 전. 늦게 뛰면 이미 지나가 있다.
+      hold('jump', near && coming && ball.y > world.groundY - 460 && ball.y < world.groundY - 130);
+      grabWait -= dt;
+      const reach = Math.abs(ball.y - (world.groundY - p.air - 42));
+      if (near && reach < 95 && grabWait <= 0) { tap('grab'); grabWait = 0.15; }
       return;
-    }
-    // 손이 닿을 만큼 붙었으면 붙잡아 본다. 잡은 뒤에는 키를 누른 채 잠깐 끌고 다닌다.
-    if (pressed.grab) {
-      grabHold -= dt;
-      if (grabHold <= 0 || p.grabbing < 0) { hold('grab', false); grabWait = 2.5 + seed * 2; }
-    } else if (grabWait <= 0) {
-      for (const other of world.mp.others.values()) {
-        if (other.dead || other.waiting) continue;
-        if (Math.abs(other.x - p.x) < 44 && Math.abs(other.air - p.air) < 20) {
-          hold('grab', true);
-          grabHold = 1.8 + seed;
-          break;
-        }
-      }
     }
 
     // 제일 급한 똥. 남은 시간이 짧고 가까울수록 급하다.

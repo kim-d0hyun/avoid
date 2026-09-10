@@ -11,37 +11,50 @@
 //
 // 그래서 공은 방장 것이다. 방장이 굴리고 60Hz 로 자리와 속도를 뿌린다. 손님은 받은
 // 속도로 사이를 메워 그리고, 어긋난 만큼은 사람한테 쓰는 것과 같은 방식으로 녹인다.
-// 친 사람은 자기가 친 것이 한 왕복만큼 늦게 반영되는데, 사무실 랜에서는 1~3ms 라
-// 아무도 못 느낀다. 애초에 같은 와이파이 전용이라 이 선택이 가능하다.
 
 import { INK, RED, PENCIL, stroke, circle, text } from '../draw/ink.js';
+import { BODY_H } from '../draw/stickman.js';
 
 // 편은 옷 색으로 가른다. 번호가 아니라 **보이는 것**으로 갈라야 한 눈에 읽힌다.
 //
 // 이 게임의 빨강(#c63028)은 「너에게 중요한 것」 한 가지 뜻으로만 쓰기로 한 색이라
 // 셔츠에는 다른 빨강을 쓴다 — 색연필로 칠한 듯한, 조금 어둡고 탁한 벽돌색.
-// 이름 밑 빨간 밑줄과 헷갈리지 않는다.
 const TEAM_INK = ['#b5352f', '#2f6fb0'];
-import { BODY_H } from '../draw/stickman.js';
 
 const HAN = '"Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 
-const BALL_R = 15;
-const GRAVITY = 900;        // 똥보다 가볍게 — 랠리가 이어지려면 천천히 떠 있어야 한다
-const BOUNCE = 0.92;        // 몸에 맞고 튈 때 남는 기운
-const HIT_UP = 620;         // 몸에 맞으면 위로 이만큼 튄다
-const HIT_SIDE = 300;       // 몸 중심에서 벗어난 만큼 옆으로
-const SPIKE_REACH = 78;     // ⌥Space 로 때릴 수 있는 거리
-const SPIKE_DOWN = 900;     // 공중에서 때리면 내리꽂는다
-const SPIKE_SIDE = 640;
-const TOSS_UP = 780;        // 땅에서 때리면 띄운다
-const MAX_SPEED = 1500;
+// 물리는 피카츄 배구(1997)의 것을 그대로 옮겼다.
+//
+// 원판은 432px 폭에 25fps 로 돌고, 값이 전부 「프레임당 픽셀」이다. 내 판은 1512px 이라
+// 3.5배. 코트를 건너는 데 걸리는 시간이 같아지도록 그 배율로 옮겼다.
+//
+//   원판                        여기
+//   중력      1 px/f²           2180 px/s²
+//   최소 튀어오름  15 px/f       1310 px/s
+//   강타      10~20 px/f        880 / 1760 px/s
+//
+// **가장 중요한 건 숫자가 아니라 이 한 줄이다: 몸에 맞을 때 vy = -|vy|.**
+// 속도를 안 깎고 방향만 뒤집는다. 그래서 랠리가 갈수록 빨라지고, 마지막엔 아무도 못 받는다.
+// 내가 처음에 만든 것은 맞을 때마다 정해진 속도로 리셋해서 영원히 같은 속도로 떠 있었다 —
+// 그게 「느리다」의 정체였다.
+const BALL_R = 20;
+const GRAVITY = 2180;
+const MIN_UP = 1310;        // 맞으면 적어도 이만큼은 위로. 그보다 빨랐으면 그 속도 그대로
+const OFF_CENTER = 44;      // 몸 가운데에서 벗어난 만큼 옆으로 — 대각선은 여기서 나온다
+const CARRY = 0.45;         // 치는 사람이 달리던 속도가 실린다
+const SMASH_SIDE = 1760;    // 방향키를 누르고 때리면
+const SMASH_FLAT = 880;     // 안 누르고 때리면 (수평 미사일)
+const SMASH_DOWN = 2.0;     // ⌥↓ 를 누르고 때리면 아래로 이 배수
+const SMASH_UP = 1.6;       // ⌥↑ 를 누르고 때리면 위로 (넘겨 주기)
+const SPIKE_REACH = 88;     // 손이 닿는 거리
+const MAX_SPEED = 2600;
+const WALL_KEEP = 0.98;     // 옆벽·천장은 거의 손실 없이 반사한다
 // 바닥에서 네트 꼭대기까지.
 //
-// 사람 키가 60, 점프 높이가 65다(480²÷2÷1760). 뛰면 손이 150쯤까지 올라가므로
-// 125 로 두면 **서서는 못 넘기고 뛰면 넘긴다** — 그게 배구다. 190 이면 아무도 못 넘긴다.
-const NET_H = 125;
-const SERVE_UP = 520;
+// 사람 키가 60, 점프해서 머리가 125까지 간다. 95 로 두면 **서서는 못 넘기고 뛰면 넘긴다** —
+// 원판도 네트가 사람 키의 1.2배쯤이라 뛰면 훌쩍 넘어간다.
+const NET_H = 95;
+const SERVE_UP = 900;
 const WIN_AT = 5;
 const RESET_WAIT = 1.1;     // 점수 난 뒤 다음 서브까지
 
@@ -90,7 +103,7 @@ export function teams(world) {
 function serve(world, toSide) {
   const b = world.bag;
   b.ball.x = toSide === 0 ? world.w * 0.25 : world.w * 0.75;
-  b.ball.y = world.groundY - NET_H - 120;
+  b.ball.y = world.groundY - NET_H - 260;
   b.ball.vx = 0;
   b.ball.vy = -SERVE_UP;
   b.ball.spin = 0;
@@ -109,36 +122,107 @@ function touches(ball, p) {
   return dx * dx + dy * dy < (BALL_R + 7) ** 2;
 }
 
+const clamp = (v, m) => Math.max(-m, Math.min(m, v));
+
+/// 몸에 맞았다.
+///
+/// **속도를 안 깎는다.** vy = -|vy| 로 방향만 뒤집고, 그보다 느렸을 때만 최소값까지 올린다.
+/// 이 한 줄이 랠리를 갈수록 빠르게 만든다 — 세게 온 공은 세게 나간다.
+/// 가로는 **몸 가운데에서 얼마나 벗어나 맞았느냐**로 정해진다. 발끝에 맞히면 대각선으로
+/// 멀리 날아가고, 정통으로 받으면 거의 수직으로 뜬다. 대각선을 만드는 건 조준이 아니라 자리다.
 function bounceOff(ball, p) {
-  const off = (ball.x - p.x) / 22;                 // 몸 가운데에서 벗어난 만큼 옆으로
-  ball.vx = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, ball.vx * 0.35 + off * HIT_SIDE + p.vx * 0.35));
-  ball.vy = -HIT_UP - Math.max(0, -p.vy) * 0.25;   // 뛰어오르며 맞히면 더 높이
-  ball.spinV = off * 0.9;
+  const off = ball.x - p.x;
+  ball.vx = clamp(off * OFF_CENTER + p.vx * CARRY, MAX_SPEED);
+  const up = Math.abs(ball.vy);
+  ball.vy = -Math.max(up, MIN_UP);
+  ball.spinV = clamp(off * 0.12, 8);
+  ball.hit = 1;                       // 맞은 자리에 잠깐 뜨는 표시
+  ball.hitX = ball.x; ball.hitY = ball.y;
   // 몸 밖으로 밀어내 둔다. 안 그러면 다음 프레임에 또 맞아서 붙어 버린다.
-  ball.y = Math.min(ball.y, p.groundY - p.air - BODY_H - BALL_R * 0.4);
+  ball.y = Math.min(ball.y, p.groundY - p.air - BODY_H - BALL_R * 0.3);
 }
 
-/// ⌥Space. 손이 닿으면 때린다 — 공중이면 내리꽂고 땅이면 띄운다.
+/// 때리기의 알맹이. **누가 쳤든 결국 방장 화면에서 이 함수가 돈다.**
+///
+/// 공이 방장 것이라 손님이 자기 화면에서 공을 밀어 봐야 다음 꾸러미에 덮인다.
+/// 그래서 손님은 「내가 여기서 이렇게 쳤다」를 보내고, 방장이 그 값으로 이 함수를 부른다.
+function applyHit(world, at, want) {
+  const b = world.bag;
+  const ball = b.ball;
+  const dx = ball.x - at.x;
+  const dy = ball.y - (at.groundY - at.air - BODY_H * 0.7);
+  if (dx * dx + dy * dy > SPIKE_REACH * SPIKE_REACH) return false;
+
+  const away = at.side === 1 ? -1 : 1;             // 상대 코트 쪽
+  const held = want.held | 0;
+  if (at.air <= 12) {
+    // 토스. 위로 올려 주고 옆으로는 살짝만.
+    ball.vx = clamp(dx * OFF_CENTER * 0.6 + held * 240, MAX_SPEED);
+    ball.vy = -Math.max(Math.abs(ball.vy), MIN_UP) * 0.95;
+  } else {
+    const side = held !== 0 ? held : away;
+    ball.vx = clamp(side * (held !== 0 ? SMASH_SIDE : SMASH_FLAT), MAX_SPEED);
+    if (want.down) ball.vy = Math.max(Math.abs(ball.vy), MIN_UP * 0.7) * SMASH_DOWN;
+    else if (want.up) ball.vy = -Math.abs(ball.vy) * SMASH_UP;
+    else ball.vy = 0;                              // 수평 미사일
+    ball.vy = clamp(ball.vy, MAX_SPEED);
+    ball.smash = 1;
+  }
+  ball.spinV = clamp(ball.vx * 0.006, 12);
+  ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y;
+  return true;
+}
+
+/// ⌥Space — 때리기.
+///
+/// 원판의 강타를 그대로 옮겼다. **방향키를 안 누르고 공중에서 때리면 vy 가 0이 되어
+/// 수평으로 쏘는 미사일**이 된다. 그게 피카츄 배구의 그 장면이다.
+///
+///   ⌥Space 만            → 수평 미사일 (880)
+///   ⌥← 나 ⌥→ 를 누른 채  → 그 방향으로 두 배 (1760)
+///   ⌥↓ 를 누른 채        → 내리꽂기
+///   ⌥↑ 를 누른 채        → 높이 넘겨 주기
+///
+/// 땅에서 때리면 강타가 아니라 토스다. 뛰어야 세게 나간다.
 export function spike(world) {
   const b = world.bag;
   const p = world.player;
   if (!b?.ball || world.state !== 'play' || p.dead || b.wait > 0) return false;
-  const ball = b.ball;
-  const dx = ball.x - p.x;
-  const dy = ball.y - (p.groundY - p.air - BODY_H * 0.7);
-  if (dx * dx + dy * dy > SPIKE_REACH * SPIKE_REACH) return false;
 
-  const dir = p.facing || (dx >= 0 ? 1 : -1);
-  if (p.air > 12) {
-    ball.vx = dir * SPIKE_SIDE;
-    ball.vy = SPIKE_DOWN;                          // 아래로 (y 는 아래가 +)
-  } else {
-    ball.vx = dir * (SPIKE_SIDE * 0.45);
-    ball.vy = -TOSS_UP;
-  }
-  ball.spinV = dir * 2.2;
-  b.hitBy = world.mp.myId;
-  return true;
+  const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0 };
+  const want = {
+    held: (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0),
+    down: !!world.input.duck,
+    up: !!world.input.jump,
+  };
+  // 손님은 방장에게 부탁한다. 내 화면에서도 바로 반응은 보여 주되(손맛),
+  // 진짜로 정하는 건 방장이다 — 곧 오는 꾸러미가 이 값을 덮는다.
+  if (world.mp.role === 'guest') world.send?.({ t: 'gm', k: 'hit', at, want });
+  return applyHit(world, at, want);
+}
+
+/// 지나온 자리를 몇 개 남긴다. 빠른 공이 빨라 보이려면 잔상이 있어야 한다 —
+/// 초당 1700픽셀로 날아가는 동그라미는 잔상이 없으면 그냥 순간이동으로 보인다.
+const TRAIL = 7;
+function trail(b, dt) {
+  b.tail ??= [];
+  b.tailT = (b.tailT ?? 0) - dt;
+  if (b.tailT > 0) return;
+  b.tailT = 1 / 90;
+  b.tail.push([b.ball.x, b.ball.y]);
+  while (b.tail.length > TRAIL) b.tail.shift();
+}
+
+/// 화면끼리 얼마나 같은지 재려고 남기는 자국. DDONG_DEBUG 일 때만 찍는다.
+function report(world, b, dt) {
+  if (!world.debug) return;
+  b.logT = (b.logT ?? 0) - dt;
+  if (b.logT > 0) return;
+  b.logT = 1 / 20;
+  // 방장은 자기 시계, 손님은 **방장이 말해 준 시계**로 찍는다. 그래야 나란히 놓고 견준다.
+  const t = world.mp.role === 'guest' ? (world.mp.hostMs ?? 0) / 1000 : world.elapsed;
+  world.log?.(`공 t=${t.toFixed(2)} x=${b.ball.x.toFixed(1)} y=${b.ball.y.toFixed(1)}`
+    + ` v=${Math.round(Math.hypot(b.ball.vx, b.ball.vy))} 점수=${b.score.join(':')}`);
 }
 
 function point(world, toSide) {
@@ -153,7 +237,9 @@ export default {
   name: '배구',
   line: '빨강 편 대 파랑 편. 우리 쪽에 떨어뜨리면 상대 점수. 다섯 점 먼저 (혼자면 연습).',
   keys: [['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
-         ['⌥ Space', '때리기 (공중이면 강타)'], ['⌥ M', '편 바꾸기']],
+         ['⌥ Space', '때리기 — 뛰어서 누르면 강타'],
+         ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↓', '내리꽂기'],
+         ['⌥ M', '편 바꾸기']],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
   noGrab: true,
@@ -191,10 +277,11 @@ export default {
   },
 
   fresh: () => ({
-    ball: { x: 0, y: 0, vx: 0, vy: 0, spin: 0, spinV: 0 },
+    ball: { x: 0, y: 0, vx: 0, vy: 0, spin: 0, spinV: 0, hit: 0, smash: 0, hitX: 0, hitY: 0 },
+    tail: [], tailT: 0,
     score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false,
     // 손님이 받은 공을 부드럽게 따라가려고 남겨 두는 것.
-    age: 0, errorX: 0, errorY: 0,
+    age: 0, errorX: 0, errorY: 0, baseX: undefined,
   }),
 
   update(world, dt) {
@@ -219,12 +306,17 @@ export default {
 
     // 손님은 방장이 뿌린 공을 따라 그리기만 한다. 판정도 방장이 한다.
     if (world.mp.role === 'guest') {
+      // **첫 꾸러미가 오기 전에는 계산하지 않는다.** 안 그러면 없는 값으로 셈해서 NaN 이 되고,
+      // 그 NaN 이 다음 꾸러미의 오차 계산에 다시 들어가 영영 안 돌아온다.
+      if (b.baseX === undefined) return;
       b.age = Math.min(b.age + dt, 0.18);
       b.errorX *= Math.exp(-dt / 0.06);
       b.errorY *= Math.exp(-dt / 0.06);
       b.ball.x = b.baseX + b.baseVX * b.age + b.errorX;
       b.ball.y = b.baseY + b.baseVY * b.age + 0.5 * GRAVITY * b.age * b.age + b.errorY;
       b.ball.spin += b.ball.spinV * dt;
+      trail(b, dt);
+      report(world, b, dt);
       return;
     }
 
@@ -235,10 +327,14 @@ export default {
     ball.x += ball.vx * dt;
     ball.y += ball.vy * dt;
     ball.spin += ball.spinV * dt;
+    ball.hit = Math.max(0, (ball.hit ?? 0) - dt * 4);
+    ball.smash = Math.max(0, (ball.smash ?? 0) - dt * 2.2);
 
-    // 옆벽은 튕긴다. 공이 화면 밖으로 나가면 아무도 못 쫓아간다.
-    if (ball.x < BALL_R) { ball.x = BALL_R; ball.vx = Math.abs(ball.vx) * BOUNCE; }
-    if (ball.x > world.w - BALL_R) { ball.x = world.w - BALL_R; ball.vx = -Math.abs(ball.vx) * BOUNCE; }
+    // 옆벽과 천장은 **거의 손실 없이** 반사한다. 원판도 옆벽은 부호만 뒤집는다.
+    // 벽을 끼고 각을 만드는 게 이 게임의 재미 절반이다.
+    if (ball.x < BALL_R) { ball.x = BALL_R; ball.vx = Math.abs(ball.vx) * WALL_KEEP; ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; }
+    if (ball.x > world.w - BALL_R) { ball.x = world.w - BALL_R; ball.vx = -Math.abs(ball.vx) * WALL_KEEP; ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; }
+    if (ball.y < BALL_R) { ball.y = BALL_R; ball.vy = Math.abs(ball.vy) * WALL_KEEP; ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; }
 
     // 네트. 꼭대기는 넘어가고, 몸통에 맞으면 되돌아온다.
     const netX = world.w / 2;
@@ -247,6 +343,9 @@ export default {
       ball.x = netX + Math.sign(ball.x - netX || 1) * (BALL_R + 3);
       ball.vx = -ball.vx * 0.55;
     }
+
+    trail(b, dt);
+    report(world, b, dt);
 
     // 사람에게 맞았나. 살아 있는 사람만 친다.
     const bodies = [world.player, ...world.mp.others.values()].filter((p) => !p.dead && !p.waiting);
@@ -287,16 +386,47 @@ export default {
     stroke(ctx, [[netX - 13, netTop], [netX + 13, netTop]],
            { width: 3, color: INK, seed: 62, amp: 0.8 });
 
+    // 지나온 자리. 뒤로 갈수록 옅어지고 작아진다.
+    (b.tail ?? []).forEach(([tx, ty], i) => {
+      const k = (i + 1) / TRAIL;
+      upright(tx, ty, () => circle(ctx, tx, ty, BALL_R * (0.3 + 0.6 * k), {
+        width: 1.6, color: PENCIL, seed: 70 + i, amp: 0.4, halo: false, alpha: 0.30 * k,
+      }));
+    });
+
+    // 세게 갔다는 표시. 맞은 자리에서 터지듯 번진다 — 원판의 그 번쩍임이다.
+    if (b.ball.hit > 0) {
+      const grow = 1 - b.ball.hit;
+      const hard = (b.ball.smash ?? 0) > 0;
+      upright(b.ball.hitX, b.ball.hitY, () => {
+        circle(ctx, b.ball.hitX, b.ball.hitY, BALL_R * (1 + grow * (hard ? 2.6 : 1.4)), {
+          width: hard ? 3.4 : 2, color: hard ? RED : PENCIL, seed: 77, amp: 1.4,
+          halo: false, alpha: b.ball.hit * (hard ? 0.9 : 0.5),
+        });
+        if (hard) {
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 + b.ball.spin;
+            const r0 = BALL_R * (1.3 + grow * 1.6);
+            const r1 = r0 + 16 + grow * 20;
+            stroke(ctx, [[b.ball.hitX + Math.cos(a) * r0, b.ball.hitY + Math.sin(a) * r0],
+                         [b.ball.hitX + Math.cos(a) * r1, b.ball.hitY + Math.sin(a) * r1]],
+                   { width: 2.6, color: RED, seed: 80 + i, amp: 0.8, halo: false,
+                     alpha: b.ball.hit * 0.85 });
+          }
+        }
+      });
+    }
+
     // 공. 잉크 동그라미에 실밥 두 줄.
     upright(b.ball.x, b.ball.y, () => {
       ctx.save();
       ctx.translate(b.ball.x, b.ball.y);
       ctx.rotate(b.ball.spin);
-      circle(ctx, 0, 0, BALL_R, { width: 3.2, color: INK, seed: 63, amp: 0.7 });
-      stroke(ctx, [[-BALL_R * 0.8, -4], [0, -7], [BALL_R * 0.8, -4]],
-             { width: 1.8, color: PENCIL, seed: 64, amp: 0.5, halo: false });
-      stroke(ctx, [[-BALL_R * 0.8, 5], [0, 8], [BALL_R * 0.8, 5]],
-             { width: 1.8, color: PENCIL, seed: 65, amp: 0.5, halo: false });
+      circle(ctx, 0, 0, BALL_R, { width: 3.4, color: INK, seed: 63, amp: 0.7 });
+      stroke(ctx, [[-BALL_R * 0.82, -5], [0, -9], [BALL_R * 0.82, -5]],
+             { width: 2, color: PENCIL, seed: 64, amp: 0.5, halo: false });
+      stroke(ctx, [[-BALL_R * 0.82, 6], [0, 10], [BALL_R * 0.82, 6]],
+             { width: 2, color: PENCIL, seed: 65, amp: 0.5, halo: false });
       ctx.restore();
     });
 
@@ -326,10 +456,22 @@ export default {
     }
   },
 
-  /// 손님이 「나 편 바꿨다」고 알려 온다. 방장만 듣는다.
+  /// 손님이 보내오는 말. 방장만 듣는다.
   message(world, from, msg) {
-    if (world.mp.role !== 'host' || typeof msg.s !== 'number') return;
-    (world.bag.picked ??= new Map()).set(from, msg.s ? 1 : 0);
+    if (world.mp.role !== 'host') return;
+    if (msg.k === 'hit' && msg.at && msg.want) {
+      // 손님이 때렸다. **공은 내 것이니 내가 대신 쳐 준다.**
+      // 자리는 손님이 보내온 값을 믿되, 내가 알고 있는 자리와 너무 다르면 무시한다 —
+      // 남의 화면 값을 그대로 믿으면 코트 밖에서도 공을 칠 수 있게 된다.
+      const other = world.mp.others.get(from);
+      if (!other || other.dead) return;
+      if (Math.abs(other.x - msg.at.x) > 120) { world.debug && world.log?.(`손님타격 무시(자리차이) ${from}`); return; }
+      const ok = applyHit(world, { x: other.x, air: other.air, groundY: world.groundY,
+                                   side: msg.at.side === 1 ? 1 : 0 }, msg.want);
+      world.debug && world.log?.(`손님타격 ${from} ${ok ? '먹힘' : '안닿음'}`);
+      return;
+    }
+    if (typeof msg.s === 'number') (world.bag.picked ??= new Map()).set(from, msg.s ? 1 : 0);
   },
 
   /// 편을 바꾼다. 내 화면에서 먼저 옮기고 방장에게 알린다 —
@@ -337,7 +479,7 @@ export default {
   swap(world, shell) {
     world.team = 1 - (world.team ?? 0);
     (world.bag.picked ??= new Map()).set(world.mp.myId, world.team);
-    if (world.mp.on) shell?.net?.send?.({ t: 'gm', s: world.team });
+    if (world.mp.on) (shell?.net?.send ?? world.send)?.({ t: 'gm', s: world.team });
   },
 
   pack(world) {
@@ -370,15 +512,19 @@ export default {
     if (!data?.b) return;
     // 지금 그리고 있던 자리와 방금 온 자리의 차이를 남겨 두고 60ms 에 걸쳐 녹인다.
     // 사람한테 쓰는 것과 같은 방법이다 — 톡 끊어 옮기면 공이 순간이동한다.
+    // 첫 꾸러미이거나 그리던 값이 성치 않으면 오차를 녹이지 않고 그냥 그 자리에 놓는다.
+    const first = b.baseX === undefined
+      || !Number.isFinite(b.ball.x) || !Number.isFinite(b.ball.y);
     const showX = b.ball.x;
     const showY = b.ball.y;
     const [x, y, vx, vy, spin, spinV] = data.b;
     b.baseX = x; b.baseY = y; b.baseVX = vx; b.baseVY = vy;
     b.ball.spin = spin; b.ball.spinV = spinV;
     b.age = 0;
-    b.errorX = showX - x;
-    b.errorY = showY - y;
+    b.errorX = first ? 0 : showX - x;
+    b.errorY = first ? 0 : showY - y;
     if (Math.abs(b.errorX) > 200 || Math.abs(b.errorY) > 200) { b.errorX = 0; b.errorY = 0; }
+    if (first) { b.ball.x = x; b.ball.y = y; b.tail = []; }
     b.score = data.s ?? b.score;
     b.wait = data.w ?? 0;
     b.started = true;

@@ -249,7 +249,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             // 0.6 이면 파일이 가볍고 눈으로 확인하기에 충분하다. 잘라서 크게 볼 때만 올린다.
             shotScale = min(2, max(0.2, Double(env["DDONG_SHOT_SCALE"] ?? "") ?? 0.6))
             try? FileManager.default.createDirectory(at: shotDir!, withIntermediateDirectories: true)
-            shotTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
+            let fps = min(60, max(5, Double(env["DDONG_SHOT_FPS"] ?? "") ?? 20))
+            shotTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / fps, repeats: true) { [weak self] _ in
                 self?.grabShot()
             }
         }
