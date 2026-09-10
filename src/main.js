@@ -3,8 +3,8 @@
 import { boil, shirtColor } from './draw/ink.js';
 import { drawPoop, drawSplat } from './draw/poop.js';
 import { drawStickman } from './draw/stickman.js';
-import { makeGround, drawClock, drawIntro, drawFreeze, drawStamp, drawRoom, drawResults, drawMenu }
-  from './draw/hud.js';
+import { makeGround, drawClock, drawIntro, drawFreeze, drawStamp, drawRoom, drawResults, drawMenu,
+  drawVictory } from './draw/hud.js';
 import { createWorld, resize, update, press, restart, addPoop, spread } from './game/world.js';
 import { pump, handleMessage, peerChanged, roleChanged, reportDeath, startRound } from './game/net.js';
 
@@ -124,7 +124,7 @@ shell.net.onMessage((from, message) => {
 // 브라우저에서 열어 볼 때와, 혹시 창이 키를 직접 받게 됐을 때의 길.
 const KEYS = {
   ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'jump', ArrowDown: 'duck',
-  KeyR: 'restart', KeyM: 'menu',
+  KeyR: 'restart', KeyM: 'menu', Space: 'grab', KeyZ: 'grab',
 };
 for (const [type, down] of [['keydown', true], ['keyup', false]]) {
   window.addEventListener(type, (event) => {
@@ -261,6 +261,7 @@ function render(time) {
       { name: other.name, faded: other.dead, color: shirtColor(other.id) }));
   }
   // 혼자 할 때는 색을 안 입힌다 — 구분할 사람이 없으면 그냥 낙서가 맞다.
+  world.player.waiting = world.mp.on && world.mp.waiting && world.player.dead;
   upright(world.player.x, world.groundY, () => drawStickman(ctx, world.player, time, boilFrame, {
     name: world.mp.on ? world.mp.myName : null,
     mine: true,
@@ -276,6 +277,7 @@ function render(time) {
   if (world.state === 'ready') drawIntro(ctx, hud, time);
   if (world.state === 'over') {
     world.mp.on && world.mp.results ? drawResults(ctx, hud) : drawStamp(ctx, hud);
+    if (world.mp.winner) drawVictory(ctx, hud, time, shirtColor(world.mp.winner.id));
   }
   if (world.frozen > 0) drawFreeze(ctx, hud);
   if (world.menu.open) drawMenu(ctx, hud);

@@ -8,8 +8,8 @@
 
 import { INK, RED, PENCIL, stroke, circle, wiggle, text, setFade } from './ink.js';
 
-const THIGH = 17, SHIN = 17, UPPER = 13, FORE = 13;
-const TORSO = 29, NECK = 8, HEAD_R = 11;
+const THIGH = 14, SHIN = 14, UPPER = 11, FORE = 11;
+const TORSO = 25, NECK = 7, HEAD_R = 9.5;
 const HIP_Y = -(THIGH + SHIN + 1);
 /// 발끝에서 머리 꼭대기까지. 판정 상자가 이 값을 쓴다.
 export const BODY_H = -HIP_Y + TORSO + NECK + HEAD_R * 2;
@@ -22,6 +22,27 @@ function limb(ox, oy, a1, l1, a2, l2) {
 
 function pose(p, time) {
   const c = p.crouch;
+
+  // 이긴 사람. 두 팔을 번쩍 들고 발을 구른다.
+  if (p.cheer) {
+    const hop = Math.abs(Math.sin(time * 5.5));
+    return {
+      hipY: HIP_Y - hop * 7, lean: 0, bob: -hop * 3,
+      legs: [[-0.30 - hop * 0.5, -0.46 - hop * 0.7], [0.30 + hop * 0.5, 0.46 + hop * 0.7]],
+      arms: [[2.55 + hop * 0.12, 2.95], [-2.55 - hop * 0.12, -2.95]],
+    };
+  }
+
+  // 다음 판을 기다리는 사람. 넘어져 있으면 「죽었다」로 읽히는데 그건 사실이 아니다 —
+  // 팔짱을 끼고 서서 구경하는 자세로 둔다.
+  if (p.waiting) {
+    const sway = Math.sin(time * 1.6);
+    return {
+      hipY: HIP_Y, lean: 0.02, bob: sway * 0.6,
+      legs: [[-0.16, -0.18], [0.17, 0.19]],
+      arms: [[1.15, 2.35], [-1.15, -2.35]],   // 팔짱
+    };
+  }
 
   if (p.air > 0.5) {
     // 공중. 앞다리는 접고 뒷다리는 뻗고 팔은 위로 — 떴다는 게 실루엣만으로 읽혀야 한다.
@@ -40,6 +61,20 @@ function pose(p, time) {
       hipY: deep(HIP_Y, HIP_Y + 16), lean: deep(0.10, 0.46), bob: 0,
       legs: [[deep(0, -1.15), deep(0, 1.30)], [deep(0, 1.15), deep(0, -1.30)]],
       arms: [[deep(0.16, 2.05), deep(0.30, 2.80)], [deep(-0.16, -2.05), deep(-0.30, -2.80)]],
+    };
+  }
+
+  // 붙잡고 있으면 앞팔을 상대 쪽으로 뻗는다. 뻗은 팔 하나로 상황이 다 읽힌다.
+  if (p.grabbing >= 0 || p.heldBy >= 0) {
+    const holding = p.grabbing >= 0;
+    const shake = p.heldBy >= 0 ? Math.sin(time * 34) * 0.16 : 0;
+    return {
+      hipY: HIP_Y, lean: holding ? 0.24 : -0.16, bob: Math.sin(time * 9) * 1.2,
+      legs: [[-0.34, -0.42], [0.36, 0.44]],
+      // 잡은 쪽은 두 팔을 앞으로, 잡힌 쪽은 뿌리치듯 위로 허둥댄다.
+      arms: holding
+        ? [[1.45, 1.62], [1.30, 1.50]]
+        : [[-1.9 + shake, -2.6 + shake], [-1.5 - shake, -2.3 - shake]],
     };
   }
 
@@ -75,13 +110,16 @@ function pose(p, time) {
 
 /// opts: { name, mine, faded }
 export function drawStickman(ctx, p, time, seed, opts = {}) {
+  // 다음 판을 기다리는 사람은 **넘어지지 않는다.** 죽은 자세로 그리면 「쟤 죽었네」로
+  // 읽히는데, 사실은 다음 판을 기다리며 구경하는 중이다.
+  const waiting = Boolean(p.waiting);
   // 탈락한 사람은 옅게. 누워 있는 것만으로도 알 수 있지만, 살아 있는 사람 뒤에 겹치면
   // 누가 아직 뛰고 있는지 한눈에 안 들어온다.
   if (opts.faded) setFade(0.55);
   ctx.save();
   ctx.translate(p.x, p.groundY - p.air);
 
-  if (p.dead) {
+  if (p.dead && !waiting) {
     // 뒤로 넘어간다. 회전이 끝나면 그 자리에 누워 있다.
     const t = Math.min(p.deadFor / 0.42, 1);
     const ease = 1 - (1 - t) * (1 - t);
@@ -102,7 +140,7 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   const headX = neckX + Math.sin(lean) * HEAD_R;
   const headY = neckY - Math.cos(lean) * HEAD_R;
 
-  const w = 4.3;
+  const w = 3.7;
   const pen = (i) => ({ width: w, color: INK, seed: seed + i, amp: 0.6 });
   const armA = limb(shldX, shldY, s.arms[0][0], UPPER, s.arms[0][1], FORE);
   const armB = limb(shldX, shldY, s.arms[1][0], UPPER, s.arms[1][1], FORE);
@@ -115,11 +153,11 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   // 색이 낙서를 덮어 버리면 이 게임의 그림체가 아니게 된다. 소매는 어깨에서 팔꿈치까지만.
   // 몸통 잉크가 흰 후광을 두르고 위에 얹히므로, 그 폭보다 넓게 칠해야 색이 남는다.
   if (opts.color) {
-    const shirt = { color: opts.color, alpha: 0.8, halo: false, amp: 0.5 };
+    const shirt = { color: opts.color, alpha: 0.8, halo: false, amp: 0.45 };
     stroke(ctx, [[0, hipY], [shldX * 0.5, (hipY + shldY) / 2], [shldX, shldY]],
-           { ...shirt, width: 22, seed: seed + 31 });
-    stroke(ctx, [armA[0], armA[1]], { ...shirt, width: 16, seed: seed + 32 });
-    stroke(ctx, [armB[0], armB[1]], { ...shirt, width: 16, seed: seed + 33 });
+           { ...shirt, width: 19, seed: seed + 31 });
+    stroke(ctx, [armA[0], armA[1]], { ...shirt, width: 14, seed: seed + 32 });
+    stroke(ctx, [armB[0], armB[1]], { ...shirt, width: 14, seed: seed + 33 });
   }
 
   stroke(ctx, [[0, hipY], [shldX * 0.5, (hipY + shldY) / 2], [shldX, shldY]], pen(3));
@@ -131,18 +169,26 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   drawFace(ctx, headX, headY, p, time, seed);
   ctx.restore();
 
-  if (p.dead) drawImpact(ctx, p, seed);
+  if (p.dead && !waiting) drawImpact(ctx, p, seed);
   if (opts.name) drawTag(ctx, p, opts);
   if (opts.faded) setFade(1);
 }
 
 /// 머리 위 이름표. 뒤집힌 공간 밖에서 그린다 — 안에서 그리면 왼쪽을 볼 때 글자가 뒤집힌다.
 function drawTag(ctx, p, opts) {
+  if (p.waiting) {
+    const y = p.groundY - p.air - BODY_H - 12;
+    text(ctx, `${opts.name} · 다음 판`, p.x, y, {
+      font: `700 11px "Apple SD Gothic Neo", sans-serif`,
+      color: opts.color ?? PENCIL, align: 'center',
+    });
+    return;
+  }
   if (p.dead) return;
   const y = p.groundY - p.air - BODY_H - 12;
   // 이름도 옷과 같은 색으로. 화면이 어수선할 때 누가 누군지 이걸로 잇는다.
   text(ctx, opts.name, p.x, y, {
-    font: `700 13px "Apple SD Gothic Neo", sans-serif`,
+    font: `700 12px "Apple SD Gothic Neo", sans-serif`,
     color: opts.color ?? (opts.mine ? INK : PENCIL), align: 'center',
   });
   // 내 졸라맨에만 빨간 밑줄. 여럿이 겹쳐 있을 때 어느 게 나인지 이걸로 찾는다.
@@ -154,13 +200,13 @@ function drawTag(ctx, p, opts) {
 }
 
 function drawFace(ctx, cx, cy, p, time, seed) {
-  const face = { width: 1.9, color: INK, halo: false, seed: seed + 11, amp: 0.2 };
+  const face = { width: 1.7, color: INK, halo: false, seed: seed + 11, amp: 0.18 };
 
-  if (p.dead) {
+  if (p.dead && !p.waiting) {
     // ✕ ✕. 만화에서 이것 말고 다른 뜻으로 읽히는 눈은 없다.
-    for (const dx of [-4, 4]) {
-      stroke(ctx, [[cx + dx - 2.4, cy - 3.6], [cx + dx + 2.4, cy + 1.2]], face);
-      stroke(ctx, [[cx + dx + 2.4, cy - 3.6], [cx + dx - 2.4, cy + 1.2]], face);
+    for (const dx of [-3.4, 3.4]) {
+      stroke(ctx, [[cx + dx - 2, cy - 3], [cx + dx + 2, cy + 1]], face);
+      stroke(ctx, [[cx + dx + 2, cy - 3], [cx + dx - 2, cy + 1]], face);
     }
     return;
   }

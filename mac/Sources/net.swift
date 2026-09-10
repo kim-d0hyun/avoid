@@ -13,7 +13,7 @@ import Network
 let netServiceType = "_ddong._tcp"
 /// 주고받는 꾸러미의 모양 번호. **꾸러미에 칸을 더하거나 뜻을 바꾸면 반드시 올린다.**
 /// 이게 없으면 몇 명만 업데이트한 사무실에서 구·신 버전이 아무 말 없이 붙어 조용히 어긋난다.
-let netProtocol = 2
+let netProtocol = 3
 /// 고정 포트. Bonjour 가 막힌 망에서 `코드@192.168.0.7` 로 직접 붙을 수 있어야 해서 고정한다.
 let netDefaultPort: UInt16 = 51301
 

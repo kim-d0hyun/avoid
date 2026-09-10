@@ -4,7 +4,8 @@
 // 그 사람이 지금 보고 있는 자리다. 정보는 노트 여백처럼 **왼쪽 위 구석에 세로로** 붙인다.
 
 import { INK, RED, PENCIL, PAPER_SOLID, stroke, text, paperScrap } from './ink.js';
-import { menuItems } from '../game/world.js';
+import { menuItems, canRestart, VICTORY_SECONDS } from '../game/world.js';
+import { drawStickman } from './stickman.js';
 
 const MONO = '"American Typewriter", "Courier New", monospace';
 const HAN = '"Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
@@ -64,6 +65,7 @@ export function drawIntro(ctx, world, time) {
     ['⌥ ← →', '달리기'],
     ['⌥ ↑', '점프'],
     ['⌥ ↓', '웅크리기'],
+    ['⌥ Space', '붙잡기 · 뿌리치기'],
     ['⌥ H', '숨기기'],
     ['⌥ M', '메뉴 · 끝내기'],
   ];
@@ -132,7 +134,7 @@ export function drawStamp(ctx, world) {
 
   ctx.restore();
 
-  if (world.overFor > 0.9) {
+  if (canRestart(world, 0.9)) {
     hint(ctx, '⌥R  또는  아무 방향키나 눌러 다시', cx, cy + h * 0.62 + 40,
          0.72 + 0.28 * Math.sin(world.overFor * 3.4));
   }
@@ -237,7 +239,11 @@ export function drawResults(ctx, world) {
   }
   ctx.restore();
 
-  if (world.overFor > 0.7) {
+  // 세리머니 중에는 눌러도 안 되니 그렇게 말한다. 안 되는 걸 하라고 하면 안 된다.
+  const left = world.mp.winner ? VICTORY_SECONDS - world.overFor : 0;
+  if (left > 0) {
+    hint(ctx, `다음 판까지 ${Math.ceil(left)}초`, world.w / 2, y + h + 40, 0.85);
+  } else if (canRestart(world)) {
     hint(ctx, '⌥R  누르면 다음 판', world.w / 2, y + h + 40,
          0.72 + 0.28 * Math.sin(world.overFor * 3.4));
   }
@@ -286,4 +292,32 @@ export function drawMenu(ctx, world) {
   }
   text(ctx, '⌥↑↓ 고르기   ⌥→ 확인   ⌥← 닫기', x + 26, fy,
        { font: `600 12px ${KEYS}`, color: PENCIL, halo: 0 });
+}
+
+// MARK: 우승
+
+/// 이긴 사람이 화면 한가운데서 만세를 부른다. 이 3초가 지나야 다음 판을 시작할 수 있다 —
+/// 이긴 사람이 이겼다는 걸 볼 새도 없이 다음 판이 시작되면 이길 이유가 없어진다.
+export function drawVictory(ctx, world, time, color) {
+  const winner = world.mp.winner;
+  if (!winner) return;
+  const rise = Math.min(1, world.overFor / 0.3);
+
+  const figure = {
+    x: world.w / 2, air: 0, vx: 0, vy: 0, crouch: 0, facing: 1, walk: 0,
+    groundY: world.groundY, dead: false, waiting: false, danger: false, deadFor: 0,
+    grabbing: -1, heldBy: -1, cheer: true,
+  };
+  ctx.save();
+  ctx.globalAlpha = rise;
+  // 조금 크게 세운다. 이 사람이 오늘의 주인공이다.
+  ctx.translate(figure.x, world.groundY);
+  ctx.scale(1.35, 1.35);
+  ctx.translate(-figure.x, -world.groundY);
+  drawStickman(ctx, figure, time, Math.floor(time * 9), { color });
+  ctx.restore();
+
+  text(ctx, `${winner.name} 승!`, world.w / 2, world.groundY - 150, {
+    font: `800 30px ${HAN}`, color: RED, align: 'center', alpha: rise,
+  });
 }

@@ -11,7 +11,7 @@ const FRICTION = 4600;
 const AIR_CONTROL = 0.62;
 const JUMP_V = 480;
 const GRAVITY = 1760;
-const HALF_W = 11;
+const HALF_W = 9;
 const SPLAT_CAP = 48;
 
 // 사람끼리 부딪히는 느낌.
@@ -24,7 +24,7 @@ const SPLAT_CAP = 48;
 //
 // 둘이 만나는 자리가 26픽셀쯤 — 어깨가 겹쳐 보이지만 두 사람으로 읽히는 거리다.
 // 정면으로 박으면 서로 버티고, 어깨만 스치면 그냥 지나간다. 막힌 사람은 ⌥↑ 로 넘는다.
-const SHOULDER = 46;
+const SHOULDER = 39;
 /// 겹친 깊이에 비례해 밀어낸다. **자리를 직접 옮긴다** — 속도로만 밀면 마찰이 그대로
 /// 먹어 버려서 둘이 붙은 채 영영 안 떨어진다.
 const SEPARATE = 310;
@@ -37,7 +37,24 @@ const SQUEEZE_TOP = 1.8;
 /// 아무리 끼여도 이만큼은 낸다. 0 으로 두면 완전히 얼어붙어 「고장」으로 보인다.
 const SQUEEZE_FLOOR = 0.06;
 /// 이만큼 높이가 다르면 서로 안 민다. 막아선 사람을 뛰어넘을 길을 남긴다.
-const STEP_OVER = 46;
+const STEP_OVER = 39;
+
+// 붙잡기.
+//
+// 미는 것만으로는 길을 잠깐 막을 뿐이다. 붙잡으면 상대를 **똥 밑에 세워 둘 수 있다** —
+// 대신 잡은 쪽도 같이 느려져서, 잡는 동안은 나도 위험해진다. 서로 물고 늘어지는 순간이
+// 이 게임에서 제일 웃긴 장면이라 넣는다.
+const GRAB_REACH = 53;      // 손이 닿는 거리
+const GRAB_MAX = 4;         // 이보다 오래는 못 잡는다. 영원히 붙잡히면 게임이 아니다
+const GRAB_COOLDOWN = 0.7;  // 놓친 뒤 다시 잡기까지
+const GRAB_HOLD_AT = 32;    // 잡고 있을 때 유지되는 거리
+const GRABBER_SPEED = 0.58; // 잡은 쪽도 무겁다
+const HELD_SPEED = 0.22;    // 잡힌 쪽은 거의 못 움직인다
+const GRAB_PULL = 420;      // 끌어당기는 힘
+
+/// 이긴 사람이 만세를 부르는 시간. 이 동안은 다음 판을 못 시작한다 —
+/// 이겼다는 걸 볼 새도 없이 다음 판이 시작되면 이길 이유가 없어진다.
+export const VICTORY_SECONDS = 3;
 
 /// 난이도. 시간이 곧 난이도이고 다른 손잡이는 없다.
 /// 속도는 3.8배에서 멈추지만 **쏟아지는 양은 안 멈춘다** — 마지막에 사람을 잡는 건 속도가
@@ -74,6 +91,8 @@ export function createWorld(best) {
     player: {
       x: 0, vx: 0, air: 0, vy: 0, crouch: 0, facing: 1, walk: 0, squeeze: 0,
       groundY: 0, dead: false, deadFor: 0, danger: false,
+      /// 붙잡기. grabbing 은 내가 잡은 사람 번호, heldBy 는 나를 잡은 사람 번호 (-1 이면 없음).
+      grabbing: -1, grabFor: 0, heldBy: -1, grabCool: 0, escapes: 0, shake: 0,
     },
   };
 }
@@ -113,10 +132,10 @@ export function spread(world) {
 }
 
 function spawn(world, x, sizeBias = Math.random()) {
-  const r = 12 + sizeBias * 14;
+  const r = 10 + sizeBias * 12;
   const { speed } = difficulty(world.elapsed);
   // 큰 놈은 느리고 작은 놈은 빠르다. 크기만 보고도 언제 닿을지 가늠할 수 있어야 한다.
-  const fall = (330 - r * 4.2) * speed * (0.92 + Math.random() * 0.16);
+  const fall = (322 - r * 4.0) * speed * (0.92 + Math.random() * 0.16);
   const poop = {
     x, y: -r * 2 - 10, r,
     bucket: bucketFor(r),
@@ -164,7 +183,7 @@ function land(world, poop) {
   world.dodged++;
   world.splats.push({
     x: poop.x, y: world.groundY + 2,
-    kind: Math.max(0, Math.min(SPLAT_KINDS - 1, Math.round((poop.r - 12) / 7))),
+    kind: Math.max(0, Math.min(SPLAT_KINDS - 1, Math.round((poop.r - 10) / 6))),
     flip: Math.random() < 0.5 ? -1 : 1,
     // 크기와 진하기를 조금씩 흩어 놓는다. 똑같은 자국이 줄지어 있으면 도장 찍은 것처럼 보인다.
     size: 0.82 + Math.random() * 0.36,
@@ -176,7 +195,7 @@ function land(world, poop) {
 
 function hits(player, poop) {
   const height = BODY_H * (1 - 0.44 * player.crouch);
-  const halfW = HALF_W + player.crouch * 6;
+  const halfW = HALF_W + player.crouch * 5;
   const feet = player.groundY - player.air;
   const top = feet - height;
   // 원 대 사각형. 사각형에서 원 중심에 가장 가까운 점까지의 거리를 잰다.
@@ -240,6 +259,9 @@ function movePlayer(world, dt) {
   const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   let top = MAX_SPEED - (MAX_SPEED - CROUCH_SPEED) * p.crouch;
   top *= Math.max(SQUEEZE_FLOOR, 1 - SQUEEZE_TOP * p.squeeze);
+  // 잡은 쪽은 무겁고, 잡힌 쪽은 거의 못 간다.
+  if (p.heldBy >= 0) top *= HELD_SPEED;
+  else if (p.grabbing >= 0) top *= GRABBER_SPEED;
   if (dir !== 0) {
     // 남에게 끼여 있으면 발이 헛돈다. 못 가는 게 아니라 느려지는 것이라 뚫고 나갈 수는 있다.
     const accel = ACCEL * (1 - SQUEEZE_DRAG * p.squeeze);
@@ -258,12 +280,12 @@ function movePlayer(world, dt) {
 
   p.x += p.vx * dt;
   // 벽에 붙으면 속도를 죽인다. 안 죽이면 벽에 낀 채로 달리는 애니메이션이 나온다.
-  const lo = HALF_W + 10;
-  const hi = world.w - HALF_W - 10;
+  const lo = HALF_W + 9;
+  const hi = world.w - HALF_W - 9;
   if (p.x < lo) { p.x = lo; p.vx = 0; }
   if (p.x > hi) { p.x = hi; p.vx = 0; }
 
-  if (input.jump && grounded && p.crouch < 0.3) {
+  if (input.jump && grounded && p.crouch < 0.3 && p.heldBy < 0) {
     p.vy = JUMP_V;
     p.air = 0.01;
   }
@@ -280,6 +302,8 @@ function movePlayer(world, dt) {
 /// 남은 사람들의 똥은 계속 떨어져야 하고, 나는 넘어진 채로 그걸 보게 된다.
 function kill(world) {
   const p = world.player;
+  p.grabbing = -1;
+  p.heldBy = -1;
   p.dead = true;
   p.deadFor = 0;
   p.vx = 0;
@@ -322,6 +346,7 @@ export function update(world, dt) {
     return;
   }
 
+  if (world.mp.on) stepGrab(world, dt);
   if (!p.dead) movePlayer(world, dt);
 
   if (world.state === 'ready') return;
@@ -377,7 +402,7 @@ function stepPoops(world, dt) {
       continue;
     }
     if (p.dead) continue;
-    if (Math.abs(poop.x - p.x) < 78 && poop.y > world.groundY - 260) danger = true;
+    if (Math.abs(poop.x - p.x) < 66 && poop.y > world.groundY - 260) danger = true;
     if (hits(p, poop)) {
       kill(world);
       break;
@@ -388,13 +413,22 @@ function stepPoops(world, dt) {
   for (const splat of world.splats) splat.pop = Math.min(1, splat.pop + dt * 9);
 }
 
+/// 다음 판을 시작해도 되는 때인가. 우승 세리머니 중에는 안 된다.
+export function canRestart(world, minimum = 0.45) {
+  if (world.state !== 'over') return false;
+  const wait = world.mp.winner ? VICTORY_SECONDS : minimum;
+  return world.overFor > wait;
+}
+
 /// 메뉴에 세울 것들. 상황에 따라 달라지므로 그릴 때와 고를 때가 같은 함수를 본다.
 export function menuItems(world) {
   if (world.menu.confirmQuit) {
     return [{ id: 'quitYes', label: '네, 끝낸다' }, { id: 'quitNo', label: '아니, 계속한다' }];
   }
   const items = [{ id: 'resume', label: '이어서 하기' }];
-  if (world.state !== 'ready') items.push({ id: 'again', label: '다시 시작' });
+  if (world.state !== 'ready' && (world.state !== 'over' || canRestart(world))) {
+    items.push({ id: 'again', label: '다시 시작' });
+  }
   if (world.mp.on) {
     items.push({ id: 'leave', label: world.mp.role === 'host' ? '방 닫기' : '방에서 나가기' });
   } else {
@@ -436,7 +470,85 @@ function chooseMenu(world) {
   }
 }
 
+/// 스페이스바. 잡혀 있으면 뿌리치고, 아니면 가까운 사람을 잡는다.
+function grabPressed(world) {
+  const p = world.player;
+  if (!world.mp.on || p.dead || world.state !== 'play') return;
+
+  // 잡혀 있으면 먼저 뿌리친다. 한 번이면 풀린다 — 연타로 괴롭히는 게임이 아니다.
+  if (p.heldBy >= 0) {
+    p.heldBy = -1;
+    p.escapes = (p.escapes + 1) % 1000;   // 잡은 쪽이 이 숫자가 바뀐 걸 보고 놓는다
+    p.grabCool = GRAB_COOLDOWN;
+    return;
+  }
+  if (p.grabbing >= 0) { release(p); return; }   // 다시 누르면 내가 놓는다
+  if (p.grabCool > 0) return;
+
+  // 손이 닿는 사람 중 제일 가까운 사람.
+  let target = null;
+  let near = GRAB_REACH;
+  for (const other of world.mp.others.values()) {
+    if (other.dead || other.waiting) continue;
+    if (Math.abs(p.air - other.air) > STEP_OVER) continue;
+    const gap = Math.abs(other.x - p.x);
+    if (gap < near) { near = gap; target = other; }
+  }
+  if (!target) return;
+  p.grabbing = target.id;
+  p.grabFor = 0;
+  p.facing = Math.sign(target.x - p.x) || p.facing;
+}
+
+function release(p) {
+  p.grabbing = -1;
+  p.grabFor = 0;
+  p.grabCool = GRAB_COOLDOWN;
+}
+
+/// 잡고 있는 동안 서로를 끌어당긴다. 놓아야 할 이유가 생기면 놓는다.
+function stepGrab(world, dt) {
+  const p = world.player;
+  p.grabCool = Math.max(0, p.grabCool - dt);
+  p.shake = Math.max(0, p.shake - dt * 4);
+
+  if (p.grabbing >= 0) {
+    const target = world.mp.others.get(p.grabbing);
+    p.grabFor += dt;
+    const tooLong = p.grabFor > GRAB_MAX;
+    const gone = !target || target.dead || target.waiting;
+    const tooFar = target && Math.abs(target.x - p.x) > GRAB_REACH * 1.8;
+    if (p.dead || gone || tooLong || tooFar) {
+      release(p);
+    } else {
+      // 붙잡은 거리로 끌어당긴다. 상대 쪽에서도 같은 계산을 하므로 둘이 함께 모인다.
+      const dx = target.x - p.x;
+      const want = Math.sign(dx) * GRAB_HOLD_AT;
+      p.x += (dx - want) * Math.min(1, dt * 6);
+      p.facing = Math.sign(dx) || p.facing;
+    }
+  }
+
+  if (p.heldBy >= 0) {
+    const holder = world.mp.others.get(p.heldBy);
+    if (p.dead || !holder || holder.dead || holder.grabbing !== world.mp.myId) {
+      p.heldBy = -1;
+    } else {
+      // 잡힌 쪽도 끌려간다. 몸부림치는 것처럼 조금 떨린다.
+      const dx = holder.x - p.x;
+      const want = Math.sign(dx) * GRAB_HOLD_AT;
+      p.x += (dx - want) * Math.min(1, dt * 4);
+      p.shake = 1;
+      p.vx += -Math.sign(dx) * GRAB_PULL * 0 * dt;
+    }
+  }
+}
+
 export function press(world, action, down) {
+  if (action === 'grab') {
+    if (down && !world.menu.open) grabPressed(world);
+    return;
+  }
   if (action === 'menu') {
     if (down) openMenu(world, !world.menu.open);
     return;
@@ -456,7 +568,7 @@ export function press(world, action, down) {
   }
 
   if (action === 'restart') {
-    if (down && world.state === 'over' && world.overFor > 0.45) world.onMenu?.('again');
+    if (down && canRestart(world)) world.onMenu?.('again');
     return;
   }
   if (!(action in world.input)) return;
@@ -466,7 +578,7 @@ export function press(world, action, down) {
   if (world.state === 'ready') {
     // 같이 할 때 판을 여는 건 방장이다. 손님이 누르면 방장에게 부탁이 간다.
     world.mp.on ? world.onMenu?.('again') : (world.state = 'play');
-  } else if (world.state === 'over' && world.overFor > 0.9 && action !== 'duck') {
+  } else if (world.state === 'over' && action !== 'duck' && canRestart(world, 0.9)) {
     world.onMenu?.('again');
   }
 }

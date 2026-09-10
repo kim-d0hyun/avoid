@@ -7,7 +7,7 @@
 import { INK, POOP, POOP_DARK, fillStroke, stroke, wiggle } from './ink.js';
 
 const VARIANTS = 3;
-const BUCKETS = [12, 16, 20, 25];
+const BUCKETS = [10, 13.5, 17, 21];
 const PAD = 9;
 
 /// 세 단 쌓인 고전적인 모양. 밑은 넓고 위로 갈수록 좁아지다 끝이 뾰족하게 말린다.
@@ -112,7 +112,7 @@ function renderSplat(w, seed) {
   return sprite;
 }
 
-const splatCache = [16, 23, 30].map((w, i) => renderSplat(w, i * 11 + 4));
+const splatCache = [13, 19, 25].map((w, i) => renderSplat(w, i * 11 + 4));
 
 export function drawSplat(ctx, splat) {
   const sprite = splatCache[splat.kind];

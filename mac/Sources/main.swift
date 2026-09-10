@@ -30,6 +30,8 @@ private enum HK {
     static let duck: UInt32 = 5     // ⌥↓
     static let restart: UInt32 = 6  // ⌥R
     static let menu: UInt32 = 7     // ⌥M — 게임 안 메뉴
+    static let grab: UInt32 = 8     // ⌥Space — 붙잡기
+    static let grabAlt: UInt32 = 9  // ⌥Z — ⌥Space 를 입력기가 먹는 자리가 있어 뒷길을 둔다
 
     /// 게임 중에만 거는 것들. 숨기면 반드시 푼다 — ⌥←/⌥→ 는 맥에서 「단어 단위 이동」이라
     /// 계속 잡고 있으면 남의 글쓰기를 망친다. 창이 안 보이면 그 키는 원래 주인에게 돌려준다.
@@ -40,11 +42,14 @@ private enum HK {
         (duck, kVK_DownArrow, "duck"),
         (restart, kVK_ANSI_R, "restart"),
         (menu, kVK_ANSI_M, "menu"),
+        (grab, kVK_Space, "grab"),
+        (grabAlt, kVK_ANSI_Z, "grab"),
     ]
 
     static func action(_ id: UInt32) -> String? { play.first { $0.id == id }?.action }
-    static func code(_ action: String) -> CGKeyCode? {
-        play.first { $0.action == action }.map { CGKeyCode($0.code) }
+    /// 한 동작에 키가 둘일 수 있다(붙잡기). 놓았는지 볼 때는 **전부** 떼어져야 놓은 것이다.
+    static func codes(_ action: String) -> [CGKeyCode] {
+        play.filter { $0.action == action }.map { CGKeyCode($0.code) }
     }
 }
 
@@ -217,6 +222,20 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             try? FileManager.default.createDirectory(at: shotDir!, withIntermediateDirectories: true)
             shotTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
                 self?.grabShot()
+            }
+        }
+
+        // 시험용. ⌥H 를 사람 손 없이 눌러 본다 — 숨긴 동안에도 판이 도는지 확인하려고 둔다.
+        //   DDONG_HIDE_AFTER=5      → 5초 뒤 숨긴다
+        //   DDONG_HIDE_AFTER=5,9    → 5초 뒤 숨기고 9초에 다시 보인다
+        if env["DDONG_DEBUG"] != nil, let plan = env["DDONG_HIDE_AFTER"] {
+            let times = plan.split(separator: ",").compactMap { Double($0) }
+            for (index, at) in times.enumerated() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak self] in
+                    guard let self else { return }
+                    self.setHidden(index % 2 == 0)
+                    debugLog("⌥H 눌림 → \(self.isHidden ? "숨김" : "보임")")
+                }
             }
         }
 
@@ -566,8 +585,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     }
 
     private func isDown(_ action: String) -> Bool {
-        guard let code = HK.code(action) else { return false }
-        return CGEventSource.keyState(.combinedSessionState, key: code)
+        HK.codes(action).contains { CGEventSource.keyState(.combinedSessionState, key: $0) }
     }
 
     private func releaseAll() {

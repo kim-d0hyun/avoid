@@ -28,10 +28,12 @@ export function createSession() {
     others: new Map(),   // id → 남의 졸라맨
     alive: new Map(),     // 방장만 씀. id → 살아 있나
     names: new Map(),
-    results: null,        // 판이 끝나면 [[이름, ms, 피한수]]
+    results: null,        // 판이 끝나면 [[이름, ms, 피한수, 번호, 살아남음]]
+    winner: null,         // 이긴 사람 { id, name } — 만세 세리머니에 쓴다
     roundResults: [],     // 방장이 이번 판에 적어 두는 장부
     waiting: false,       // 판 도중에 들어왔다. 다음 판부터.
     round: 0,
+    roster: new Set(),
     sendTimer: 0,
     /// 왕복 시간. 이걸 알아야 「지금쯤 저 사람은 여기 있겠다」를 맞게 계산한다.
     rtt: 0.008,
@@ -48,6 +50,7 @@ function blankOther(id, name) {
     id, name,
     // 마지막으로 받은 상태와, 그걸 받은 뒤 흐른 시간.
     baseX: 0, baseAir: 0, vx: 0, vy: 0, age: 0, errorX: 0, rtt: 0.008,
+    state: 2, waiting: true, grabbing: -1, escapes: 0, dodged: 0, seenEscapes: 0,
     x: 0, air: 0, crouch: 0, tcrouch: 0,
     facing: 1, walk: 0, vyDraw: 0, dead: true, groundY: 0, danger: false, deadFor: 0,
   };
@@ -62,7 +65,20 @@ function blankOther(id, name) {
 /// 새 꾸러미가 오면 자리를 톡 끊어 옮기지 않고, 틀렸던 만큼을 60ms 에 걸쳐 녹인다.
 /// 정확하면서 안 튄다.
 export function interpolate(world, dt) {
+  const me = world.player;
   for (const other of world.mp.others.values()) {
+    // 남이 「나를 잡았다」고 말하면 잡힌 것이다. 판정을 한쪽에만 두어야 서로 안 엇갈린다.
+    if (other.grabbing === world.mp.myId && !other.dead && !me.dead) {
+      if (me.heldBy !== other.id) { me.heldBy = other.id; me.grabbing = -1; }
+    } else if (me.heldBy === other.id) {
+      me.heldBy = -1;
+    }
+    // 내가 잡은 사람이 뿌리쳤으면 놓는다.
+    if (me.grabbing === other.id && other.escapes !== other.seenEscapes) {
+      me.grabbing = -1;
+      me.grabCool = 0.7;
+    }
+    other.seenEscapes = other.escapes;
     other.age = Math.min(other.age + dt, MAX_LEAD);
     other.errorX *= Math.exp(-dt / FIX_TAU);
 
@@ -87,11 +103,16 @@ export function interpolate(world, dt) {
 // MARK: 보내기
 
 /// 자리만 보내면 받는 쪽이 이어 그릴 수가 없다. **속도까지 같이 보낸다.**
+///
+/// 칸: x, vx, air, vy, crouch, facing, 상태, 잡은사람, 뿌리친횟수, 피한수
+/// 상태는 0 살아있음 · 1 죽음 · 2 다음판대기.
 function myPacket(world) {
   const p = world.player;
   const r1 = (v) => Math.round(v * 10) / 10;
+  const state = p.dead ? (world.mp.waiting ? 2 : 1) : 0;
   return ['p', r1(p.x), r1(p.vx), r1(p.air), r1(p.vy),
-          Math.round(p.crouch * 100) / 100, p.facing, p.dead ? 1 : 0];
+          Math.round(p.crouch * 100) / 100, p.facing, state,
+          p.grabbing, p.escapes, world.dodged];
 }
 
 export function pump(world, dt, shell) {
@@ -127,7 +148,8 @@ export function pump(world, dt, shell) {
     // 이걸 더해야 「지금쯤 저 사람이 있을 자리」가 나온다. 안 실으면 손님끼리는
     // 방장을 거치는 만큼 늘 뒤처져 보인다.
     players.push([other.id, other.baseX, other.vx, other.baseAir, other.vy,
-                  other.tcrouch, other.facing, other.dead ? 1 : 0,
+                  other.tcrouch, other.facing, other.state,
+                  other.grabbing, other.escapes, other.dodged,
                   Math.round(other.age * 1000) / 1000]);
   }
   const snapshot = {
@@ -194,7 +216,7 @@ export function handleMessage(world, shell, from, message, api) {
         if (row[0] === mp.myId) continue; // 내 몸은 내가 안다
         const other = mp.others.get(row[0]) ?? blankOther(row[0], mp.names.get(row[0]) ?? '');
         // 여기까지 오는 데 걸린 시간 = 방장이 들고 있던 시간 + 방장에서 나까지의 편도.
-        applyPacket(other, ['p', ...row.slice(1, 8)], (row[8] ?? 0) + mp.rtt / 2);
+        applyPacket(other, ['p', ...row.slice(1, 11)], (row[11] ?? 0) + mp.rtt / 2);
         mp.others.set(row[0], other);
       }
       // 판 도중에 들어왔으면 구경만 한다. 안 보이던 똥에 맞아 죽는 것보다 낫다.
@@ -214,6 +236,7 @@ export function handleMessage(world, shell, from, message, api) {
       return;
     case 'over':
       mp.results = message.results;
+      mp.winner = message.winner ?? null;
       world.state = 'over';
       world.overFor = 0;
       return;
@@ -242,6 +265,11 @@ function applyPacket(other, packet, stale = 0) {
   other.vy = packet[4];
   other.tcrouch = packet[5];
   other.facing = packet[6];
+  other.state = packet[7] ?? 0;
+  other.waiting = other.state === 2;
+  other.grabbing = packet[8] ?? -1;
+  other.escapes = packet[9] ?? 0;
+  other.dodged = packet[10] ?? 0;
   // 0 부터 세지 않는다. 이미 늦게 도착한 소식이므로 그만큼 앞선 자리에서 시작한다.
   other.age = Math.min(stale, MAX_AHEAD);
   // 오차는 「그리던 자리」와 **새로 계산한 지금 자리**의 차이다. baseX 와 재면
@@ -251,42 +279,73 @@ function applyPacket(other, packet, stale = 0) {
   // 너무 많이 틀렸으면 녹이지 않고 그냥 옮긴다 — 뒤늦게 스르륵 가는 게 더 이상하다.
   if (Math.abs(other.errorX) > 90) other.errorX = 0;
 
-  const dead = packet[7] === 1;
+  const dead = other.state !== 0;
   if (dead && !other.dead) other.deadFor = 0;
   other.dead = dead;
 }
 
 // MARK: 판 진행 (방장만)
 
-function recordResult(mp, id, name, ms, dodged) {
+function recordResult(mp, id, name, ms, dodged, survived = false) {
   mp.roundResults ??= [];
   if (mp.roundResults.some((row) => row[3] === id)) return;
-  mp.roundResults.push([name, ms | 0, dodged | 0, id]);
+  mp.roundResults.push([name, ms | 0, dodged | 0, id, survived]);
 }
 
+/// 판이 끝났는지 본다. **마지막 한 사람이 남으면 그 사람이 이기고 끝난다** —
+/// 혼자 남아 계속 뛰는 걸 나머지가 몇 분씩 구경하게 두지 않는다.
+/// 이번 판에 낀 사람이 애초에 하나뿐이면(혼자 방을 연 경우) 그 사람이 죽어야 끝난다.
 export function checkRoundOver(world, shell) {
   const mp = world.mp;
   if (mp.role !== 'host' || world.state !== 'play') return;
-  if (!world.player.dead) return;
-  for (const alive of mp.alive.values()) if (alive) return;
+
+  const roster = mp.roster ?? new Set();
+  const standing = [];
+  if (!world.player.dead) standing.push(mp.myId);
+  for (const id of roster) if (mp.alive.get(id)) standing.push(id);
+
+  const enough = roster.size + 1 >= 2;      // 둘 이상이 시작했나
+  if (standing.length > 1) return;
+  if (standing.length === 1 && !enough) return;
+
+  // 살아남은 사람이 있으면 그 사람 기록도 지금 시각으로 적는다. 이 사람이 1등이다.
+  const survivor = standing[0];
+  if (survivor !== undefined) {
+    const ms = Math.round(world.elapsed * 1000);
+    if (survivor === mp.myId) {
+      recordResult(mp, mp.myId, mp.myName, ms, world.dodged, true);
+    } else {
+      const other = mp.others.get(survivor);
+      recordResult(mp, survivor, mp.names.get(survivor) ?? '누군가', ms, other?.dodged ?? 0, true);
+    }
+  }
 
   const results = (mp.roundResults ?? []).slice().sort((a, b) => b[1] - a[1]);
+  const champion = survivor !== undefined
+    ? { id: survivor, name: results.find((row) => row[3] === survivor)?.[0] ?? '?' }
+    : null;
   mp.results = results;
+  mp.winner = champion;
   world.state = 'over';
   world.overFor = 0;
-  shell.net.send({ t: 'over', results });
+  shell.net.send({ t: 'over', results, winner: champion });
 }
 
 export function startRound(world, shell, api) {
   const mp = world.mp;
+  // 세리머니 중이면 무시한다. 손님이 눌러도, 방장이 눌러도 마찬가지다.
+  if (world.state === 'over' && mp.winner && world.overFor < 3) return;
   if (mp.role !== 'host') {
     shell.net.send({ t: 'again' }); // 손님은 부탁만 한다
     return;
   }
   mp.round++;
   mp.results = null;
+  mp.winner = null;
   mp.roundResults = [];
   mp.waiting = false;
+  // 이번 판에 낀 사람 명단. 도중에 들어온 사람은 여기 없으니 판을 붙잡지 않는다.
+  mp.roster = new Set(mp.others.keys());
   for (const id of mp.others.keys()) {
     mp.alive.set(id, true);
     const other = mp.others.get(id);
@@ -322,6 +381,7 @@ export function peerChanged(world, shell, id, name, joined, api) {
     mp.names.delete(id);
     mp.alive.delete(id);
     mp.others.delete(id);
+    mp.roster?.delete(id);
     if (mp.role === 'host') checkRoundOver(world, shell);
   }
   // 아직 아무도 시작 안 했으면 자리를 다시 나눈다. 겹쳐 선 채로 기다리면 보기 나쁘다.
