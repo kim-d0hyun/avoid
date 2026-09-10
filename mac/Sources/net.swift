@@ -13,7 +13,7 @@ import Network
 let netServiceType = "_ddong._tcp"
 /// 주고받는 꾸러미의 모양 번호. **꾸러미에 칸을 더하거나 뜻을 바꾸면 반드시 올린다.**
 /// 이게 없으면 몇 명만 업데이트한 사무실에서 구·신 버전이 아무 말 없이 붙어 조용히 어긋난다.
-let netProtocol = 3
+let netProtocol = 4
 /// 고정 포트. Bonjour 가 막힌 망에서 `코드@192.168.0.7` 로 직접 붙을 수 있어야 해서 고정한다.
 let netDefaultPort: UInt16 = 51301
 
@@ -445,7 +445,7 @@ final class Net {
                     let note = joined
                         ? "방과 끊겼다. 방장이 앱을 껐거나 와이파이가 끊겼을 수 있다."
                         : "방장에게 닿았는데 붙지 못했다. 두 맥 모두 확인해 보라 —\n"
-                            + "① 시스템 설정 → 개인정보 보호 및 보안 → 로컬 네트워크 에서 「똥피하기」 켜기\n"
+                            + "① 시스템 설정 → 개인정보 보호 및 보안 → 로컬 네트워크 에서 「몰겜」 켜기\n"
                             + "② 메뉴 막대 💩 에서 두 사람 버전이 같은지 (다르면 업데이트 확인)"
                     if lived < 20 {
                         self.giveUpOrRetry(reason: note)

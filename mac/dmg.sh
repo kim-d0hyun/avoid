@@ -7,7 +7,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-name="똥피하기"
+name="몰겜"
 app="dist/mac/$name.app"
 dmg="dist/$name.dmg"
 stage="dist/.dmg-stage"
@@ -43,7 +43,7 @@ macOS 15(Sequoia)부터는 예전처럼 우클릭 → 열기 로 지나갈 수 �
 
   1. 그 창에서  완료  를 누른다.   ⚠️ 휴지통으로 이동 을 누르면 앱이 지워진다
   2. 시스템 설정 → 개인정보 보호 및 보안 을 열고 아래로 내린다
-  3. 「'똥피하기'이(가) 차단되었습니다」 옆의  그래도 열기  → 암호 입력
+  3. 「'몰겜'이(가) 차단되었습니다」 옆의  그래도 열기  → 암호 입력
 
 
 ── 방법 3. 이미 깐 앱을 손으로 풀기
@@ -54,12 +54,12 @@ macOS 15(Sequoia)부터는 예전처럼 우클릭 → 열기 로 지나갈 수 �
 
        xattr -dr com.apple.quarantine 
 
-  2. 똥피하기 앱 아이콘을 터미널 창 안으로 끌어다 놓는다 → 경로가 저절로 채워진다
+  2. 몰겜 앱 아이콘을 터미널 창 안으로 끌어다 놓는다 → 경로가 저절로 채워진다
   3. 엔터
 
   Applications 에 넣었다면 이걸 그대로 붙여 넣어도 된다:
 
-       xattr -dr com.apple.quarantine /Applications/똥피하기.app
+       xattr -dr com.apple.quarantine /Applications/몰겜.app
 
 
 처음 한 번뿐이다. 이후 자동 업데이트는 다시 묻지 않는다.

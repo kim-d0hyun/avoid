@@ -10,7 +10,7 @@
 
 // world.js 와 서로를 부르는 모양이 되지만, 값을 읽는 건 모듈이 다 올라온 뒤(호출 시점)라
 // 문제가 없다. 밀쳐 내는 세기는 물리 상수라 world.js 한 곳에만 둔다.
-import { ESCAPE_SHOVE } from './world.js';
+import { ESCAPE_SHOVE, gameOf, pickGame } from './world.js';
 
 const SEND_HZ = 60;
 /// 예측을 이만큼 넘어가서까지 밀지는 않는다. 꾸러미가 끊기면 그 자리에 세운다.
@@ -189,12 +189,13 @@ export function pump(world, dt, shell) {
     // **판의 크기.** 손님은 이 크기로 세계를 굴리고, 그리는 순간에만 자기 화면에 맞춘다.
     // 각자 자기 화면 크기로 굴리면 똥 떨어지는 자리도, 남이 서 있는 자리도 서로 어긋난다.
     vw: Math.round(world.w), vh: Math.round(world.h),
+    // **무슨 게임을 하고 있나.** 방장이 정하고 방 전체가 따라간다.
+    g: world.gameId,
   };
-  if (world.freshSpawns.length) {
-    snapshot.add = world.freshSpawns.splice(0, world.freshSpawns.length);
-  }
+  // 게임이 손님에게 넘길 것. 똥은 새로 뿌린 것만, 공은 매번 자리와 속도를 통째로.
+  const pack = gameOf(world).pack?.(world);
+  if (pack) snapshot.x = pack;
   shell.net.send(snapshot);
-  world.freshSpawns.length = 0;
 }
 
 // MARK: 받기
@@ -243,6 +244,8 @@ export function handleMessage(world, shell, from, message, api) {
       const hostSeconds = message.ms / 1000;
       world.elapsed += (hostSeconds - world.elapsed) * 0.25;
       mp.round = message.r;
+      // 방장이 다른 게임을 하고 있으면 따라간다. 방 전체가 같은 게임을 하는 게 규칙이다.
+      if (message.g && message.g !== world.gameId) pickGame(world, message.g);
 
       for (const row of message.pl) {
         if (row[0] === mp.myId) continue; // 내 몸은 내가 안다
@@ -255,7 +258,7 @@ export function handleMessage(world, shell, from, message, api) {
       // 아직 아무도 시작 안 했으면 기다릴 것도 없다.
       if (message.st === 'ready') mp.waiting = false;
       else if (mp.waiting) world.player.dead = true;
-      if (message.add) for (const poop of message.add) api.addPoop(world, poop);
+      if (message.x) gameOf(world).unpack?.(world, message.x);
       if (message.st === 'ready' && world.state !== 'ready') world.state = 'ready';
       return;
     }
@@ -327,6 +330,20 @@ function recordResult(mp, id, name, ms, dodged, survived = false) {
 /// 판이 끝났는지 본다. **마지막 한 사람이 남으면 그 사람이 이기고 끝난다** —
 /// 혼자 남아 계속 뛰는 걸 나머지가 몇 분씩 구경하게 두지 않는다.
 /// 이번 판에 낀 사람이 애초에 하나뿐이면(혼자 방을 연 경우) 그 사람이 죽어야 끝난다.
+/// 게임이 스스로 「끝」이라고 할 때 (배구의 다섯 점처럼). 방장만 부른다.
+///
+/// 똥피하기는 마지막 한 명이 남으면 끝이고, 배구는 점수로 끝난다. 끝나는 이유는
+/// 게임마다 다르지만 **끝난 뒤에 벌어지는 일은 같다** — 순위표, 만세, 다음 판 기다리기.
+export function endRound(world, shell, { winner, results }) {
+  const mp = world.mp;
+  if (mp.role !== 'host' || world.state !== 'play') return;
+  mp.results = results ?? [];
+  mp.winner = winner ?? null;
+  world.state = 'over';
+  world.overFor = 0;
+  shell.net.send({ t: 'over', results: mp.results, winner: mp.winner });
+}
+
 export function checkRoundOver(world, shell) {
   const mp = world.mp;
   if (mp.role !== 'host' || world.state !== 'play') return;

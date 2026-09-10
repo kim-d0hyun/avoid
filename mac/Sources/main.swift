@@ -1,4 +1,4 @@
-// 똥피하기 — macOS 셸.
+// 몰겜 — macOS 셸.
 //
 // 게임은 전부 web/ 안의 Canvas·JS다. 이 파일이 하는 일은 그걸 얹을 자리를 만드는 것뿐이다:
 // 바탕화면을 덮는 투명·클릭 통과 오버레이, 전역 핫키, 메뉴바 아이콘, 기록 저장.
@@ -16,6 +16,7 @@ private let showNotification = Notification.Name("dev.turban.ddong-dodge.show")
 private let bestMsKey = "bestMs"
 private let bestDodgedKey = "bestDodged"
 private let screenKey = "screenNumber"
+private let fadeKey = "windowFade"
 private let nameKey = "playerName"
 
 /// 키를 아직 잡고 있는지 확인하는 주기. 상태를 물어보기만 하므로 손쉬운 사용 권한이 필요 없다.
@@ -149,6 +150,28 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
 
     /// 이름을 손으로 정한 적이 있나.
     private var hasNamed: Bool { !(UserDefaults.standard.string(forKey: nameKey) ?? "").isEmpty }
+
+    /// 창 투명도. 남의 작업 화면 위에 얹는 게임이라 「살짝만 보이게」 두고 싶을 때가 있다.
+    ///
+    /// 그림을 옅게 그리는 게 아니라 **창 자체를 흐리게** 한다. 잉크만 옅게 그리면 종이 바탕과
+    /// 후광이 따로 놀아서 글씨가 뭉갠다. 창 투명도는 다 그린 결과를 통째로 옅게 하므로
+    /// 낙서가 낙서인 채로 옅어진다.
+    private var windowFade: Double {
+        get {
+            let saved = UserDefaults.standard.double(forKey: fadeKey)
+            return saved <= 0 ? 1 : min(1, max(0.4, saved))
+        }
+        set {
+            UserDefaults.standard.set(min(1, max(0.4, newValue)), forKey: fadeKey)
+            applyFade()
+            refreshMenu()
+        }
+    }
+
+    private func applyFade() {
+        window?.alphaValue = windowFade
+        webView?.evaluateJavaScript("window.__ddongFade && window.__ddongFade(\(windowFade))")
+    }
 
     private var bestMs: Int {
         get { UserDefaults.standard.integer(forKey: bestMsKey) }
@@ -328,6 +351,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         if #available(macOS 12.0, *) { webView.underPageBackgroundColor = .clear }
         webView.load(URLRequest(url: URL(string: "\(webScheme)://app/index.html")!))
 
+        window.alphaValue = windowFade
         window.contentView?.addSubview(webView)
         window.orderFrontRegardless() // 포커스는 절대 가져가지 않는다
     }
@@ -356,6 +380,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
           onScreens: (handler) => { window.__ddongScreens = handler },
           pickScreen: (number) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'screen', number,
+          }),
+          fade: \(windowFade),
+          setFade: (value) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'fade', value,
           }),
           net: {
             role: 'off', code: null, id: 0, name: '\(Net.escape(playerName))', peers: [],
@@ -405,7 +433,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         window.setFrame(screen.visibleFrame, display: true)
         debugLog("창 → \(screen.localizedName)(#\(screen.number)) "
                + "\(Int(window.frame.width))×\(Int(window.frame.height)) "
-               + "@\(Int(window.frame.minX)),\(Int(window.frame.minY))")
+               + "@\(Int(window.frame.minX)),\(Int(window.frame.minY)) "
+               + "투명도 \(Int(window.alphaValue * 100))%")
     }
 
     /// 지금 물려 있는 화면들. 이름 짓는 규칙은 screens.swift 에 있다.
@@ -438,7 +467,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     private func buildStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "💩"
-        statusItem.button?.toolTip = "똥피하기 — ⌥H 숨기기 · ⌥M 메뉴"
+        statusItem.button?.toolTip = "몰겜 — ⌥H 숨기기 · ⌥M 메뉴"
         refreshMenu()
     }
 
@@ -482,6 +511,20 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
                               action: nil, keyEquivalent: "")
         help.isEnabled = false
         menu.addItem(help)
+
+        let fades = NSMenu()
+        for step in [1.0, 0.85, 0.7, 0.55, 0.4] {
+            let item = NSMenuItem(title: step == 1 ? "그대로" : "\(Int(step * 100))%",
+                                  action: #selector(pickFade(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = Int(step * 100)
+            item.state = abs(step - windowFade) < 0.02 ? .on : .off
+            fades.addItem(item)
+        }
+        let fadeParent = NSMenuItem(title: "투명도", action: nil, keyEquivalent: "")
+        fadeParent.submenu = fades
+        menu.addItem(.separator())
+        menu.addItem(fadeParent)
 
         let choices = screenChoices()
         if choices.count > 1 {
@@ -531,6 +574,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
 
     @objc private func pickScreen(_ sender: NSMenuItem) {
         chooseScreen(sender.tag)
+    }
+
+    @objc private func pickFade(_ sender: NSMenuItem) {
+        windowFade = Double(sender.tag) / 100
     }
 
     // MARK: 입력
@@ -827,6 +874,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             }
         case "screen":
             if let number = body["number"] as? Int { chooseScreen(number) }
+        case "fade":
+            if let value = body["value"] as? Double { windowFade = value }
         case "net":
             // 게임이 짠 꾸러미를 그대로 흘려보낸다. 셸은 안을 열어 보지 않는다.
             if let payload = body["payload"] as? String {

@@ -1,8 +1,7 @@
 // 게임 상태. 그리는 일은 하지 않는다.
 
-import { BODY_H } from '../draw/stickman.js';
-import { bucketFor, SPLAT_KINDS } from '../draw/poop.js';
 import { createSession, interpolate } from './net.js';
+import { games, gameById, DEFAULT_GAME } from '../games/index.js';
 
 const ACCEL = 5400;
 const MAX_SPEED = 620;
@@ -12,7 +11,6 @@ const AIR_CONTROL = 0.62;
 const JUMP_V = 480;
 const GRAVITY = 1760;
 const HALF_W = 9;
-const SPLAT_CAP = 48;
 
 // 사람끼리 부딪히는 느낌.
 //
@@ -68,20 +66,19 @@ const KNOCK_TAU = 0.17;     // 밀려남이 잦아드는 시간
 export const VICTORY_SECONDS = 3;
 export { ESCAPE_SHOVE };
 
-/// 난이도. 시간이 곧 난이도이고 다른 손잡이는 없다.
-/// 속도는 3.8배에서 멈추지만 **쏟아지는 양은 안 멈춘다** — 마지막에 사람을 잡는 건 속도가
-/// 아니라 밀도다. 시작부터 여덟 덩이쯤 떠 있고, 40초에는 화면이 반쯤 찬다.
-export function difficulty(t) {
-  return {
-    speed: Math.min(1 + t * 0.040, 3.2),
-    interval: Math.max(0.06, 0.26 * Math.pow(0.970, t)),
-  };
-}
 
-export function createWorld(best) {
+export function createWorld(best, gameId = DEFAULT_GAME) {
+  const game = gameById(gameId);
   return {
     w: 0, h: 0, groundY: 0,
-    state: 'ready',      // ready → play → over
+    /// pick → ready → play → over.
+    /// pick 은 무슨 게임을 할지 고르는 화면이다. 켜면 여기서 시작한다.
+    state: 'pick',
+    gameId: game.id,
+    /// 지금 게임만 쓰는 살림살이. 똥이든 공이든 전부 여기 들어간다.
+    bag: game.fresh(),
+    /// 게임이 「이걸로 끝」이라고 알릴 때 부른다 (배구의 다섯 점처럼).
+    onGameOver: null,
     elapsed: 0,          // 초
     dodged: 0,
     best: { ms: best.ms | 0, dodged: best.dodged | 0 },
@@ -89,18 +86,16 @@ export function createWorld(best) {
     frozen: 0,           // 다시 보일 때 주는 준비 시간
     overFor: 0,
     shake: 0,
-    poops: [],
-    splats: [],
-    /// 이번에 새로 뿌린 똥. 방장이 손님들에게 넘길 때만 쌓인다.
-    freshSpawns: [],
     mp: createSession(),
     myResult: null,
     /// ⌥M 으로 여는 게임 안 메뉴. 메뉴 막대 아이콘을 못 찾아도 여기서 다 된다.
-    menu: { open: false, index: 0, confirmQuit: false, pickScreen: false },
+    menu: { open: false, index: 0, confirmQuit: false, sub: null },
     /// 셸이 알려 주는, 지금 물려 있는 화면들. 한 대뿐이면 비어 있는 것과 같이 친다.
     screens: [],
-    spawnTimer: 0,
-    stormTimer: 22,
+    /// 고르는 화면에서 짚고 있는 줄.
+    pick: 0,
+    /// 창 투명도. 셸이 정하고 알려 준다 — 실제로 흐리게 만드는 건 창 쪽 일이다.
+    fade: 1,
     input: { left: false, right: false, jump: false, duck: false },
     player: {
       x: 0, vx: 0, air: 0, vy: 0, crouch: 0, facing: 1, walk: 0, squeeze: 0,
@@ -124,17 +119,30 @@ export function resize(world, w, h) {
   world.player.groundY = world.groundY;
   if (wasCentered) world.player.x = w / 2;
   world.player.x = Math.max(HALF_W + 12, Math.min(w - HALF_W - 12, world.player.x));
-  for (const splat of world.splats) splat.y = world.groundY + 2;
+  gameOf(world).resize?.(world);
+}
+
+/// 지금 하고 있는 게임.
+export function gameOf(world) { return gameById(world.gameId); }
+
+/// 게임을 갈아 끼운다. 판은 처음부터 다시 시작한다.
+export function pickGame(world, gameId) {
+  world.gameId = gameById(gameId).id;
+  restart(world);
+  world.state = 'ready';
 }
 
 export function restart(world) {
   // 누르고 있는 키와 기록 콜백은 그대로 넘긴다 — 방향키를 잡은 채 다시 시작하면
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
-  const { w, h, best, input, onRecord, onDeath, onMenu, mp, menu, screens } = world;
-  Object.assign(world, createWorld(best),
-                { w, h, input, onRecord, onDeath, onMenu, mp, menu, screens });
+  const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
+          mp, menu, screens, gameId, pick, fade } = world;
+  Object.assign(world, createWorld(best, gameId),
+                { w, h, input, onRecord, onDeath, onMenu, onGameOver, mp, menu, screens, pick, fade });
+  world.state = 'ready';
   resize(world, w, h);
   spread(world);
+  gameOf(world).begin?.(world);
 }
 
 /// 같이 할 때 다 같은 자리에 서면 첫 프레임부터 서로 밀어내며 엉킨다.
@@ -143,90 +151,21 @@ export function spread(world) {
   const mp = world.mp;
   if (!mp.on) {
     world.player.x = world.w / 2;
+    gameOf(world).stand?.(world, 0, 1);
     return;
   }
   const ids = [mp.myId, ...mp.others.keys()].sort((a, b) => a - b);
   const slot = Math.max(0, ids.indexOf(mp.myId));
   world.player.x = (world.w * (slot + 1)) / (ids.length + 1);
   world.player.vx = 0;
+  gameOf(world).stand?.(world, slot, ids.length);
 }
 
-function spawn(world, x, sizeBias = Math.random()) {
-  const r = 10 + sizeBias * 12;
-  const { speed } = difficulty(world.elapsed);
-  // 큰 놈은 느리고 작은 놈은 빠르다. 크기만 보고도 언제 닿을지 가늠할 수 있어야 한다.
-  const fall = (322 - r * 4.0) * speed * (0.92 + Math.random() * 0.16);
-  const poop = {
-    x, y: -r * 2 - 10, r,
-    bucket: bucketFor(r),
-    vy: fall,
-    vx: (Math.random() - 0.5) * 46,
-    spin: (Math.random() - 0.5) * 0.5,
-    spinV: (Math.random() - 0.5) * 0.95,
-    seed: (Math.random() * 3) | 0,
-  };
-  world.poops.push(poop);
-  // 방장은 뿌린 것을 그대로 넘긴다. 손님은 이 초기값으로 **같은 물리를 각자 돌린다** —
-  // 매 프레임 좌표를 받아 그리면 20Hz 로 뚝뚝 끊긴다.
-  if (world.mp.role === 'host') {
-    world.freshSpawns.push([poop.x, poop.y, poop.r, poop.vx, poop.vy, poop.spin, poop.spinV, poop.seed]);
-  }
-}
 
-/// 방장이 뿌린 똥을 그대로 올린다. 판 크기가 같으니 자리도 그대로 쓴다.
-export function addPoop(world, [x, y, r, vx, vy, spin, spinV, seed]) {
-  world.poops.push({ x, y, r, bucket: bucketFor(r), vy, vx, spin, spinV, seed });
-}
 
-function randomX(world) {
-  return 24 + Math.random() * (world.w - 48);
-}
 
-/// 소나기. 한 줄로 쏟아붓되 **반드시 한 칸은 비워 둔다** — 못 피하는 벽은 난이도가 아니라 버그다.
-///
-/// 비워 두는 칸은 화면 아무 데나가 아니라 **지금 서 있는 자리 근처**에 낸다. 반대편 끝에 내면
-/// 후반 낙하 속도(초당 850픽셀)에서는 전력으로 달려도 못 닿아서, 「비어 있지만 못 가는 칸」이 된다.
-/// 그래도 150픽셀쯤은 떨어뜨려 둬서 가만히 서 있으면 맞는다.
-function storm(world) {
-  const margin = 40;
-  const shift = (Math.random() < 0.5 ? -1 : 1) * (110 + Math.random() * 70);
-  const safe = Math.max(margin, Math.min(world.w - margin, world.player.x + shift));
-  const lanes = 7;
-  for (let i = 0; i < lanes; i++) {
-    const x = 30 + ((i + Math.random() * 0.6) / lanes) * (world.w - 60);
-    if (Math.abs(x - safe) < 130) continue;
-    spawn(world, x, Math.random() * 0.6);
-  }
-}
 
-function land(world, poop) {
-  world.dodged++;
-  world.splats.push({
-    x: poop.x, y: world.groundY + 2,
-    kind: Math.max(0, Math.min(SPLAT_KINDS - 1, Math.round((poop.r - 10) / 6))),
-    flip: Math.random() < 0.5 ? -1 : 1,
-    // 크기와 진하기를 조금씩 흩어 놓는다. 똑같은 자국이 줄지어 있으면 도장 찍은 것처럼 보인다.
-    size: 0.82 + Math.random() * 0.36,
-    alpha: 0.7 + Math.random() * 0.3,
-    pop: 0,
-  });
-  if (world.splats.length > SPLAT_CAP) world.splats.shift();
-}
 
-function hits(player, poop) {
-  const height = BODY_H * (1 - 0.44 * player.crouch);
-  const halfW = HALF_W + player.crouch * 5;
-  const feet = player.groundY - player.air;
-  const top = feet - height;
-  // 원 대 사각형. 사각형에서 원 중심에 가장 가까운 점까지의 거리를 잰다.
-  const cx = Math.max(player.x - halfW, Math.min(poop.x, player.x + halfW));
-  const cy = Math.max(top, Math.min(poop.y, feet));
-  const dx = poop.x - cx;
-  const dy = poop.y - cy;
-  // 0.72 배. 그림보다 판정을 좁게 잡아야 「스쳤는데 죽었다」가 안 나온다.
-  const rr = poop.r * 0.72;
-  return dx * dx + dy * dy < rr * rr;
-}
 
 /// 남과 부딪히는 힘. 딱딱하게 막지 않는다 — 몸은 겹치되, 깊이 겹칠수록 급하게 밀려난다.
 ///
@@ -328,7 +267,7 @@ function movePlayer(world, dt) {
 
 /// 맞았다. 혼자 할 때는 여기서 판이 끝나지만, 같이 할 때는 **나만 빠진다** —
 /// 남은 사람들의 똥은 계속 떨어져야 하고, 나는 넘어진 채로 그걸 보게 된다.
-function kill(world) {
+export function kill(world) {
   const p = world.player;
   p.grabbing = -1;
   p.heldBy = -1;
@@ -369,77 +308,23 @@ export function update(world, dt) {
   world.shake = Math.max(0, world.shake - dt * 3.2);
   if (world.mp.on) interpolate(world, dt);
 
+  const game = gameOf(world);
+
   if (world.state === 'over') {
     world.overFor += dt;
-    for (const splat of world.splats) splat.pop = Math.min(1, splat.pop + dt * 9);
+    game.update(world, dt);
     return;
   }
 
-  if (world.mp.on) stepGrab(world, dt);
+  if (world.mp.on && !game.noGrab) stepGrab(world, dt);
   if (!p.dead) movePlayer(world, dt);
 
-  if (world.state === 'ready') return;
+  // 시작 전에도 게임은 굴린다. 배구는 여기서 공을 올려 두고 기다린다 —
+  // 시작 신호가 와야 공이 생기면 첫 프레임에 공이 화면 구석에서 튀어나온다.
+  if (world.state === 'ready' || world.state === 'pick') { game.update(world, dt); return; }
 
   world.elapsed += dt;
-  const { interval } = difficulty(world.elapsed);
-
-  // 손님은 똥을 뿌리지 않는다. 방장이 뿌린 것을 받아 각자 굴린다.
-  if (world.mp.role === 'guest') {
-    stepPoops(world, dt);
-    return;
-  }
-
-  world.spawnTimer -= dt;
-  while (world.spawnTimer <= 0) {
-    spawn(world, randomX(world));
-    // 30초부터는 가끔 둘씩. 겹쳐 떨어지면 두 덩이가 한 덩이로 보이기만 하고 난이도는 그대로다.
-    // 벽에 붙어 있으면 반대쪽으로 떼어, 잘라 낸 뒤에도 간격이 남게 한다.
-    if (world.elapsed > 30 && Math.random() < 0.18) {
-      const first = world.poops[world.poops.length - 1];
-      const away = first.x > world.w / 2 ? -1 : 1;
-      const x = first.x + away * (190 + Math.random() * 160);
-      spawn(world, Math.max(24, Math.min(world.w - 24, x)));
-    }
-    world.spawnTimer += interval;
-  }
-
-  world.stormTimer -= dt;
-  if (world.stormTimer <= 0) {
-    storm(world);
-    world.stormTimer = 20 + Math.random() * 6;
-  }
-
-  stepPoops(world, dt);
-}
-
-/// 똥을 굴리고, 바닥에 닿은 것은 얼룩으로 바꾸고, 나를 맞혔는지 본다.
-/// 방장이든 손님이든 **같은 함수를 돌린다** — 판정을 각자 자기 화면 기준으로 해야
-/// 「내 눈에는 안 맞았는데 죽었다」가 안 나온다.
-function stepPoops(world, dt) {
-  const p = world.player;
-  let danger = false;
-
-  for (let i = world.poops.length - 1; i >= 0; i--) {
-    const poop = world.poops[i];
-    poop.y += poop.vy * dt;
-    poop.x += poop.vx * dt;
-    poop.spin += poop.spinV * dt;
-
-    if (poop.y - poop.r * 0.6 > world.groundY) {
-      land(world, poop);
-      world.poops.splice(i, 1);
-      continue;
-    }
-    if (p.dead) continue;
-    if (Math.abs(poop.x - p.x) < 66 && poop.y > world.groundY - 260) danger = true;
-    if (hits(p, poop)) {
-      kill(world);
-      break;
-    }
-  }
-  p.danger = danger && !p.dead;
-
-  for (const splat of world.splats) splat.pop = Math.min(1, splat.pop + dt * 9);
+  game.update(world, dt);
 }
 
 /// 다음 판을 시작해도 되는 때인가. 우승 세리머니 중에는 안 된다.
@@ -449,6 +334,10 @@ export function canRestart(world, minimum = 0.45) {
   return world.overFor > wait;
 }
 
+/// 고를 수 있는 투명도. 100% 는 지금까지와 같고, 아래로 갈수록 바탕화면이 비쳐 보인다.
+/// 40% 밑으로는 안 내려간다 — 안 보이는 게임은 숨긴 것과 같고, 그건 ⌥H 가 할 일이다.
+export const FADES = [1, 0.85, 0.7, 0.55, 0.4];
+
 /// 메뉴에 세울 것들. 상황에 따라 달라지므로 그릴 때와 고를 때가 같은 함수를 본다.
 export function menuItems(world) {
   if (world.menu.confirmQuit) {
@@ -456,7 +345,15 @@ export function menuItems(world) {
   }
   // 화면 고르기는 한 겹 안으로 들어간다. 모니터가 셋이면 첫 화면이 그것만으로 꽉 찬다.
   // 보던 중에 모니터를 뽑아 한 대만 남으면 고를 것이 없으니 그냥 첫 화면으로 돌아간다.
-  if (world.menu.pickScreen && world.screens.length > 1) {
+  if (world.menu.sub === 'fade') {
+    return FADES.map((f) => ({
+      id: `fade:${f}`,
+      label: f === 1 ? '그대로' : `${Math.round(f * 100)}%`,
+      note: f === 1 ? '지금까지와 같다' : '바탕화면이 비친다',
+      mark: Math.abs(f - world.fade) < 0.02,
+    }));
+  }
+  if (world.menu.sub === 'screens' && world.screens.length > 1) {
     return world.screens.map((screen) => ({
       id: `screen:${screen.number}`,
       label: screen.name,
@@ -465,7 +362,8 @@ export function menuItems(world) {
     }));
   }
   const items = [{ id: 'resume', label: '이어서 하기' }];
-  if (world.state !== 'ready' && (world.state !== 'over' || canRestart(world))) {
+  // 「다시 시작」은 판을 하고 있을 때만. 고르는 화면과 시작 전에는 다시 시작할 판이 없다.
+  if (world.state === 'play' || (world.state === 'over' && canRestart(world))) {
     items.push({ id: 'again', label: '다시 시작' });
   }
   if (world.mp.on) {
@@ -474,6 +372,11 @@ export function menuItems(world) {
     items.push({ id: 'host', label: '방 만들기' });
     items.push({ id: 'join', label: '코드로 입장' });
   }
+  items.push({ id: 'pick', label: '게임 바꾸기', note: gameById(world.gameId).name });
+  items.push({
+    id: 'fade', label: '투명도',
+    note: world.fade >= 0.99 ? '그대로' : `${Math.round(world.fade * 100)}%`,
+  });
   if (world.screens.length > 1) {
     const here = world.screens.find((screen) => screen.current);
     items.push({ id: 'screens', label: '띄울 화면 바꾸기', note: here?.name ?? '' });
@@ -487,7 +390,7 @@ function openMenu(world, open) {
   world.menu.open = open;
   world.menu.index = 0;
   world.menu.confirmQuit = false;
-  world.menu.pickScreen = false;
+  world.menu.sub = null;
   // 메뉴로 들어가면 잡고 있던 방향키는 놓은 것으로 친다. 안 그러면 나올 때 혼자 달린다.
   if (open) for (const key of Object.keys(world.input)) world.input[key] = false;
 }
@@ -504,9 +407,18 @@ function chooseMenu(world) {
       world.menu.confirmQuit = true;
       world.menu.index = 1; // 기본 선택은 「아니」 — 손이 미끄러져 꺼지면 안 된다
       return;
+    case 'pick':
+      openMenu(world, false);
+      world.state = 'pick';
+      world.pick = Math.max(0, games.findIndex((g) => g.id === world.gameId));
+      return;
     case 'screens':
-      world.menu.pickScreen = true;
+      world.menu.sub = 'screens';
       world.menu.index = Math.max(0, world.screens.findIndex((screen) => screen.current));
+      return;
+    case 'fade':
+      world.menu.sub = 'fade';
+      world.menu.index = Math.max(0, FADES.findIndex((f) => Math.abs(f - world.fade) < 0.02));
       return;
     case 'again':
       openMenu(world, false);
@@ -515,7 +427,8 @@ function chooseMenu(world) {
     default:
       // 화면을 옮기는 동안은 메뉴를 열어 둔다. 창이 그 모니터에 뜨는 걸 눈으로 보고
       // 아니다 싶으면 바로 다른 걸 고를 수 있어야 한다.
-      if (picked.id.startsWith('screen:')) {
+      // 화면과 투명도는 고르고도 메뉴를 열어 둔다. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다.
+      if (picked.id.startsWith('screen:') || picked.id.startsWith('fade:')) {
         world.onMenu?.(picked.id);
         return;
       }
@@ -623,7 +536,22 @@ function stepGrab(world, dt) {
 }
 
 export function press(world, action, down) {
+  // 고르는 화면. 여기서는 ⌥↑↓ 로 고르고 ⌥→ 로 시작하는 것 말고 아무것도 안 된다.
+  if (world.state === 'pick' && !world.menu.open) {
+    if (!down) return;
+    if (action === 'jump') world.pick = (world.pick + games.length - 1) % games.length;
+    if (action === 'duck') world.pick = (world.pick + 1) % games.length;
+    if (action === 'right' || action === 'restart') pickGame(world, games[world.pick].id);
+    if (action === 'menu') openMenu(world, true);
+    return;
+  }
   if (action === 'grab') {
+    const game = gameOf(world);
+    if (game.noGrab) {
+      // 붙잡기가 없는 게임에서는 이 키를 게임이 가져간다 (배구의 때리기).
+      if (down && !world.menu.open) game.action?.(world);
+      return;
+    }
     // 누르고 있는 동안 붙잡는다. 메뉴가 열려 있어도 **떼는 건** 받아야 한다 —
     // 안 그러면 잡은 채 메뉴를 열었다 닫는 것만으로 영영 붙잡고 있게 된다.
     if (!down) grabReleased(world);
@@ -645,7 +573,7 @@ export function press(world, action, down) {
     // 첫 화면이면 메뉴를 닫는다.
     if (action === 'left') {
       if (world.menu.confirmQuit) { world.menu.confirmQuit = false; world.menu.index = 0; }
-      else if (world.menu.pickScreen) { world.menu.pickScreen = false; world.menu.index = 0; }
+      else if (world.menu.sub) { world.menu.sub = null; world.menu.index = 0; }
       else openMenu(world, false);
     }
     return;

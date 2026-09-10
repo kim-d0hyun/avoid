@@ -66,7 +66,7 @@ jobs:
           ./mac/notarize.sh
           # 자동 업데이트가 받아 가는 zip 은 공증된 앱으로 다시 싼다.
           rm -f dist/ddong-dodge-mac.zip
-          (cd dist/mac && ditto -c -k --keepParent "똥피하기.app" ../ddong-dodge-mac.zip)
+          (cd dist/mac && ditto -c -k --keepParent "몰겜.app" ../ddong-dodge-mac.zip)
 
       - name: 자산 이름을 아스키로
         run: |
@@ -89,12 +89,12 @@ jobs:
 
           1. 그 창에서 **완료** 를 누른다 (휴지통으로 이동 아님)
           2. **시스템 설정 → 개인정보 보호 및 보안** 을 열고 아래로 내린다
-          3. 「'똥피하기'이(가) 차단되었습니다」 옆의 **그래도 열기** 를 누른다
+          3. 「'몰겜'이(가) 차단되었습니다」 옆의 **그래도 열기** 를 누른다
 
           터미널이 편하면 이 한 줄이면 끝난다:
 
           ```
-          xattr -dr com.apple.quarantine /Applications/똥피하기.app
+          xattr -dr com.apple.quarantine /Applications/몰겜.app
           ```
 
           USB 나 사내 공유 폴더로 받은 경우에는 이 경고 자체가 안 뜬다.

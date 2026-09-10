@@ -1,12 +1,12 @@
 // 부팅, 화면 크기, 루프, 셸과의 연결.
 
 import { boil, shirtColor } from './draw/ink.js';
-import { drawPoop, drawSplat } from './draw/poop.js';
 import { drawStickman } from './draw/stickman.js';
 import { makeGround, drawClock, drawIntro, drawFreeze, drawStamp, drawRoom, drawResults, drawMenu,
-  drawVictory } from './draw/hud.js';
-import { createWorld, resize, update, press, restart, addPoop, spread } from './game/world.js';
-import { pump, handleMessage, peerChanged, roleChanged, reportDeath, startRound } from './game/net.js';
+  drawVictory, drawPick } from './draw/hud.js';
+import { createWorld, resize, update, press, restart, spread, gameOf } from './game/world.js';
+import { pump, handleMessage, peerChanged, roleChanged, reportDeath, startRound,
+  endRound } from './game/net.js';
 
 /// 셸이 없을 때(브라우저에서 열어 볼 때)도 돌아가도록 빈 껍데기를 둔다.
 const shell = window.ddong ?? {
@@ -17,6 +17,8 @@ const shell = window.ddong ?? {
   screens: [],
   onScreens() {},
   pickScreen() {},
+  fade: 1,
+  setFade() {},
   log: console.log.bind(console),
   net: { role: 'off', code: null, id: 0, name: '나', send() {}, onMessage() {}, onRole() {}, onPeer() {} },
 };
@@ -40,10 +42,33 @@ world.onMenu = (action) => {
     shell.pickScreen?.(Number(action.slice(7)));
     return;
   }
+  // 흐리게 만드는 건 창이 하는 일이다. 그림을 옅게 그리면 종이와 잉크가 따로 흐려져서
+  // 글씨가 뭉갠다 — 창 전체의 투명도를 낮춰야 낙서 그대로 옅어진다.
+  if (action.startsWith('fade:')) {
+    shell.setFade?.(Number(action.slice(5)));
+    return;
+  }
   const name = SHELL_ACTIONS[action];
   if (name) shell.menu?.(name);
 };
 
+// 게임이 「이걸로 끝」이라고 알려 올 때. 같이 하는 중이면 방 전체에 알리고,
+// 혼자면 그냥 판을 닫는다.
+world.onGameOver = (result) => {
+  if (world.mp.on) {
+    if (world.mp.role !== 'host') return;   // 끝났다고 정하는 건 방장이다
+    endRound(world, shell, {
+      winner: { id: -1, name: result.name },
+      results: result.rows ?? [],
+    });
+  } else {
+    world.state = 'over';
+    world.overFor = 0;
+  }
+};
+
+world.fade = shell.fade ?? 1;
+window.__ddongFade = (value) => { world.fade = value; };
 world.screens = shell.screens ?? [];
 shell.onScreens?.((list) => { world.screens = Array.isArray(list) ? list : []; });
 
@@ -130,7 +155,7 @@ shell.net.onRole((role, code, id, name) => {
 shell.net.onPeer((id, name, joined) => peerChanged(world, shell, id, name, joined, { spread }));
 // 셸이 한 프레임치를 모아서 이미 풀린 객체로 넘겨준다.
 shell.net.onMessage((from, message) => {
-  handleMessage(world, shell, from, message, { addPoop, restart, setSize });
+  handleMessage(world, shell, from, message, { restart, setSize });
 });
 
 // 브라우저에서 열어 볼 때와, 혹시 창이 키를 직접 받게 됐을 때의 길.
@@ -194,6 +219,23 @@ function makeBot(seed) {
     const p = world.player;
     if (p.dead) { hold('left', false); hold('right', false); hold('jump', false); return; }
 
+    // 배구는 쫓아갈 것이 똥이 아니라 공이다. 공 밑으로 달려가서 닿으면 때린다.
+    const ball = world.bag?.ball;
+    if (ball && world.gameId === 'volley') {
+      const mine = Math.sign(p.x - world.w / 2) || 1;
+      const theirs = Math.sign(ball.x - world.w / 2) || 1;
+      // 우리 코트로 오는 공만 쫓는다. 남의 코트까지 넘어가면 네트에 막힌다.
+      const goTo = mine === theirs ? ball.x : world.w / 2 + mine * world.w * 0.2;
+      const gap = goTo - p.x;
+      hold('left', gap < -14);
+      hold('right', gap > 14);
+      const close = Math.abs(ball.x - p.x) < 70 && ball.y > world.groundY - 220;
+      hold('jump', close && ball.y < world.groundY - 90);
+      grabWait -= dt;
+      if (close && grabWait <= 0) { tap('grab'); grabWait = 0.25; }
+      return;
+    }
+
     // 붙잡혔으면 잠깐 버티다 뿌리친다. 바로 풀면 붙잡는 장면이 안 보인다.
     grabWait -= dt;
     if (p.heldBy >= 0) {
@@ -219,7 +261,7 @@ function makeBot(seed) {
     // 제일 급한 똥. 남은 시간이 짧고 가까울수록 급하다.
     let worst = null;
     let best = 1e9;
-    for (const poop of world.poops) {
+    for (const poop of (world.bag.poops ?? [])) {
       const eta = (world.groundY - poop.y) / poop.vy;
       const gap = Math.abs(poop.x - p.x);
       if (eta > 1.3 || gap > 300) continue;
@@ -290,12 +332,11 @@ function render(time) {
   }
 
   if (ground) ctx.drawImage(ground, 0, world.groundY - 8);
-  for (const splat of world.splats) upright(splat.x, splat.y, () => drawSplat(ctx, splat));
-  for (const poop of world.poops) upright(poop.x, poop.y, () => drawPoop(ctx, poop, boilFrame));
+  gameOf(world).draw(ctx, world, time, boilFrame, upright);
 
   // 우승 세리머니 중에는 판 위의 사람들을 지운다. 마지막에 서 있던 자리에 시체와
   // 구경꾼이 그대로 널려 있으면, 가운데서 만세 부르는 사람이 그 속에 묻힌다.
-  const ceremony = world.state === 'over' && !!world.mp.winner;
+  const ceremony = (world.state === 'over' && !!world.mp.winner) || world.state === 'pick';
 
   if (!ceremony) {
     // 남들을 먼저 그리고 내가 맨 위에 선다. 겹쳤을 때 내 몸을 놓치면 안 된다.
@@ -316,6 +357,11 @@ function render(time) {
   // ── 글자판은 화면 좌표로. 판이 커지든 작아지든 글씨 크기는 그대로여야 읽힌다.
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const hud = { ...world, w: screenW, h: screenH, groundY: world.groundY * sy };
+  if (world.state === 'pick') {
+    drawPick(ctx, hud, time);
+    if (world.menu.open) drawMenu(ctx, hud);
+    return;
+  }
   drawClock(ctx, hud);
   if (world.mp.on) drawRoom(ctx, hud);
   if (world.state === 'ready') drawIntro(ctx, hud, time);

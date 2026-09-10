@@ -142,8 +142,17 @@ final class Updater {
         _ = run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", found.path])
 
         let here = Bundle.main.bundleURL
+        // 앱 이름이 바뀔 수 있다(똥피하기 → 몰겜). replaceItemAt 은 **있던 자리 이름을 지켜서**
+        // 갈아 끼우므로, 그대로 두면 「똥피하기.app」 안에 몰겜이 들어앉는다. 새 이름으로 옮긴다.
+        let renamed = here.deletingLastPathComponent().appendingPathComponent(found.lastPathComponent)
+        let target = here.lastPathComponent == found.lastPathComponent ? here : renamed
         do {
             _ = try FileManager.default.replaceItemAt(here, withItemAt: found)
+            if target != here {
+                // 새 이름 자리에 옛 찌꺼기가 있으면 비우고 옮긴다.
+                try? FileManager.default.removeItem(at: target)
+                try FileManager.default.moveItem(at: here, to: target)
+            }
         } catch {
             // /Applications 에 쓸 권한이 없는 경우가 대부분이다. 받는 곳을 열어 준다.
             fail("갈아 끼우지 못했다. 직접 받아서 덮어써야 한다")
@@ -155,7 +164,7 @@ final class Updater {
         // 새것을 띄우고 나는 빠진다. -n 으로 같은 앱을 새로 띄운다.
         let launch = Process()
         launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        launch.arguments = ["-n", here.path]
+        launch.arguments = ["-n", target.path]
         try? launch.run()
         NSApp.terminate(nil)
     }

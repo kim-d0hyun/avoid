@@ -4,7 +4,8 @@
 // 그 사람이 지금 보고 있는 자리다. 정보는 노트 여백처럼 **왼쪽 위 구석에 세로로** 붙인다.
 
 import { INK, RED, PENCIL, PAPER_SOLID, stroke, text, paperScrap } from './ink.js';
-import { menuItems, canRestart, VICTORY_SECONDS } from '../game/world.js';
+import { menuItems, canRestart, VICTORY_SECONDS, gameOf } from '../game/world.js';
+import { games } from '../games/index.js';
 import { drawStickman } from './stickman.js';
 
 const MONO = '"American Typewriter", "Courier New", monospace';
@@ -41,9 +42,8 @@ export function drawClock(ctx, world) {
   const x = 68;
   const ms = Math.round(world.elapsed * 1000);
   const clock = formatMs(ms);
-  const best = world.best.ms
-    ? `최고 ${formatMs(world.best.ms)}   피함 ${world.dodged}`
-    : `피함 ${world.dodged}`;
+  const tally = gameOf(world).tally(world);
+  const best = world.best.ms ? `최고 ${formatMs(world.best.ms)}   ${tally}` : tally;
 
   ctx.font = `500 52px ${MONO}`;
   const wide = ctx.measureText(clock).width;
@@ -61,14 +61,7 @@ export function drawClock(ctx, world) {
 export function drawIntro(ctx, world, time) {
   const x = 72;
   const y = world.groundY - 196;
-  const rows = [
-    ['⌥ ← →', '달리기'],
-    ['⌥ ↑', '점프'],
-    ['⌥ ↓', '웅크리기'],
-    ['⌥ Space', '누른 채 붙잡기 · 눌러 뿌리치기'],
-    ['⌥ H', '숨기기'],
-    ['⌥ M', '메뉴 · 끝내기'],
-  ];
+  const rows = [...gameOf(world).keys, ['⌥ H', '숨기기'], ['⌥ M', '메뉴 · 게임 바꾸기']];
   const hint = '아무 방향키나 누르면 시작';
   // 종이는 **제일 긴 줄**에 맞춘다. 안내 문구만 재면 설명이 종이 밖으로 삐져나간다.
   ctx.font = `600 16px ${HAN}`;
@@ -88,6 +81,46 @@ export function drawIntro(ctx, world, time) {
   const pulse = 0.72 + 0.28 * Math.sin(time * 3.4);
   text(ctx, hint, x, y + rows.length * 28 + 14,
        { font: `700 16px ${HAN}`, color: RED, alpha: pulse, halo: 0 });
+}
+
+/// 켜면 제일 먼저 나오는 화면. 무슨 게임을 할지 고른다.
+///
+/// 남의 작업 화면 위라서 한가운데를 크게 덮지 않는다. 왼쪽에 세로로 세운 목록 하나뿐이고,
+/// 고른 것 옆에만 설명이 붙는다. 카드 세 장을 늘어놓지 않는 이유가 이것이다.
+export function drawPick(ctx, world, time) {
+  const x = 76;
+  const top = Math.max(90, world.h * 0.30);
+  const picked = Math.max(0, Math.min(games.length - 1, world.pick));
+
+  text(ctx, '몰겜', x, top, { font: `800 46px ${HAN}`, color: INK, halo: 0 });
+  stroke(ctx, [[x, top + 14], [x + 108, top + 14]],
+         { width: 3, color: RED, seed: 71, amp: 1.2, halo: false });
+  text(ctx, '몰래 하는 게임. 누가 오면 ⌥H', x + 128, top - 2,
+       { font: `600 14px ${HAN}`, color: PENCIL, halo: 0 });
+
+  games.forEach((game, i) => {
+    const y = top + 78 + i * 46;
+    const on = i === picked;
+    if (on) {
+      text(ctx, '▸', x - 22, y, { font: `700 20px ${KEYS}`, color: RED, halo: 0 });
+      stroke(ctx, [[x, y + 9], [x + 196, y + 9]],
+             { width: 2.6, color: RED, seed: 73 + i, amp: 0.9, halo: false });
+    }
+    text(ctx, game.name, x, y, {
+      font: `${on ? 800 : 600} ${on ? 30 : 24}px ${HAN}`,
+      color: on ? INK : PENCIL, halo: 0,
+    });
+    if (on) {
+      text(ctx, game.line, x + 250, y - 8, { font: `600 14px ${HAN}`, color: INK, halo: 0 });
+      const keys = game.keys.map(([k, v]) => `${k} ${v}`).join('   ·   ');
+      text(ctx, keys, x + 250, y + 14, { font: `600 12px ${KEYS}`, color: PENCIL, halo: 0 });
+    }
+  });
+
+  const y = top + 78 + games.length * 46 + 16;
+  text(ctx, '⌥↑↓ 고르기   ⌥→ 시작', x, y,
+       { font: `700 14px ${KEYS}`, color: RED, halo: 0,
+         alpha: 0.72 + 0.28 * Math.sin(time * 3.4) });
 }
 
 /// 다시 띄웠을 때 주는 준비 시간. 숨은 사이에 죽어 있으면 억울하다.
@@ -268,7 +301,7 @@ function clip(ctx, value, font, room) {
 /// 메뉴 막대 아이콘을 못 찾아도 여기서 끝낼 수 있어야 한다. 그게 이 메뉴의 존재 이유다.
 export function drawMenu(ctx, world) {
   const items = menuItems(world);
-  const picking = world.menu.pickScreen && world.screens.length > 1;
+  const picking = world.menu.sub === 'screens' && world.screens.length > 1;
   // 모니터 이름은 「DELL U2723QE」처럼 길다. 그 화면에서만 종이를 넓게 쓴다.
   const w = picking ? 400 : 300;
   const foot = world.mp.on ? 52 : 34;
@@ -284,7 +317,10 @@ export function drawMenu(ctx, world) {
   stroke(ctx, [[x + 8, y + 8], [x + w - 8, y + 8], [x + w - 8, y + h - 8], [x + 8, y + h - 8]],
          { width: 2, color: INK, seed: 19, amp: 1.4, close: true, sharp: true, halo: false });
 
-  const title = world.menu.confirmQuit ? '정말 끝낼까?' : picking ? '어느 화면에 띄울까?' : '똥피하기';
+  const title = world.menu.confirmQuit ? '정말 끝낼까?'
+    : picking ? '어느 화면에 띄울까?'
+    : world.menu.sub === 'fade' ? '얼마나 흐리게?'
+    : '몰겜';
   text(ctx, title, x + 26, y + 40, { font: `800 19px ${HAN}`, color: INK, halo: 0 });
 
   items.forEach((item, i) => {
@@ -319,7 +355,7 @@ export function drawMenu(ctx, world) {
     fy += 18;
   }
   // 화면을 고르는 동안은 메뉴가 안 닫히니 ⌥← 가 「닫기」가 아니라 「뒤로」다.
-  text(ctx, picking ? '⌥↑↓ 고르기   ⌥→ 그 화면으로   ⌥← 뒤로' : '⌥↑↓ 고르기   ⌥→ 확인   ⌥← 닫기',
+  text(ctx, world.menu.sub ? '⌥↑↓ 고르기   ⌥→ 바꾸기   ⌥← 뒤로' : '⌥↑↓ 고르기   ⌥→ 확인   ⌥← 닫기',
        x + 26, fy, { font: `600 12px ${KEYS}`, color: PENCIL, halo: 0 });
 }
 

@@ -7,7 +7,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-name="똥피하기"
+name="몰겜"
 exe="DdongDodge"
 out="$root/dist/mac"
 app="$out/$name.app"

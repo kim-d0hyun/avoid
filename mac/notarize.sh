@@ -12,7 +12,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-name="똥피하기"
+name="몰겜"
 app="dist/mac/$name.app"
 dmg="dist/$name.dmg"
 

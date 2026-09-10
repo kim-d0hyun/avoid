@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>똥피하기</string>
+  <string>몰겜</string>
   <key>CFBundleDisplayName</key>
-  <string>똥피하기</string>
+  <string>몰겜</string>
   <key>CFBundleIdentifier</key>
   <string>dev.turban.ddong-dodge</string>
   <key>CFBundleExecutable</key>
@@ -15,9 +15,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.6.3</string>
+  <string>2.0.0</string>
   <key>CFBundleVersion</key>
-  <string>16</string>
+  <string>17</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <!-- Dock 아이콘도 메뉴 막대 메뉴도 없는 보조 앱. 조작 창구는 상태 아이콘뿐이다. -->
