@@ -476,7 +476,8 @@ final class Net {
                 }
                 return
             }
-            peer.name = Net.field(text, "name") ?? "누군가"
+            // 남이 보낸 이름이다. 여기서도 끊는다 — 남의 화면 이름표는 남이 정한다.
+            peer.name = String((Net.field(text, "name") ?? "누군가").prefix(nameMax))
             peer.ready = true
             line(peer, #"{"t":"__id","id":\#(peer.id),"code":"\#(code ?? "")"}"#)
             delegate?.netPeerChanged(id: peer.id, name: peer.name, joined: true)

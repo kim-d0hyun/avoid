@@ -188,24 +188,38 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
 }
 
 /// 머리 위 이름표. 뒤집힌 공간 밖에서 그린다 — 안에서 그리면 왼쪽을 볼 때 글자가 뒤집힌다.
+/// 이름표가 사람보다 넓어지지 않게 글씨를 줄인다.
+///
+/// 「전자결재 담당자」를 12px 로 쓰면 이름표 하나가 졸라맨 세 명 폭이 된다. 셋만 모여도
+/// 이름표끼리 겹쳐서 누가 누군지 못 읽는다. 짧은 이름은 그대로 두고 긴 것만 줄인다.
+const TAG_W = 92;
+const TAG_MIN = 8.5;
+function tagFont(ctx, label, size) {
+  const font = (px) => `700 ${px}px "Apple SD Gothic Neo", sans-serif`;
+  ctx.font = font(size);
+  const wide = ctx.measureText(label).width;
+  return font(wide <= TAG_W ? size : Math.max(TAG_MIN, size * TAG_W / wide));
+}
+
 function drawTag(ctx, p, opts) {
   if (p.waiting) {
     const y = p.groundY - p.air - BODY_H - 12;
-    text(ctx, `${opts.name} · 다음 판`, p.x, y, {
-      font: `700 11px "Apple SD Gothic Neo", sans-serif`,
-      color: opts.color ?? PENCIL, align: 'center',
+    const label = `${opts.name} · 다음 판`;
+    text(ctx, label, p.x, y, {
+      font: tagFont(ctx, label, 11), color: opts.color ?? PENCIL, align: 'center',
     });
     return;
   }
   if (p.dead) return;
   const y = p.groundY - p.air - BODY_H - 12;
   // 이름도 옷과 같은 색으로. 화면이 어수선할 때 누가 누군지 이걸로 잇는다.
+  const font = tagFont(ctx, opts.name, 12);
   text(ctx, opts.name, p.x, y, {
-    font: `700 12px "Apple SD Gothic Neo", sans-serif`,
-    color: opts.color ?? (opts.mine ? INK : PENCIL), align: 'center',
+    font, color: opts.color ?? (opts.mine ? INK : PENCIL), align: 'center',
   });
   // 내 졸라맨에만 빨간 밑줄. 여럿이 겹쳐 있을 때 어느 게 나인지 이걸로 찾는다.
   if (opts.mine) {
+    ctx.font = font;
     const half = Math.max(14, ctx.measureText(opts.name).width / 2 + 3);
     stroke(ctx, [[p.x - half, y + 4], [p.x + half, y + 4]],
            { width: 2.2, color: RED, seed: 21, amp: 0.7, haloWidth: 3 });

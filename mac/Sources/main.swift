@@ -134,12 +134,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     private var playerName: String {
         get {
             let env = ProcessInfo.processInfo.environment
-            if env["DDONG_DEBUG"] != nil, let forced = env["DDONG_NAME"] { return String(forced.prefix(6)) }
+            if env["DDONG_DEBUG"] != nil, let forced = env["DDONG_NAME"] { return String(forced.prefix(nameMax)) }
             if let saved = UserDefaults.standard.string(forKey: nameKey), !saved.isEmpty { return saved }
             return guessName(NSFullUserName())
         }
         set {
-            let trimmed = String(newValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(6))
+            let trimmed = String(newValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(nameMax))
             UserDefaults.standard.set(trimmed, forKey: nameKey)
             net.myName = trimmed
             pushNetRole()
@@ -703,9 +703,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     private func confirmName() -> Bool {
         if hasNamed { return true }
         guard let typed = ask(title: "이 게임에서 쓸 이름",
-                              body: "같이 하는 사람들 머리 위에 뜬다. 여섯 자까지.\n"
+                              body: "같이 하는 사람들 머리 위에 뜬다. \(nameMax)자까지.\n"
                                   + "맥 계정 이름을 넣어 두었으니 그게 아니면 고친다.",
-                              placeholder: "이름", initial: playerName)
+                              placeholder: "이름", initial: playerName, limit: nameMax)
         else { return false }
         let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
@@ -747,8 +747,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     }
 
     @objc private func askName() {
-        guard let typed = ask(title: "이름 바꾸기", body: "같이 하는 사람들 머리 위에 뜨는 이름이다. 여섯 자까지.",
-                              placeholder: "이름", initial: playerName), !typed.isEmpty
+        guard let typed = ask(title: "이름 바꾸기", body: "같이 하는 사람들 머리 위에 뜨는 이름이다. \(nameMax)자까지.",
+                              placeholder: "이름", initial: playerName, limit: nameMax), !typed.isEmpty
         else { return }
         playerName = typed
     }
@@ -776,7 +776,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     // MARK: 창 띄우기
 
     /// 오버레이는 포커스를 안 가져가서 글자를 못 받는다. 코드를 칠 자리는 이렇게 따로 연다.
-    private func ask(title: String, body: String, placeholder: String, initial: String) -> String? {
+    private func ask(title: String, body: String, placeholder: String, initial: String,
+                     limit: Int? = nil) -> String? {
         let panel = NSAlert()
         panel.messageText = title
         panel.informativeText = body
@@ -785,6 +786,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.placeholderString = placeholder
         field.stringValue = initial
+        // 넘치면 아예 안 쳐진다. 잘려 나간 걸 나중에 알아채게 두지 않는다.
+        if let limit { field.formatter = LengthLimit(limit) }
         panel.accessoryView = field
         NSApp.activate(ignoringOtherApps: true)
         panel.window.initialFirstResponder = field
