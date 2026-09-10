@@ -761,7 +761,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         guard let shotDir else { return }
         let index = shotIndex
         shotIndex += 1
-        webView.evaluateJavaScript("window.__ddongShot && window.__ddongShot('\(shotBackground)', \(shotScale))") { value, _ in
+        webView.evaluateJavaScript("window.__ddongShot && window.__ddongShot('\(shotBackground)', \(shotScale), \(index))") { value, _ in
             guard let text = value as? String,
                   let comma = text.firstIndex(of: ","),
                   let data = Data(base64Encoded: String(text[text.index(after: comma)...]))

@@ -146,6 +146,7 @@ export function startSlide(world, dir) {
   p.slideDir = dir || p.facing || 1;
   p.facing = p.slideDir;
   p.vx = p.slideDir * SLIDE_SPEED;
+  if (world.debug) world.log?.(`슬라이딩 f${String(world.shot ?? 0).padStart(5, '0')} ${p.slideDir > 0 ? '→' : '←'} x=${Math.round(p.x)}`);
   return true;
 }
 

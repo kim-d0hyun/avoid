@@ -254,6 +254,9 @@ function makeBot(seed) {
 
       // 공이 아직 남의 코트에 있어도 **떨어질 자리로 미리 간다.** 넘어온 뒤에 움직이면
       // 초당 1700픽셀짜리 공은 절대 못 따라잡는다. 사람도 미리 자리를 잡는다.
+      grabWait -= dt;      // **맨 위에서 줄인다.** 아래 분기에서 줄이면 먼저 return 하는
+                           // 길로 빠졌을 때 영영 안 줄어서 그 뒤로 아무것도 못 누른다.
+
       const goTo = mine(landing) ? landing
         : mine(ball.x) ? ball.x
         : half + (mySide === 0 ? -1 : 1) * world.w * 0.22;
@@ -262,12 +265,21 @@ function makeBot(seed) {
       hold('left', gap < -12);
       hold('right', gap > 12);
 
+      // 공이 낮게 내려왔는데 발밑이 아니면 **몸을 던진다.** 마지막 순간에 손이 모자랄 때
+      // 하는 그 동작이다. ⌥Space 는 닿는 거리 밖이면 슬라이딩이 된다.
+      const away = Math.abs(ball.x - p.x);
+      if (mine(ball.x) && ball.vy > 0 && p.air <= 0 && grabWait <= 0
+          && ball.y > world.groundY - 230 && away > 95 && away < 420) {
+        tap('grab');
+        grabWait = 0.9;
+        return;
+      }
+
       // 닿을 만하면 뛰어서 때린다. 뛰는 시점은 공이 머리 위로 내려올 때.
       const near = Math.abs(ball.x - p.x) < 110;
       const coming = mine(ball.x) && ball.vy > 0;
       // 뛰는 시점은 공이 머리 위로 내려오기 조금 전. 늦게 뛰면 이미 지나가 있다.
       hold('jump', near && coming && ball.y > world.groundY - 460 && ball.y < world.groundY - 130);
-      grabWait -= dt;
       const reach = Math.abs(ball.y - (world.groundY - p.air - 42));
       if (near && reach < 95 && grabWait <= 0) { tap('grab'); grabWait = 0.15; }
       return;
@@ -407,7 +419,9 @@ window.__ddongTick = () => step(performance.now(), false);
 /// 시연 녹화용. 셸이 DDONG_SHOTS 로 띄웠을 때만 부른다 — 창을 화면에 내지 않고도
 /// 「그 사람 화면」을 그대로 뽑아낸다. 남의 바탕화면을 녹화에 담지 않으려고 이 길을 둔다.
 let shotCanvas = null;
-window.__ddongShot = (background, scale) => {
+window.__ddongShot = (background, scale, index) => {
+  // 찍은 파일 번호를 게임이 알 수 있게 남긴다. 로그와 프레임을 맞출 때 쓴다.
+  world.shot = index;
   render(performance.now() / 1000);
   if (!shotCanvas) shotCanvas = document.createElement('canvas');
   shotCanvas.width = Math.round(view.screenW * scale);
