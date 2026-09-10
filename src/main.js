@@ -38,19 +38,51 @@ world.onMenu = (action) => {
 
 let ground = null;
 let hidden = false;
+/// 방장이 쓰는 판 크기. 방에 들어가 있으면 이걸 따라가고, 혼자면 내 화면 크기 그대로다.
+let shared = null;
+
+/// 세계는 **모두가 같은 크기**로 굴리고, 그리는 순간에만 내 화면에 맞춰 늘린다.
+///
+/// 각자 자기 화면 크기로 굴리면 같은 방에 있어도 다른 게임이 된다 — 똥이 다른 자리에
+/// 떨어지고, 넓은 화면 사람이 좁은 화면 사람의 화면 밖에 서 있게 된다.
+/// 화면에 맞추는 배율. 자리는 가로·세로 따로 늘리고(화면을 꽉 채워야 하니까),
+/// 물건은 세로 배율 하나로만 그린다(안 그러면 27인치에서 졸라맨이 납작해진다).
+let view = { dpr: 1, sx: 1, sy: 1, screenW: 0, screenH: 0, squash: 1 };
 
 function fit() {
   // 5K 에서 3배로 그리면 픽셀만 늘고 보이는 건 같다. 2배에서 끊는다.
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  canvas.width = Math.round(w * dpr);
-  canvas.height = Math.round(h * dpr);
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const screenW = window.innerWidth;
+  const screenH = window.innerHeight;
+  canvas.width = Math.round(screenW * dpr);
+  canvas.height = Math.round(screenH * dpr);
+  canvas.style.width = `${screenW}px`;
+  canvas.style.height = `${screenH}px`;
+
+  const w = shared?.w ?? screenW;
+  const h = shared?.h ?? screenH;
+  // squash 로 가로 늘림을 물건 단위로 되돌린다 → 화면 비율이 달라도 안 찌그러진다.
+  view = { dpr, sx: screenW / w, sy: screenH / h, screenW, screenH, squash: 1 };
+  view.squash = view.sy / view.sx;
   resize(world, w, h);
   ground = makeGround(w);
+}
+
+/// 물건 하나를 제 자리에서 비율을 지켜 그린다.
+function upright(cx, cy, draw) {
+  if (view.squash === 1) { draw(); return; }
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(view.squash, 1);
+  ctx.translate(-cx, -cy);
+  draw();
+  ctx.restore();
+}
+
+/// 방장이 알려 준 판 크기로 갈아탄다. 방을 나가면 null 로 되돌린다.
+function setSize(w, h) {
+  shared = w && h ? { w, h } : null;
+  fit();
 }
 
 window.addEventListener('resize', fit);
@@ -79,12 +111,14 @@ shell.onVisible((visible) => {
 
 shell.net.onRole((role, code, id, name) => {
   roleChanged(world, role, code, id, name);
+  // 방을 나가면 내 화면 크기로 돌아온다. 방장은 처음부터 자기 크기로 논다.
+  if (role !== 'guest' && shared) setSize(null, null);
   if (world.state === 'ready') spread(world);
 });
 shell.net.onPeer((id, name, joined) => peerChanged(world, shell, id, name, joined, { spread }));
 // 셸이 한 프레임치를 모아서 이미 풀린 객체로 넘겨준다.
 shell.net.onMessage((from, message) => {
-  handleMessage(world, shell, from, message, { addPoop, restart });
+  handleMessage(world, shell, from, message, { addPoop, restart, setSize });
 });
 
 // 브라우저에서 열어 볼 때와, 혹시 창이 키를 직접 받게 됐을 때의 길.
@@ -102,7 +136,10 @@ for (const [type, down] of [['keydown', true], ['keyup', false]]) {
 }
 
 // 앱 밖(브라우저)에서 열었을 때만 속을 열어 둔다. 그림을 눈으로 맞추려면 붙잡을 데가 있어야 한다.
-if (!window.ddong) window.__world = world;
+if (!window.ddong) {
+  window.__world = world;
+  window.__setSize = setSize;   // 화면 비율을 눈으로 맞춰 볼 때 쓴다
+}
 
 // 셸이 기록을 지우면 화면에도 바로 반영한다.
 window.__ddongBest = (ms, dodged) => {
@@ -201,39 +238,47 @@ function step(now, draw) {
 
 function render(time) {
   const boilFrame = boil(time);
-  ctx.clearRect(0, 0, world.w, world.h);
+  const { dpr, sx, sy, screenW, screenH } = view;
 
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, screenW, screenH);
+
+  // ── 판 안의 것들: 자리는 판 좌표 그대로, 화면 배율만 얹는다
   ctx.save();
+  ctx.setTransform(dpr * sx, 0, 0, dpr * sy, 0, 0);
   if (world.shake > 0) {
     const s = world.shake * world.shake * 9;
     ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
   }
 
   if (ground) ctx.drawImage(ground, 0, world.groundY - 8);
-  for (const splat of world.splats) drawSplat(ctx, splat);
-  for (const poop of world.poops) drawPoop(ctx, poop, boilFrame);
+  for (const splat of world.splats) upright(splat.x, splat.y, () => drawSplat(ctx, splat));
+  for (const poop of world.poops) upright(poop.x, poop.y, () => drawPoop(ctx, poop, boilFrame));
 
   // 남들을 먼저 그리고 내가 맨 위에 선다. 겹쳤을 때 내 몸을 놓치면 안 된다.
   for (const other of world.mp.others.values()) {
-    drawStickman(ctx, other, time, boilFrame,
-                 { name: other.name, faded: other.dead, color: shirtColor(other.id) });
+    upright(other.x, world.groundY, () => drawStickman(ctx, other, time, boilFrame,
+      { name: other.name, faded: other.dead, color: shirtColor(other.id) }));
   }
   // 혼자 할 때는 색을 안 입힌다 — 구분할 사람이 없으면 그냥 낙서가 맞다.
-  drawStickman(ctx, world.player, time, boilFrame, {
+  upright(world.player.x, world.groundY, () => drawStickman(ctx, world.player, time, boilFrame, {
     name: world.mp.on ? world.mp.myName : null,
     mine: true,
     color: world.mp.on ? shirtColor(world.mp.myId) : null,
-  });
+  }));
   ctx.restore();
 
-  drawClock(ctx, world);
-  if (world.mp.on) drawRoom(ctx, world);
-  if (world.state === 'ready') drawIntro(ctx, world, time);
+  // ── 글자판은 화면 좌표로. 판이 커지든 작아지든 글씨 크기는 그대로여야 읽힌다.
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const hud = { ...world, w: screenW, h: screenH, groundY: world.groundY * sy };
+  drawClock(ctx, hud);
+  if (world.mp.on) drawRoom(ctx, hud);
+  if (world.state === 'ready') drawIntro(ctx, hud, time);
   if (world.state === 'over') {
-    world.mp.on && world.mp.results ? drawResults(ctx, world) : drawStamp(ctx, world);
+    world.mp.on && world.mp.results ? drawResults(ctx, hud) : drawStamp(ctx, hud);
   }
-  if (world.frozen > 0) drawFreeze(ctx, world);
-  if (world.menu.open) drawMenu(ctx, world);
+  if (world.frozen > 0) drawFreeze(ctx, hud);
+  if (world.menu.open) drawMenu(ctx, hud);
 }
 
 function frame(now) {
@@ -253,8 +298,8 @@ let shotCanvas = null;
 window.__ddongShot = (background, scale) => {
   render(performance.now() / 1000);
   if (!shotCanvas) shotCanvas = document.createElement('canvas');
-  shotCanvas.width = Math.round(world.w * scale);
-  shotCanvas.height = Math.round(world.h * scale);
+  shotCanvas.width = Math.round(view.screenW * scale);
+  shotCanvas.height = Math.round(view.screenH * scale);
   const shot = shotCanvas.getContext('2d');
   shot.fillStyle = background;
   shot.fillRect(0, 0, shotCanvas.width, shotCanvas.height);

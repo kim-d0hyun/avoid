@@ -134,11 +134,9 @@ function spawn(world, x, sizeBias = Math.random()) {
   }
 }
 
-/// 방장이 뿌린 똥을 손님 화면에 올린다. 가로 자리는 비율로 와서 여기서 화면 폭에 맞춘다.
-export function addPoop(world, [ratio, y, r, vx, vy, spin, spinV, seed]) {
-  world.poops.push({
-    x: ratio * world.w, y, r, bucket: bucketFor(r), vy, vx, spin, spinV, seed,
-  });
+/// 방장이 뿌린 똥을 그대로 올린다. 판 크기가 같으니 자리도 그대로 쓴다.
+export function addPoop(world, [x, y, r, vx, vy, spin, spinV, seed]) {
+  world.poops.push({ x, y, r, bucket: bucketFor(r), vy, vx, spin, spinV, seed });
 }
 
 function randomX(world) {

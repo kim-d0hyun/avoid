@@ -67,7 +67,9 @@ export function interpolate(world, dt) {
     other.errorX *= Math.exp(-dt / FIX_TAU);
 
     const before = other.x;
-    other.x = other.baseX + other.vx * other.age + other.errorX;
+    // 예측은 벽을 모른다. 판 밖으로 그리면 남이 화면 밖으로 사라진 것처럼 보인다.
+    const raw = other.baseX + other.vx * other.age + other.errorX;
+    other.x = Math.max(12, Math.min(world.w - 12, raw));
 
     // 점프는 포물선이라 속도만으로는 안 맞는다. 중력까지 넣어 이어 그린다.
     const flight = other.baseAir + other.vy * other.age - 0.5 * GRAVITY * other.age * other.age;
@@ -130,11 +132,12 @@ export function pump(world, dt, shell) {
   }
   const snapshot = {
     t: 's', ms: Math.round(world.elapsed * 1000), st: world.state, r: mp.round, pl: players,
+    // **판의 크기.** 손님은 이 크기로 세계를 굴리고, 그리는 순간에만 자기 화면에 맞춘다.
+    // 각자 자기 화면 크기로 굴리면 똥 떨어지는 자리도, 남이 서 있는 자리도 서로 어긋난다.
+    vw: Math.round(world.w), vh: Math.round(world.h),
   };
   if (world.freshSpawns.length) {
     snapshot.add = world.freshSpawns.splice(0, world.freshSpawns.length);
-    // 화면 폭이 서로 다르니 자리는 비율로 보낸다. 안 그러면 좁은 화면에서는 벽 너머에 떨어진다.
-    for (const poop of snapshot.add) poop[0] = Math.round((poop[0] / world.w) * 1e4) / 1e4;
   }
   shell.net.send(snapshot);
   world.freshSpawns.length = 0;
@@ -178,6 +181,10 @@ export function handleMessage(world, shell, from, message, api) {
   switch (message.t) {
     case 's': {
       if (mp.role !== 'guest') return;
+      // 방장이 쓰는 판 크기를 그대로 따라간다. 이게 맞아야 모두 같은 화면을 본다.
+      if (message.vw && (message.vw !== world.w || message.vh !== world.h)) {
+        api.setSize(message.vw, message.vh);
+      }
       // 시계는 방장 것이 맞다. 확 끌어당기면 숫자가 튀므로 조금씩 맞춘다.
       const hostSeconds = message.ms / 1000;
       world.elapsed += (hostSeconds - world.elapsed) * 0.25;
