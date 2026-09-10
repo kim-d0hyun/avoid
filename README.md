@@ -91,12 +91,47 @@ K3P9@192.168.0.7
 
 [Releases](../../releases) 에서 `ddong-dodge.dmg` 를 받아 마운트하고 `Applications` 로 끌어 넣는다.
 
-서명·공증을 하지 않은 앱이라 처음 열 때 한 번 막힌다. **우클릭 → 열기 → 열기** 로 지나가면
-그다음부터는 그냥 열린다. 그래도 「손상되었다」고 하면:
+### 처음 열 때 막히는 것
+
+공증(notarize)을 안 한 앱이라 「Apple이 악성 코드가 없음을 확인할 수 없습니다」가 뜬다.
+**macOS 15(Sequoia)부터는 우클릭 → 열기 우회가 없어졌다.** 이렇게 지나간다:
+
+1. 그 창에서 **완료** (휴지통으로 이동 아님)
+2. **시스템 설정 → 개인정보 보호 및 보안** → 아래로 내리면 「'똥피하기'이(가) 차단되었습니다」
+3. **그래도 열기**
+
+터미널이 편하면 한 줄이면 끝난다:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/똥피하기.app
 ```
+
+**전달 방법에 따라 아예 안 뜨기도 한다.** 이 경고는 파일에 박혀 있는 게 아니라
+받는 쪽 프로그램이 「인터넷에서 왔다」고 표시를 붙여서 생긴다:
+
+| 어떻게 줬나 | 경고 |
+|---|---|
+| 브라우저로 내려받기 · 에어드롭 · 슬랙/메일 첨부 | **뜬다** |
+| USB · 사내 공유 폴더(SMB/NAS) · `scp` 로 복사 | 안 뜬다 |
+
+사무실이라면 공유 폴더에 `.app` 을 통째로 올려 두고 각자 복사해 가는 게 제일 조용하다.
+
+### 아예 안 뜨게 하려면 — 공증
+
+애플 개발자 프로그램(연 $99)이 있으면 영구히 해결된다. 리포 Settings → Secrets 에
+다섯 개를 넣으면 **CI 가 알아서 서명하고 공증해서 릴리스에 올린다.** 코드는 이미 다 들어가 있다.
+
+| 비밀값 | 무엇 |
+|---|---|
+| `MACOS_SIGN_IDENTITY` | `Developer ID Application: 회사이름 (TEAMID)` |
+| `MACOS_CERT_P12` | Developer ID 인증서를 `.p12` 로 내보내 base64 한 것 |
+| `MACOS_CERT_PASSWORD` | 그 `.p12` 의 암호 |
+| `APPLE_ID` | 애플 계정 메일 |
+| `APPLE_APP_PASSWORD` | appleid.apple.com 에서 만든 앱 암호 |
+| `APPLE_TEAM_ID` | 팀 ID |
+
+없으면 임시 서명으로만 나가고, 위 안내대로 한 번 지나가야 한다.
+손으로 하려면 `./mac/notarize.sh`.
 
 실행하면 메뉴 막대에 💩 이 뜬다. 조작 창구는 그것뿐이다 (보이기·기록·방·업데이트·종료).
 
@@ -190,6 +225,7 @@ mac/Sources/update.swift GitHub 릴리스를 보고 스스로 갈아 끼운다
 .github/workflows/       태그를 밀면 빌드해서 릴리스에 붙인다
 mac/build.sh             swiftc 로 컴파일하고 .app 을 손으로 조립
 mac/dmg.sh               .app → dmg
+mac/notarize.sh          서명·공증·티켓 박기 (개발자 계정이 있을 때)
 src/index.html           캔버스 하나. 배경은 절대 칠하지 않는다
 src/main.js              루프, 화면 크기, 셸과의 연결
 src/game/world.js        상태·난이도·부딪히기. 그리는 일은 하지 않는다

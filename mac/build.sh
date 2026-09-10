@@ -65,8 +65,19 @@ if [ -f "$root/build/icon.png" ]; then
   rm -rf "$iconset"
 fi
 
-# 서명이 없으면 macOS 가 「손상된 앱」으로 보기도 한다. 임시(ad-hoc) 서명이라도 붙여 둔다.
-codesign --force --deep --sign - "$app" 2>/dev/null && echo "› 임시 서명" || echo "› 서명 건너뜀"
+# 서명.
+#
+# DDONG_SIGN_IDENTITY 를 주면 그 Developer ID 로 정식 서명한다 — 공증을 받으려면
+# 굳은 런타임(hardened runtime)과 타임스탬프가 함께 있어야 한다.
+# 안 주면 임시(ad-hoc) 서명이다. 내 맥에서는 돌지만 남의 맥에서는 Gatekeeper 가 막는다.
+if [ -n "${DDONG_SIGN_IDENTITY:-}" ]; then
+  codesign --force --deep --timestamp --options runtime \
+    --sign "$DDONG_SIGN_IDENTITY" "$app"
+  echo "› 서명 ($DDONG_SIGN_IDENTITY)"
+else
+  codesign --force --deep --sign - "$app" 2>/dev/null && echo "› 임시 서명 (남에게 주면 경고가 뜬다)" \
+    || echo "› 서명 건너뜀"
+fi
 
 du -sh "$app" | awk '{print "› 앱 크기 " $1}'
 

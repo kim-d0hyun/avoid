@@ -11,6 +11,8 @@ import WebKit
 // MARK: - 상수
 
 private let webScheme = "ddong"
+/// 두 번째로 실행된 쪽이 이미 떠 있는 쪽에 보내는 신호. 「네가 나와라」는 뜻이다.
+private let showNotification = Notification.Name("dev.turban.ddong-dodge.show")
 private let bestMsKey = "bestMs"
 private let bestDodgedKey = "bestDodged"
 private let screenKey = "screenNumber"
@@ -153,6 +155,18 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     // MARK: 시작
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 두 벌이 동시에 뜨면 오버레이가 두 겹으로 그려지고 ⌥ 핫키를 서로 뺏는다.
+        // 먼저 뜬 쪽에 「나와라」만 알리고 나는 조용히 빠진다 — 그래서 앱을 다시 실행하는 것이
+        // 곧 「숨긴 게임 다시 보기」가 된다.
+        if !isDebugRun, otherInstanceRunning() {
+            DistributedNotificationCenter.default().postNotificationName(
+                showNotification, object: nil, userInfo: nil, deliverImmediately: true)
+            NSApp.terminate(nil)
+            return
+        }
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(showFromOtherLaunch), name: showNotification, object: nil)
+
         buildWindow()
         buildStatusItem()
         installHotKeyHandler()
@@ -220,6 +234,23 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
                 refreshMenu()
             }
         }
+    }
+
+    private var isDebugRun: Bool {
+        ProcessInfo.processInfo.environment["DDONG_DEBUG"] != nil
+    }
+
+    /// 같은 앱이 이미 떠 있나. 시험할 때는 여러 벌을 띄워야 해서 DDONG_DEBUG 면 건너뛴다.
+    private func otherInstanceRunning() -> Bool {
+        guard let id = Bundle.main.bundleIdentifier else { return false }
+        let mine = ProcessInfo.processInfo.processIdentifier
+        return NSRunningApplication.runningApplications(withBundleIdentifier: id)
+            .contains { $0.processIdentifier != mine }
+    }
+
+    @objc private func showFromOtherLaunch() {
+        guard isHidden else { return }
+        setHidden(false)
     }
 
     // MARK: 창
