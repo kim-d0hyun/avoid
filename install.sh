@@ -27,6 +27,12 @@ app="$(find "$work/out" -maxdepth 1 -name '*.app' -print -quit)"
 pkill -f 'MacOS/DdongDodge' 2>/dev/null || true
 sleep 0.5
 
+# 지난번에 Applications 가 아닌 데 둔 사람도 있다. 남아 있으면 격리 표시를 털어 준다 —
+# 안 그러면 옛 사본이 그대로 남아 계속 경고를 띄운다.
+for old in "$HOME/Applications/$name.app" "$HOME/Downloads/$name.app" "$HOME/Desktop/$name.app"; do
+  [ -d "$old" ] && xattr -cr "$old" 2>/dev/null || true
+done
+
 echo "› Applications 로"
 rm -rf "$target"
 if ! ditto "$app" "$target" 2>/dev/null; then

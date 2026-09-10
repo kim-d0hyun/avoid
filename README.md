@@ -119,11 +119,9 @@ curl -fsSL https://raw.githubusercontent.com/kim-d0hyun/avoid/main/install.sh | 
 2. **시스템 설정 → 개인정보 보호 및 보안** → 아래로 내리면 「'똥피하기'이(가) 차단되었습니다」
 3. **그래도 열기**
 
-터미널이 편하면 한 줄이면 끝난다:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/똥피하기.app
-```
+앱을 Applications 가 아닌 곳에 뒀다면 위 경로가 다르다. 그럴 땐 터미널에
+`xattr -dr com.apple.quarantine ` 까지만 치고 **앱 아이콘을 터미널 창으로 끌어다 놓으면**
+경로가 저절로 채워진다. 아니면 그냥 맨 위 한 줄 설치를 다시 돌려도 된다 — 경로를 안 물어본다.
 
 **전달 방법에 따라 아예 안 뜨기도 한다.** 이 경고는 파일에 박혀 있는 게 아니라
 받는 쪽 프로그램이 「인터넷에서 왔다」고 표시를 붙여서 생긴다:
