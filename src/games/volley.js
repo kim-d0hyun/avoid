@@ -41,7 +41,7 @@ const HAN = '"Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 const BALL_R = 20;
 // 원판 값의 0.82배로 낮춰 둔다. 원판은 432px 코트를 두 사람이 지키지만 여기는 1512px 을
 // 사람이 걸어서 지킨다 — 그대로 쓰면 손이 못 따라간다. 비율은 그대로라 느낌은 같다.
-const SLOW = 0.82;
+const SLOW = 0.72;
 const GRAVITY = 2180 * SLOW * SLOW;   // 중력은 시간의 제곱이라 두 번 곱한다
 const MIN_UP = 1310 * SLOW;  // 맞으면 적어도 이만큼은 위로. 그보다 빨랐으면 그 속도 그대로
 const OFF_CENTER = 44 * SLOW;     // 몸 가운데에서 벗어난 만큼 옆으로 — 대각선은 여기서 나온다
@@ -53,6 +53,12 @@ const SMASH_UP = 1.6;       // ⌥↑ 를 누르고 때리면 위로 (넘겨 주
 const SPIKE_REACH = 88;     // 손이 닿는 거리
 const MAX_SPEED = 2600 * SLOW;
 const WALL_KEEP = 0.98;     // 옆벽·천장은 거의 손실 없이 반사한다
+// 천장은 화면 맨 끝이 아니라 조금 안쪽이다. 맨 끝에 두면 공이 반쯤 잘린 채 붙어 있고,
+// 시계가 그려진 자리라 뭐가 뭔지 안 보인다. 공이 통째로 보이는 자리에서 튕긴다.
+const CEIL = 54;
+// 위로 이보다 빠르게는 안 보낸다. 중력 1130 에서 1250 이면 690픽셀쯤 오르는데,
+// 그게 화면의 4분의 3이다 — **웬만하면 천장까지 안 간다.**
+const MAX_UP = 1250;
 // 바닥에서 네트 꼭대기까지.
 //
 // 사람 키가 60, 점프해서 머리가 125까지 간다. 95 로 두면 **서서는 못 넘기고 뛰면 넘긴다** —
@@ -113,7 +119,7 @@ function serve(world, toSide) {
   b.ball.x = toSide === 0 ? world.w * 0.25 : world.w * 0.75;
   b.ball.y = world.groundY - NET_H - 260;
   b.ball.vx = 0;
-  b.ball.vy = -SERVE_UP;
+  b.ball.vy = -Math.min(MAX_UP, SERVE_UP);
   b.ball.spin = 0;
   b.ball.spinV = (Math.random() - 0.5) * 2;
   b.tail = [];
@@ -146,7 +152,7 @@ function bounceOff(ball, p) {
   const off = ball.x - p.x;
   ball.vx = clamp(off * OFF_CENTER + p.vx * CARRY, MAX_SPEED);
   const up = Math.abs(ball.vy);
-  ball.vy = -Math.max(up, MIN_UP);
+  ball.vy = -Math.min(MAX_UP, Math.max(up, MIN_UP));
   ball.spinV = clamp(off * 0.12, 8);
   ball.hit = 1;                       // 맞은 자리에 잠깐 뜨는 표시
   ball.hitX = ball.x; ball.hitY = ball.y;
@@ -170,12 +176,12 @@ function applyHit(world, at, want) {
   if (at.air <= 12) {
     // 토스. 위로 올려 주고 옆으로는 살짝만.
     ball.vx = clamp(dx * OFF_CENTER * 0.6 + held * 240, MAX_SPEED);
-    ball.vy = -Math.max(Math.abs(ball.vy), MIN_UP) * 0.95;
+    ball.vy = -Math.min(MAX_UP, Math.max(Math.abs(ball.vy), MIN_UP) * 0.95);
   } else {
     const side = held !== 0 ? held : away;
     ball.vx = clamp(side * (held !== 0 ? SMASH_SIDE : SMASH_FLAT), MAX_SPEED);
     if (want.down) ball.vy = Math.max(Math.abs(ball.vy), MIN_UP * 0.7) * SMASH_DOWN;
-    else if (want.up) ball.vy = -Math.abs(ball.vy) * SMASH_UP;
+    else if (want.up) ball.vy = -Math.min(MAX_UP, Math.abs(ball.vy) * SMASH_UP);
     else ball.vy = 0;                              // 수평 미사일
     ball.vy = clamp(ball.vy, MAX_SPEED);
     ball.smash = 1;
@@ -387,7 +393,7 @@ export default {
     const bounced =
       reflect(BALL_R, world.w - BALL_R, () => ball.x, (v) => { ball.x = v; },
               () => ball.vx, (v) => { ball.vx = v; })
-      | reflect(BALL_R, Infinity, () => ball.y, (v) => { ball.y = v; },
+      | reflect(CEIL, Infinity, () => ball.y, (v) => { ball.y = v; },
                 () => ball.vy, (v) => { ball.vy = v; });
     if (bounced) { ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; }
 
