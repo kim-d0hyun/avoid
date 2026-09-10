@@ -85,7 +85,11 @@ export function interpolate(world, dt) {
 
   for (const other of world.mp.others.values()) {
     // 남이 「나를 잡았다」고 말하면 잡힌 것이다. 판정을 한쪽에만 두어야 서로 안 엇갈린다.
-    if (other.grabbing === world.mp.myId && !other.dead && !me.dead) {
+    //
+    // 방금 뿌리쳤으면 잠깐(grabCool) 안 잡힌다. 두 가지를 한꺼번에 막는다:
+    // 뿌리친 걸 상대가 아직 모르는 한 왕복 동안 도로 끌려가는 것, 그리고 뿌리치자마자
+    // 다시 잡혀서 뿌리칠 이유가 없어지는 것.
+    if (other.grabbing === world.mp.myId && !other.dead && !me.dead && me.grabCool <= 0) {
       if (me.heldBy !== other.id) { me.heldBy = other.id; me.grabbing = -1; }
     } else if (me.heldBy === other.id) {
       me.heldBy = -1;

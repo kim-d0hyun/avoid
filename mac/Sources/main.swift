@@ -233,6 +233,23 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         // 시험용. ⌥H 를 사람 손 없이 눌러 본다 — 숨긴 동안에도 판이 도는지 확인하려고 둔다.
         //   DDONG_HIDE_AFTER=5      → 5초 뒤 숨긴다
         //   DDONG_HIDE_AFTER=5,9    → 5초 뒤 숨기고 9초에 다시 보인다
+        // 시험용. 사람 손 없이 키를 눌러 본다 — 메뉴를 타고 「게임 끝내기」까지 가는 길처럼,
+        // 눈으로 보고 손으로 눌러야만 확인되던 것을 확인할 때 쓴다.
+        //   DDONG_KEYS="2:menu,2.4:duck,2.8:right"   → 초:동작 을 쉼표로 잇는다
+        if env["DDONG_DEBUG"] != nil, let plan = env["DDONG_KEYS"] {
+            for step in plan.split(separator: ",") {
+                let parts = step.split(separator: ":")
+                guard parts.count == 2, let at = Double(parts[0]) else { continue }
+                let action = String(parts[1])
+                DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak self] in
+                    guard let self else { return }
+                    debugLog("키 \(action)")
+                    self.send(action, true)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { self.send(action, false) }
+                }
+            }
+        }
+
         if env["DDONG_DEBUG"] != nil, let plan = env["DDONG_HIDE_AFTER"] {
             let times = plan.split(separator: ",").compactMap { Double($0) }
             for (index, at) in times.enumerated() {

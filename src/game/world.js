@@ -47,6 +47,14 @@ const STEP_OVER = 39;
 const GRAB_REACH = 53;      // 손이 닿는 거리
 const GRAB_COOLDOWN = 0.7;  // 놓친 뒤 다시 잡기까지
 const GRAB_HOLD_AT = 21;    // 잡고 있을 때 유지되는 거리 — 어깨가 닿을 만큼 붙는다
+/// 이만큼까지만 벌어지는 걸 봐준다. 넘으면 그 자리에서 끌어다 붙인다.
+///
+/// 당기는 힘만으로는 **끌고 갈 때 반드시 벌어진다.** 비례 제어라서, 잡은 사람이 초당
+/// 360픽셀로 달리면 힘이 k 일 때 360/k 만큼 뒤처진 자리에서 균형이 잡힌다 —
+/// 예전 k=6 이면 60픽셀이다. 힘을 올려 뒤처짐을 줄이고, 그래도 남는 건 여기서 자른다.
+const GRAB_SLACK = 7;
+const GRAB_PULL_HOLDER = 15;   // 잡은 쪽이 상대에게 붙는 힘
+const GRAB_PULL_HELD = 22;     // 끌려가는 쪽이 딸려오는 힘. 끌려가는 쪽이 더 세게 붙어야 한다
 const GRABBER_SPEED = 0.58; // 잡은 쪽도 무겁다
 const HELD_SPEED = 0.22;    // 잡힌 쪽은 거의 못 움직인다
 // 뿌리치기. 그냥 풀리기만 하면 「풀렸나?」 싶다 — **밀쳐 내야** 뿌리친 것으로 읽힌다.
@@ -565,6 +573,17 @@ function release(p) {
   p.grabCool = GRAB_COOLDOWN;
 }
 
+/// 붙잡은 거리(GRAB_HOLD_AT)로 당긴다. 당기고도 남는 틈은 그 자리에서 잘라 붙인다 —
+/// 양쪽 화면이 각자 절반씩 좁히므로, 둘이 만나는 자리는 그대로 가운데다.
+function pullTo(p, other, dt, force) {
+    const dx = other.x - p.x;
+    const dir = Math.sign(dx) || 1;
+    p.x += (dx - dir * GRAB_HOLD_AT) * Math.min(1, dt * force);
+
+    const over = Math.abs(other.x - p.x) - (GRAB_HOLD_AT + GRAB_SLACK);
+    if (over > 0) p.x += Math.sign(other.x - p.x) * over * 0.5;
+}
+
 /// 잡고 있는 동안 서로를 끌어당긴다. 놓아야 할 이유가 생기면 놓는다.
 function stepGrab(world, dt) {
   const p = world.player;
@@ -580,12 +599,10 @@ function stepGrab(world, dt) {
       release(p);
     } else {
       // 붙잡은 거리로 끌어당긴다. 상대 쪽에서도 같은 계산을 하므로 둘이 함께 모인다.
-      const dx = target.x - p.x;
-      const want = Math.sign(dx) * GRAB_HOLD_AT;
-      p.x += (dx - want) * Math.min(1, dt * 6);
+      pullTo(p, target, dt, GRAB_PULL_HOLDER);
       // 걸음은 걸음대로 두고 **팔만** 상대 쪽으로 보낸다. 오른쪽 사람을 붙잡은 채
       // 왼쪽으로 끌고 갈 수 있어야 한다.
-      p.grabAim = Math.sign(dx) || p.grabAim;
+      p.grabAim = Math.sign(target.x - p.x) || p.grabAim;
     }
   } else if (p.heldBy < 0) {
     p.grabAim = 0;
@@ -598,10 +615,8 @@ function stepGrab(world, dt) {
       p.grabAim = 0;
     } else {
       p.grabAim = Math.sign(holder.x - p.x) || p.grabAim;
-      // 잡힌 쪽도 끌려간다. 몸부림치는 것처럼 조금 떨린다.
-      const dx = holder.x - p.x;
-      const want = Math.sign(dx) * GRAB_HOLD_AT;
-      p.x += (dx - want) * Math.min(1, dt * 4);
+      // 잡힌 쪽은 딸려간다. 끌고 가는 게 보이려면 이쪽이 더 세게 붙어야 한다.
+      pullTo(p, holder, dt, GRAB_PULL_HELD);
       p.shake = 1;
     }
   }
