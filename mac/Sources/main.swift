@@ -135,9 +135,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             let env = ProcessInfo.processInfo.environment
             if env["DDONG_DEBUG"] != nil, let forced = env["DDONG_NAME"] { return String(forced.prefix(6)) }
             if let saved = UserDefaults.standard.string(forKey: nameKey), !saved.isEmpty { return saved }
-            // 머리 위에 뜰 이름이라 짧아야 한다. 길면 옆 사람 이름표와 겹친다.
-            let full = NSFullUserName().split(separator: " ").first.map(String.init) ?? "익명"
-            return String(full.prefix(5))
+            return guessName(NSFullUserName())
         }
         set {
             let trimmed = String(newValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(6))
@@ -147,6 +145,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             refreshMenu()
         }
     }
+
+    /// 이름을 손으로 정한 적이 있나.
+    private var hasNamed: Bool { !(UserDefaults.standard.string(forKey: nameKey) ?? "").isEmpty }
 
     private var bestMs: Int {
         get { UserDefaults.standard.integer(forKey: bestMsKey) }
@@ -212,6 +213,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.moveToChosenScreen()
+            self?.pushScreens()
             self?.refreshMenu()
         }
 
@@ -329,6 +331,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             type: 'menu', action,
           }),
           onVisible: (handler) => { window.__ddongVisible = handler },
+          // 물려 있는 화면들. 뽑거나 꽂으면 셸이 onScreens 로 새 목록을 밀어 준다.
+          screens: \(screensJSON()),
+          onScreens: (handler) => { window.__ddongScreens = handler },
+          pickScreen: (number) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'screen', number,
+          }),
           net: {
             role: 'off', code: null, id: 0, name: '\(Net.escape(playerName))', peers: [],
             // to 를 안 주면 모두에게. 손님이 부르면 어차피 받는 곳은 호스트 하나다.
@@ -373,7 +381,36 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     }
 
     private func moveToChosenScreen() {
-        window.setFrame(chosenScreen().visibleFrame, display: true)
+        let screen = chosenScreen()
+        window.setFrame(screen.visibleFrame, display: true)
+        debugLog("창 → \(screen.localizedName)(#\(screen.number)) "
+               + "\(Int(window.frame.width))×\(Int(window.frame.height)) "
+               + "@\(Int(window.frame.minX)),\(Int(window.frame.minY))")
+    }
+
+    /// 지금 물려 있는 화면들. 이름 짓는 규칙은 screens.swift 에 있다.
+    private func screenChoices() -> [ScreenChoice] {
+        let rows = NSScreen.screens.map {
+            ScreenInfo(number: $0.number, rawName: $0.localizedName, minX: $0.frame.minX,
+                       width: Int($0.frame.width), height: Int($0.frame.height))
+        }
+        return makeScreenChoices(rows, current: chosenScreen().number)
+    }
+
+    private func screensJSON() -> String { screenListJSON(screenChoices()) }
+
+    private func pushScreens() {
+        guard webView != nil else { return }
+        webView.evaluateJavaScript("window.__ddongScreens && window.__ddongScreens(\(screensJSON()))")
+    }
+
+    /// 게임 안 메뉴에서도, 메뉴 막대에서도 여기로 온다. 고른 화면은 다음에 켤 때도 기억한다.
+    private func chooseScreen(_ number: Int) {
+        guard NSScreen.screens.contains(where: { $0.number == number }) else { return }
+        UserDefaults.standard.set(number, forKey: screenKey)
+        moveToChosenScreen()
+        pushScreens()
+        refreshMenu()
     }
 
     // MARK: 메뉴바
@@ -426,15 +463,16 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         help.isEnabled = false
         menu.addItem(help)
 
-        if NSScreen.screens.count > 1 {
+        let choices = screenChoices()
+        if choices.count > 1 {
             menu.addItem(.separator())
             let screens = NSMenu()
-            for (index, screen) in NSScreen.screens.enumerated() {
-                let item = NSMenuItem(title: "\(index + 1)번 화면  (\(Int(screen.frame.width))×\(Int(screen.frame.height)))",
+            for choice in choices {
+                let item = NSMenuItem(title: "\(choice.name)  ·  \(choice.width)×\(choice.height)",
                                       action: #selector(pickScreen(_:)), keyEquivalent: "")
                 item.target = self
-                item.tag = screen.number
-                item.state = screen.number == chosenScreen().number ? .on : .off
+                item.tag = choice.number
+                item.state = choice.current ? .on : .off
                 screens.addItem(item)
             }
             let parent = NSMenuItem(title: "띄울 화면", action: nil, keyEquivalent: "")
@@ -472,9 +510,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     }
 
     @objc private func pickScreen(_ sender: NSMenuItem) {
-        UserDefaults.standard.set(sender.tag, forKey: screenKey)
-        moveToChosenScreen()
-        refreshMenu()
+        chooseScreen(sender.tag)
     }
 
     // MARK: 입력
@@ -641,7 +677,24 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
 
     // MARK: 같이 하기
 
+    /// 같이 하기 전에 이름을 한 번 확인받는다. 맥 계정 이름이 사람 이름이 아닌 경우가 흔해서,
+    /// 안 물어보면 남들 화면에 「미니쉬테크」 같은 게 그대로 뜬다.
+    /// - Returns: 계속해도 되면 true. 취소하면 false.
+    private func confirmName() -> Bool {
+        if hasNamed { return true }
+        guard let typed = ask(title: "이 게임에서 쓸 이름",
+                              body: "같이 하는 사람들 머리 위에 뜬다. 여섯 자까지.\n"
+                                  + "맥 계정 이름을 넣어 두었으니 그게 아니면 고친다.",
+                              placeholder: "이름", initial: playerName)
+        else { return false }
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        playerName = trimmed
+        return true
+    }
+
     @objc private func makeRoom() {
+        guard confirmName() else { return }
         guard let code = net.host() else { return }
         refreshMenu()
         alert(title: "방을 열었다", body: """
@@ -665,6 +718,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     }
 
     @objc private func askJoin() {
+        guard confirmName() else { return }
         guard let typed = ask(title: "코드로 입장", body: "네 자리 코드를 친다. 방이 안 잡히면 코드@호스트IP 로.",
                               placeholder: "K3P9", initial: "")
         else { return }
@@ -748,6 +802,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             case "quit": NSApp.terminate(nil)
             default: break
             }
+        case "screen":
+            if let number = body["number"] as? Int { chooseScreen(number) }
         case "net":
             // 게임이 짠 꾸러미를 그대로 흘려보낸다. 셸은 안을 열어 보지 않는다.
             if let payload = body["payload"] as? String {

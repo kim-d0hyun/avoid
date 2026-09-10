@@ -50,7 +50,7 @@ function blankOther(id, name) {
     id, name,
     // 마지막으로 받은 상태와, 그걸 받은 뒤 흐른 시간.
     baseX: 0, baseAir: 0, vx: 0, vy: 0, age: 0, errorX: 0, rtt: 0.008,
-    state: 2, waiting: true, grabbing: -1, escapes: 0, dodged: 0, seenEscapes: 0,
+    state: 2, waiting: true, grabbing: -1, escapes: 0, dodged: 0, seenEscapes: 0, grabAim: 0,
     x: 0, air: 0, crouch: 0, tcrouch: 0,
     facing: 1, walk: 0, vyDraw: 0, dead: true, groundY: 0, danger: false, deadFor: 0,
   };
@@ -64,8 +64,21 @@ function blankOther(id, name) {
 ///
 /// 새 꾸러미가 오면 자리를 톡 끊어 옮기지 않고, 틀렸던 만큼을 60ms 에 걸쳐 녹인다.
 /// 정확하면서 안 튄다.
+/// 번호로 사람을 찾는다. 내 번호면 나다.
+function pick(world, me, id) {
+  if (id < 0) return null;
+  return id === world.mp.myId ? me : world.mp.others.get(id) ?? null;
+}
+
 export function interpolate(world, dt) {
   const me = world.player;
+  // 누가 누구를 잡고 있는지 먼저 한 장으로 정리한다.
+  const held = new Map();
+  if (me.grabbing >= 0) held.set(me.grabbing, world.mp.myId);
+  for (const other of world.mp.others.values()) {
+    if (other.grabbing >= 0 && !other.dead) held.set(other.grabbing, other.id);
+  }
+
   for (const other of world.mp.others.values()) {
     // 남이 「나를 잡았다」고 말하면 잡힌 것이다. 판정을 한쪽에만 두어야 서로 안 엇갈린다.
     if (other.grabbing === world.mp.myId && !other.dead && !me.dead) {
@@ -79,6 +92,14 @@ export function interpolate(world, dt) {
       me.grabCool = 0.7;
     }
     other.seenEscapes = other.escapes;
+
+    // 남이 붙잡혀 있는지는 꾸러미에 없다 — 「내가 누구를 잡았다」만 오간다. 그래서
+    // 여기서 뒤집어 만든다. 이게 있어야 붙잡힌 사람이 허둥대는 자세로 그려진다.
+    other.heldBy = held.get(other.id) ?? -1;
+    // 팔이 향할 쪽. 잡은 상대(나일 수도 있다) 쪽으로 보낸다 — 걸음과 따로 움직여야
+    // 「오른쪽 사람을 붙잡은 채 왼쪽으로 끌고 가는」 그림이 된다.
+    const partner = pick(world, me, other.grabbing >= 0 ? other.grabbing : other.heldBy);
+    other.grabAim = partner ? (Math.sign(partner.x - other.x) || other.grabAim) : 0;
     other.age = Math.min(other.age + dt, MAX_LEAD);
     other.errorX *= Math.exp(-dt / FIX_TAU);
 

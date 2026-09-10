@@ -14,6 +14,9 @@ const shell = window.ddong ?? {
   saveBest() {},
   onInput() {},
   onVisible() {},
+  screens: [],
+  onScreens() {},
+  pickScreen() {},
   log: console.log.bind(console),
   net: { role: 'off', code: null, id: 0, name: '나', send() {}, onMessage() {}, onRole() {}, onPeer() {} },
 };
@@ -32,9 +35,17 @@ world.onMenu = (action) => {
     world.mp.on ? startRound(world, shell, { restart }) : restart(world);
     return;
   }
+  // 창을 어느 모니터에 놓을지는 셸만 안다. 옮기고 나면 새 목록을 다시 밀어 준다.
+  if (action.startsWith('screen:')) {
+    shell.pickScreen?.(Number(action.slice(7)));
+    return;
+  }
   const name = SHELL_ACTIONS[action];
   if (name) shell.menu?.(name);
 };
+
+world.screens = shell.screens ?? [];
+shell.onScreens?.((list) => { world.screens = Array.isArray(list) ? list : []; });
 
 let ground = null;
 let hidden = false;
@@ -92,6 +103,7 @@ fit();
 // 이 줄이 안 보이면 기록 저장도 안 된다.
 if (shell.debug) {
   shell.log(`부팅 ${canvas.width}×${canvas.height} dpr=${window.devicePixelRatio} 최고=${shell.best.ms}ms`);
+  shell.log(`화면 ${world.screens.map((s) => `${s.name} ${s.w}×${s.h}${s.current ? '←' : ''}`).join(' / ') || '없음'}`);
 }
 
 // MARK: 입력
@@ -154,9 +166,13 @@ window.__ddongBest = (ms, dodged) => {
 /// 사람 흉내를 내는 게 목적이다: 제일 급한 똥에서 멀어지고, 코앞이면 뛰고, 가끔은 남의
 /// 앞을 일부러 막아선다 — 막는 재미가 그림에 나와야 시험이 된다.
 function makeBot(seed) {
-  let pressed = { left: false, right: false, jump: false, duck: false };
+  let pressed = { left: false, right: false, jump: false, duck: false, grab: false };
   let mood = 0;      // 0 이상이면 「남 막아서기」 중
   let cooldown = 1 + seed;
+  let grabWait = 0;  // 다음에 붙잡아 볼 때까지 남은 시간
+  let grabHold = 0;  // 붙잡은 채 버틸 시간. 스페이스바는 누르고 있는 동안 잡는다
+
+  const tap = (action) => { press(world, action, true); press(world, action, false); };
 
   const hold = (action, want) => {
     if (pressed[action] === want) return;
@@ -177,6 +193,28 @@ function makeBot(seed) {
     }
     const p = world.player;
     if (p.dead) { hold('left', false); hold('right', false); hold('jump', false); return; }
+
+    // 붙잡혔으면 잠깐 버티다 뿌리친다. 바로 풀면 붙잡는 장면이 안 보인다.
+    grabWait -= dt;
+    if (p.heldBy >= 0) {
+      if (grabWait <= 0) { tap('grab'); grabWait = 1.2 + seed; }
+      hold('left', false); hold('right', false);
+      return;
+    }
+    // 손이 닿을 만큼 붙었으면 붙잡아 본다. 잡은 뒤에는 키를 누른 채 잠깐 끌고 다닌다.
+    if (pressed.grab) {
+      grabHold -= dt;
+      if (grabHold <= 0 || p.grabbing < 0) { hold('grab', false); grabWait = 2.5 + seed * 2; }
+    } else if (grabWait <= 0) {
+      for (const other of world.mp.others.values()) {
+        if (other.dead || other.waiting) continue;
+        if (Math.abs(other.x - p.x) < 44 && Math.abs(other.air - p.air) < 20) {
+          hold('grab', true);
+          grabHold = 1.8 + seed;
+          break;
+        }
+      }
+    }
 
     // 제일 급한 똥. 남은 시간이 짧고 가까울수록 급하다.
     let worst = null;
@@ -255,18 +293,24 @@ function render(time) {
   for (const splat of world.splats) upright(splat.x, splat.y, () => drawSplat(ctx, splat));
   for (const poop of world.poops) upright(poop.x, poop.y, () => drawPoop(ctx, poop, boilFrame));
 
-  // 남들을 먼저 그리고 내가 맨 위에 선다. 겹쳤을 때 내 몸을 놓치면 안 된다.
-  for (const other of world.mp.others.values()) {
-    upright(other.x, world.groundY, () => drawStickman(ctx, other, time, boilFrame,
-      { name: other.name, faded: other.dead, color: shirtColor(other.id) }));
+  // 우승 세리머니 중에는 판 위의 사람들을 지운다. 마지막에 서 있던 자리에 시체와
+  // 구경꾼이 그대로 널려 있으면, 가운데서 만세 부르는 사람이 그 속에 묻힌다.
+  const ceremony = world.state === 'over' && !!world.mp.winner;
+
+  if (!ceremony) {
+    // 남들을 먼저 그리고 내가 맨 위에 선다. 겹쳤을 때 내 몸을 놓치면 안 된다.
+    for (const other of world.mp.others.values()) {
+      upright(other.x, world.groundY, () => drawStickman(ctx, other, time, boilFrame,
+        { name: other.name, faded: other.dead, color: shirtColor(other.id) }));
+    }
+    // 혼자 할 때는 색을 안 입힌다 — 구분할 사람이 없으면 그냥 낙서가 맞다.
+    world.player.waiting = world.mp.on && world.mp.waiting && world.player.dead;
+    upright(world.player.x, world.groundY, () => drawStickman(ctx, world.player, time, boilFrame, {
+      name: world.mp.on ? world.mp.myName : null,
+      mine: true,
+      color: world.mp.on ? shirtColor(world.mp.myId) : null,
+    }));
   }
-  // 혼자 할 때는 색을 안 입힌다 — 구분할 사람이 없으면 그냥 낙서가 맞다.
-  world.player.waiting = world.mp.on && world.mp.waiting && world.player.dead;
-  upright(world.player.x, world.groundY, () => drawStickman(ctx, world.player, time, boilFrame, {
-    name: world.mp.on ? world.mp.myName : null,
-    mine: true,
-    color: world.mp.on ? shirtColor(world.mp.myId) : null,
-  }));
   ctx.restore();
 
   // ── 글자판은 화면 좌표로. 판이 커지든 작아지든 글씨 크기는 그대로여야 읽힌다.

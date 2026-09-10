@@ -45,9 +45,8 @@ const STEP_OVER = 39;
 // 대신 잡은 쪽도 같이 느려져서, 잡는 동안은 나도 위험해진다. 서로 물고 늘어지는 순간이
 // 이 게임에서 제일 웃긴 장면이라 넣는다.
 const GRAB_REACH = 53;      // 손이 닿는 거리
-const GRAB_MAX = 4;         // 이보다 오래는 못 잡는다. 영원히 붙잡히면 게임이 아니다
 const GRAB_COOLDOWN = 0.7;  // 놓친 뒤 다시 잡기까지
-const GRAB_HOLD_AT = 32;    // 잡고 있을 때 유지되는 거리
+const GRAB_HOLD_AT = 21;    // 잡고 있을 때 유지되는 거리 — 어깨가 닿을 만큼 붙는다
 const GRABBER_SPEED = 0.58; // 잡은 쪽도 무겁다
 const HELD_SPEED = 0.22;    // 잡힌 쪽은 거의 못 움직인다
 const GRAB_PULL = 420;      // 끌어당기는 힘
@@ -84,7 +83,9 @@ export function createWorld(best) {
     mp: createSession(),
     myResult: null,
     /// ⌥M 으로 여는 게임 안 메뉴. 메뉴 막대 아이콘을 못 찾아도 여기서 다 된다.
-    menu: { open: false, index: 0, confirmQuit: false },
+    menu: { open: false, index: 0, confirmQuit: false, pickScreen: false },
+    /// 셸이 알려 주는, 지금 물려 있는 화면들. 한 대뿐이면 비어 있는 것과 같이 친다.
+    screens: [],
     spawnTimer: 0,
     stormTimer: 22,
     input: { left: false, right: false, jump: false, duck: false },
@@ -92,7 +93,9 @@ export function createWorld(best) {
       x: 0, vx: 0, air: 0, vy: 0, crouch: 0, facing: 1, walk: 0, squeeze: 0,
       groundY: 0, dead: false, deadFor: 0, danger: false,
       /// 붙잡기. grabbing 은 내가 잡은 사람 번호, heldBy 는 나를 잡은 사람 번호 (-1 이면 없음).
-      grabbing: -1, grabFor: 0, heldBy: -1, grabCool: 0, escapes: 0, shake: 0,
+      grabbing: -1, heldBy: -1, grabCool: 0, escapes: 0, shake: 0,
+      /// 팔이 향할 쪽(-1/0/1). 걸음과 따로 논다 — 오른쪽 사람을 잡은 채 왼쪽으로 끌고 갈 수 있다.
+      grabAim: 0,
     },
   };
 }
@@ -111,8 +114,9 @@ export function resize(world, w, h) {
 export function restart(world) {
   // 누르고 있는 키와 기록 콜백은 그대로 넘긴다 — 방향키를 잡은 채 다시 시작하면
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
-  const { w, h, best, input, onRecord, onDeath, onMenu, mp, menu } = world;
-  Object.assign(world, createWorld(best), { w, h, input, onRecord, onDeath, onMenu, mp, menu });
+  const { w, h, best, input, onRecord, onDeath, onMenu, mp, menu, screens } = world;
+  Object.assign(world, createWorld(best),
+                { w, h, input, onRecord, onDeath, onMenu, mp, menu, screens });
   resize(world, w, h);
   spread(world);
 }
@@ -225,9 +229,13 @@ function bumpInto(world, dt) {
       if (Math.abs(p.air - other.air) > STEP_OVER) continue;
       const dx = p.x - other.x;
       const gap = Math.abs(dx);
-      if (gap >= SHOULDER) continue;
+      // 붙잡고 있는 상대와는 어깨를 좁힌다. 안 그러면 당겨 붙이는 힘과 밀어내는 힘이
+      // 같은 자리에서 맞서서 둘이 덜덜 떤다.
+      const locked = other.id === p.grabbing || other.id === p.heldBy;
+      const shoulder = locked ? GRAB_HOLD_AT : SHOULDER;
+      if (gap >= shoulder) continue;
 
-      const overlap = (SHOULDER - gap) / SHOULDER;
+      const overlap = (shoulder - gap) / shoulder;
       // 완전히 겹쳐 방향을 못 정할 때는 번호로 가른다. 안 그러면 둘이 같은 쪽으로 밀린다.
       const dir = gap < 0.5 ? (world.mp.myId < other.id ? -1 : 1) : Math.sign(dx);
 
@@ -425,6 +433,16 @@ export function menuItems(world) {
   if (world.menu.confirmQuit) {
     return [{ id: 'quitYes', label: '네, 끝낸다' }, { id: 'quitNo', label: '아니, 계속한다' }];
   }
+  // 화면 고르기는 한 겹 안으로 들어간다. 모니터가 셋이면 첫 화면이 그것만으로 꽉 찬다.
+  // 보던 중에 모니터를 뽑아 한 대만 남으면 고를 것이 없으니 그냥 첫 화면으로 돌아간다.
+  if (world.menu.pickScreen && world.screens.length > 1) {
+    return world.screens.map((screen) => ({
+      id: `screen:${screen.number}`,
+      label: screen.name,
+      note: `${screen.w}×${screen.h}`,
+      mark: !!screen.current,
+    }));
+  }
   const items = [{ id: 'resume', label: '이어서 하기' }];
   if (world.state !== 'ready' && (world.state !== 'over' || canRestart(world))) {
     items.push({ id: 'again', label: '다시 시작' });
@@ -435,6 +453,10 @@ export function menuItems(world) {
     items.push({ id: 'host', label: '방 만들기' });
     items.push({ id: 'join', label: '코드로 입장' });
   }
+  if (world.screens.length > 1) {
+    const here = world.screens.find((screen) => screen.current);
+    items.push({ id: 'screens', label: '띄울 화면 바꾸기', note: here?.name ?? '' });
+  }
   items.push({ id: 'hide', label: '화면 숨기기' });
   items.push({ id: 'quit', label: '게임 끝내기' });
   return items;
@@ -444,6 +466,7 @@ function openMenu(world, open) {
   world.menu.open = open;
   world.menu.index = 0;
   world.menu.confirmQuit = false;
+  world.menu.pickScreen = false;
   // 메뉴로 들어가면 잡고 있던 방향키는 놓은 것으로 친다. 안 그러면 나올 때 혼자 달린다.
   if (open) for (const key of Object.keys(world.input)) world.input[key] = false;
 }
@@ -460,17 +483,28 @@ function chooseMenu(world) {
       world.menu.confirmQuit = true;
       world.menu.index = 1; // 기본 선택은 「아니」 — 손이 미끄러져 꺼지면 안 된다
       return;
+    case 'screens':
+      world.menu.pickScreen = true;
+      world.menu.index = Math.max(0, world.screens.findIndex((screen) => screen.current));
+      return;
     case 'again':
       openMenu(world, false);
       world.onMenu?.('again');
       return;
     default:
+      // 화면을 옮기는 동안은 메뉴를 열어 둔다. 창이 그 모니터에 뜨는 걸 눈으로 보고
+      // 아니다 싶으면 바로 다른 걸 고를 수 있어야 한다.
+      if (picked.id.startsWith('screen:')) {
+        world.onMenu?.(picked.id);
+        return;
+      }
       openMenu(world, false);
       world.onMenu?.(picked.id);
   }
 }
 
-/// 스페이스바. 잡혀 있으면 뿌리치고, 아니면 가까운 사람을 잡는다.
+/// 스페이스바를 누른 순간. 잡혀 있으면 뿌리치고, 아니면 가까운 사람을 잡는다.
+/// 잡고 있는 동안은 **키를 누르고 있는 동안**이다 — 떼면 grabReleased 가 놓는다.
 function grabPressed(world) {
   const p = world.player;
   if (!world.mp.on || p.dead || world.state !== 'play') return;
@@ -482,7 +516,7 @@ function grabPressed(world) {
     p.grabCool = GRAB_COOLDOWN;
     return;
   }
-  if (p.grabbing >= 0) { release(p); return; }   // 다시 누르면 내가 놓는다
+  if (p.grabbing >= 0) return;                  // 이미 잡고 있다. 놓는 건 키를 뗄 때다
   if (p.grabCool > 0) return;
 
   // 손이 닿는 사람 중 제일 가까운 사람.
@@ -496,13 +530,18 @@ function grabPressed(world) {
   }
   if (!target) return;
   p.grabbing = target.id;
-  p.grabFor = 0;
-  p.facing = Math.sign(target.x - p.x) || p.facing;
+  p.grabAim = Math.sign(target.x - p.x) || p.facing;
+}
+
+/// 스페이스바를 뗀 순간. 잡고 있던 사람을 놓는다.
+function grabReleased(world) {
+  const p = world.player;
+  if (p.grabbing >= 0) release(p);
 }
 
 function release(p) {
   p.grabbing = -1;
-  p.grabFor = 0;
+  p.grabAim = 0;
   p.grabCool = GRAB_COOLDOWN;
 }
 
@@ -514,26 +553,31 @@ function stepGrab(world, dt) {
 
   if (p.grabbing >= 0) {
     const target = world.mp.others.get(p.grabbing);
-    p.grabFor += dt;
-    const tooLong = p.grabFor > GRAB_MAX;
+    // 시간 제한은 없다. 잡는 동안은 키를 누르고 있는 동안이고, 잡힌 쪽은 언제든 뿌리친다.
     const gone = !target || target.dead || target.waiting;
     const tooFar = target && Math.abs(target.x - p.x) > GRAB_REACH * 1.8;
-    if (p.dead || gone || tooLong || tooFar) {
+    if (p.dead || gone || tooFar) {
       release(p);
     } else {
       // 붙잡은 거리로 끌어당긴다. 상대 쪽에서도 같은 계산을 하므로 둘이 함께 모인다.
       const dx = target.x - p.x;
       const want = Math.sign(dx) * GRAB_HOLD_AT;
       p.x += (dx - want) * Math.min(1, dt * 6);
-      p.facing = Math.sign(dx) || p.facing;
+      // 걸음은 걸음대로 두고 **팔만** 상대 쪽으로 보낸다. 오른쪽 사람을 붙잡은 채
+      // 왼쪽으로 끌고 갈 수 있어야 한다.
+      p.grabAim = Math.sign(dx) || p.grabAim;
     }
+  } else if (p.heldBy < 0) {
+    p.grabAim = 0;
   }
 
   if (p.heldBy >= 0) {
     const holder = world.mp.others.get(p.heldBy);
     if (p.dead || !holder || holder.dead || holder.grabbing !== world.mp.myId) {
       p.heldBy = -1;
+      p.grabAim = 0;
     } else {
+      p.grabAim = Math.sign(holder.x - p.x) || p.grabAim;
       // 잡힌 쪽도 끌려간다. 몸부림치는 것처럼 조금 떨린다.
       const dx = holder.x - p.x;
       const want = Math.sign(dx) * GRAB_HOLD_AT;
@@ -546,7 +590,10 @@ function stepGrab(world, dt) {
 
 export function press(world, action, down) {
   if (action === 'grab') {
-    if (down && !world.menu.open) grabPressed(world);
+    // 누르고 있는 동안 붙잡는다. 메뉴가 열려 있어도 **떼는 건** 받아야 한다 —
+    // 안 그러면 잡은 채 메뉴를 열었다 닫는 것만으로 영영 붙잡고 있게 된다.
+    if (!down) grabReleased(world);
+    else if (!world.menu.open) grabPressed(world);
     return;
   }
   if (action === 'menu') {
@@ -560,9 +607,12 @@ export function press(world, action, down) {
     if (action === 'jump') world.menu.index = (world.menu.index + count - 1) % count;
     if (action === 'duck') world.menu.index = (world.menu.index + 1) % count;
     if (action === 'right' || action === 'restart') chooseMenu(world);
+    // ⌥← 는 한 겹 나가기다. 한 겹 안(끝낼까 묻는 중 · 화면 고르는 중)이면 첫 화면으로,
+    // 첫 화면이면 메뉴를 닫는다.
     if (action === 'left') {
-      world.menu.confirmQuit ? (world.menu.confirmQuit = false, world.menu.index = 0)
-                             : openMenu(world, false);
+      if (world.menu.confirmQuit) { world.menu.confirmQuit = false; world.menu.index = 0; }
+      else if (world.menu.pickScreen) { world.menu.pickScreen = false; world.menu.index = 0; }
+      else openMenu(world, false);
     }
     return;
   }

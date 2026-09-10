@@ -20,6 +20,14 @@ function limb(ox, oy, a1, l1, a2, l2) {
   return [[ox, oy], [jx, jy], [jx + Math.sin(a2) * l2, jy + Math.cos(a2) * l2]];
 }
 
+/// 달릴 때의 다리. 무릎은 뒤로만 접히고, 뒤꿈치는 발을 뒤로 뺄 때 가장 높이 올라온다.
+function runLegs(ph, run) {
+  const swing = 0.34 + run * 0.44;
+  const heelUp = (phase) => 0.24 + 0.66 * (0.5 - 0.5 * Math.cos(phase)) * run;
+  const thigh = Math.sin(ph) * swing;
+  return [[thigh, thigh - heelUp(ph)], [-thigh, -thigh - heelUp(ph + Math.PI)]];
+}
+
 function pose(p, time) {
   const c = p.crouch;
 
@@ -64,13 +72,18 @@ function pose(p, time) {
     };
   }
 
+  const run = Math.min(Math.abs(p.vx) / 520, 1);
+
   // 붙잡고 있으면 앞팔을 상대 쪽으로 뻗는다. 뻗은 팔 하나로 상황이 다 읽힌다.
+  // **다리는 제 갈 길을 간다** — 끌고 가는 중이면 걷는 다리가 나와야 끌고 가는 것으로 보인다.
   if (p.grabbing >= 0 || p.heldBy >= 0) {
     const holding = p.grabbing >= 0;
     const shake = p.heldBy >= 0 ? Math.sin(time * 34) * 0.16 : 0;
     return {
-      hipY: HIP_Y, lean: holding ? 0.24 : -0.16, bob: Math.sin(time * 9) * 1.2,
-      legs: [[-0.34, -0.42], [0.36, 0.44]],
+      hipY: HIP_Y, lean: holding ? 0.24 : -0.16,
+      bob: run > 0.05 ? -Math.abs(Math.sin(p.walk)) * (1.2 + run * 1.6)
+                      : Math.sin(time * 9) * 1.2,
+      legs: run > 0.05 ? runLegs(p.walk, run) : [[-0.34, -0.42], [0.36, 0.44]],
       // 잡은 쪽은 두 팔을 앞으로, 잡힌 쪽은 뿌리치듯 위로 허둥댄다.
       arms: holding
         ? [[1.45, 1.62], [1.30, 1.50]]
@@ -78,14 +91,8 @@ function pose(p, time) {
     };
   }
 
-  const run = Math.min(Math.abs(p.vx) / 520, 1);
   if (run > 0.03) {
-    // 달리기. 무릎은 뒤로만 접히고, 뒤꿈치는 발을 뒤로 뺄 때 가장 높이 올라온다.
     const ph = p.walk;
-    const swing = 0.34 + run * 0.44;
-    const heelUp = (phase) => 0.24 + 0.66 * (0.5 - 0.5 * Math.cos(phase)) * run;
-    const thighL = Math.sin(ph) * swing;
-    const thighR = -thighL;
     // 팔은 같은 쪽 다리와 반대 위상. 이게 어긋나면 사람이 아니라 인형처럼 걷는다.
     const armSwing = 0.30 + run * 0.40;
     const upperL = -Math.sin(ph) * armSwing;
@@ -93,7 +100,7 @@ function pose(p, time) {
     return {
       hipY: HIP_Y, lean: 0.09 + run * 0.16,
       bob: -Math.abs(Math.sin(ph)) * (1.4 + run * 2.0),
-      legs: [[thighL, thighL - heelUp(ph)], [thighR, thighR - heelUp(ph + Math.PI)]],
+      legs: runLegs(ph, run),
       arms: [[upperL, upperL - elbow], [-upperL, -upperL - elbow]],
     };
   }
@@ -142,8 +149,14 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
 
   const w = 3.7;
   const pen = (i) => ({ width: w, color: INK, seed: seed + i, amp: 0.6 });
-  const armA = limb(shldX, shldY, s.arms[0][0], UPPER, s.arms[0][1], FORE);
-  const armB = limb(shldX, shldY, s.arms[1][0], UPPER, s.arms[1][1], FORE);
+
+  // 팔은 몸과 따로 방향을 잡는다. 오른쪽 사람을 붙잡은 채 왼쪽으로 끌고 갈 때,
+  // 다리는 왼쪽으로 걷고 팔은 오른쪽으로 뻗어 있어야 붙잡고 있는 것으로 읽힌다.
+  // 몸 전체가 facing 으로 이미 뒤집혀 있으므로, 반대쪽을 잡았으면 각도만 뒤집는다.
+  const armFlip = p.grabAim && p.grabAim !== p.facing ? -1 : 1;
+  const arm = (i) => limb(shldX, shldY, s.arms[i][0] * armFlip, UPPER, s.arms[i][1] * armFlip, FORE);
+  const armA = arm(0);
+  const armB = arm(1);
 
   // 다리를 먼저 그려 몸통 뒤로 보낸다.
   stroke(ctx, limb(0, hipY, s.legs[0][0], THIGH, s.legs[0][1], SHIN), pen(1));

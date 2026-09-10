@@ -251,10 +251,22 @@ export function drawResults(ctx, world) {
 
 // MARK: 게임 안 메뉴
 
+/// 남는 자리에 안 들어가면 뒤를 자른다. 모니터 이름 길이는 우리가 정하는 게 아니다.
+function clip(ctx, value, font, room) {
+  ctx.font = font;
+  if (room <= 0) return '';
+  if (ctx.measureText(value).width <= room) return value;
+  let cut = value;
+  while (cut.length > 1 && ctx.measureText(`${cut}…`).width > room) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
 /// 메뉴 막대 아이콘을 못 찾아도 여기서 끝낼 수 있어야 한다. 그게 이 메뉴의 존재 이유다.
 export function drawMenu(ctx, world) {
   const items = menuItems(world);
-  const w = 300;
+  const picking = world.menu.pickScreen && world.screens.length > 1;
+  // 모니터 이름은 「DELL U2723QE」처럼 길다. 그 화면에서만 종이를 넓게 쓴다.
+  const w = picking ? 400 : 300;
   const foot = world.mp.on ? 52 : 34;
   const h = 62 + items.length * 34 + foot;
   const x = (world.w - w) / 2;
@@ -268,20 +280,32 @@ export function drawMenu(ctx, world) {
   stroke(ctx, [[x + 8, y + 8], [x + w - 8, y + 8], [x + w - 8, y + h - 8], [x + 8, y + h - 8]],
          { width: 2, color: INK, seed: 19, amp: 1.4, close: true, sharp: true, halo: false });
 
-  text(ctx, world.menu.confirmQuit ? '정말 끝낼까?' : '똥피하기', x + 26, y + 40,
-       { font: `800 19px ${HAN}`, color: INK, halo: 0 });
+  const title = world.menu.confirmQuit ? '정말 끝낼까?' : picking ? '어느 화면에 띄울까?' : '똥피하기';
+  text(ctx, title, x + 26, y + 40, { font: `800 19px ${HAN}`, color: INK, halo: 0 });
 
   items.forEach((item, i) => {
     const iy = y + 74 + i * 34;
     const picked = i === world.menu.index;
     if (picked) {
-      stroke(ctx, [[x + 22, iy + 7], [x + 22 + 200, iy + 7]],
+      stroke(ctx, [[x + 22, iy + 7], [x + w - 26, iy + 7]],
              { width: 2.4, color: RED, seed: 23 + i, amp: 0.8, halo: false });
       text(ctx, '▸', x + 8, iy, { font: `700 15px ${KEYS}`, color: RED, halo: 0 });
+    }
+    // 지금 이 창이 떠 있는 화면에는 점을 찍는다. 이름만으로는 어느 쪽인지 모른다.
+    if (item.mark) {
+      text(ctx, '●', x + w - 34, iy, { font: `700 11px ${KEYS}`, color: RED, align: 'right', halo: 0 });
     }
     text(ctx, item.label, x + 26, iy, {
       font: `${picked ? 700 : 600} 16px ${HAN}`, color: picked ? INK : PENCIL, halo: 0,
     });
+    if (item.note) {
+      const font = `500 12px ${MONO}`;
+      const right = x + w - (item.mark ? 48 : 26);
+      ctx.font = `${picked ? 700 : 600} 16px ${HAN}`;
+      const room = right - (x + 26 + ctx.measureText(item.label).width + 14);
+      text(ctx, clip(ctx, item.note, font, room), right, iy,
+           { font, color: PENCIL, align: 'right', halo: 0 });
+    }
   });
 
   let fy = y + h - foot + 8;
@@ -290,8 +314,9 @@ export function drawMenu(ctx, world) {
          { font: `600 12px ${HAN}`, color: RED, halo: 0 });
     fy += 18;
   }
-  text(ctx, '⌥↑↓ 고르기   ⌥→ 확인   ⌥← 닫기', x + 26, fy,
-       { font: `600 12px ${KEYS}`, color: PENCIL, halo: 0 });
+  // 화면을 고르는 동안은 메뉴가 안 닫히니 ⌥← 가 「닫기」가 아니라 「뒤로」다.
+  text(ctx, picking ? '⌥↑↓ 고르기   ⌥→ 그 화면으로   ⌥← 뒤로' : '⌥↑↓ 고르기   ⌥→ 확인   ⌥← 닫기',
+       x + 26, fy, { font: `600 12px ${KEYS}`, color: PENCIL, halo: 0 });
 }
 
 // MARK: 우승
