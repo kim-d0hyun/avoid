@@ -15,6 +15,13 @@
 // 아무도 못 느낀다. 애초에 같은 와이파이 전용이라 이 선택이 가능하다.
 
 import { INK, RED, PENCIL, stroke, circle, text } from '../draw/ink.js';
+
+// 편은 옷 색으로 가른다. 번호가 아니라 **보이는 것**으로 갈라야 한 눈에 읽힌다.
+//
+// 이 게임의 빨강(#c63028)은 「너에게 중요한 것」 한 가지 뜻으로만 쓰기로 한 색이라
+// 셔츠에는 다른 빨강을 쓴다 — 색연필로 칠한 듯한, 조금 어둡고 탁한 벽돌색.
+// 이름 밑 빨간 밑줄과 헷갈리지 않는다.
+const TEAM_INK = ['#b5352f', '#2f6fb0'];
 import { BODY_H } from '../draw/stickman.js';
 
 const HAN = '"Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
@@ -38,14 +45,47 @@ const SERVE_UP = 520;
 const WIN_AT = 5;
 const RESET_WAIT = 1.1;     // 점수 난 뒤 다음 서브까지
 
-/// 어느 편인가. 번호 순으로 갈라서 **모두가 같은 답**을 낸다 — 방장이 따로 알려 줄 필요가 없다.
-export function sideOf(world, id) {
-  const ids = [world.mp.myId, ...world.mp.others.keys()].sort((a, b) => a - b);
-  const at = ids.indexOf(id);
-  return at < 0 ? 0 : at % 2;      // 0 = 왼쪽, 1 = 오른쪽
+// 편 가르기.
+//
+// **서 있는 자리가 곧 편이다.** 따로 주고받는 값이 없다 — 자리는 어차피 60Hz 로 오간다.
+// 판이 도는 동안은 네트를 못 넘으니 편이 안 바뀌고, 판과 판 사이에는 걸어서 넘어가면
+// 편이 바뀐다. 「편 바꾸기」 메뉴를 따로 둘 필요가 없고, 누가 어느 편인지 보고 있으면 안다.
+const NET_GAP = 14;   // 네트에 몸이 닿는 자리까지는 간다
+
+export const sideOfX = (world, x) => (x < world.w / 2 ? 0 : 1);
+const teamName = (side) => (side === 0 ? '빨강' : '파랑');
+
+/// 편 나누기는 **방장이 한다.**
+///
+/// 각자 정하게 두면 몰린다. 손님은 들어온 시각이 달라서 자기가 몇 번째인지도 서로 다르게
+/// 알고, 그 상태로 각자 홀짝을 세면 네 명이 다 한쪽에 설 수도 있다. 그래서 방장이
+/// 번호 순으로 갈라 명단을 만들어 뿌리고, 손님은 그 명단을 따른다.
+///
+/// 손으로 바꾼 사람은 그 선택을 지켜 준다 — 방장에게 알려 두면 다음 명단부터 반영된다.
+function rosterSides(world) {
+  const mp = world.mp;
+  const ids = [mp.myId, ...mp.others.keys()].sort((a, b) => a - b);
+  const picked = world.bag.picked ?? new Map();
+  const out = new Map();
+  let auto = 0;
+  for (const id of ids) {
+    if (picked.has(id)) out.set(id, picked.get(id));
+    else out.set(id, auto++ % 2);       // 고른 사람을 빼고 남은 사람끼리 반씩
+  }
+  return out;
 }
 
-const teamName = (side) => (side === 0 ? '왼쪽' : '오른쪽');
+/// 지금 살아 있는 사람들을 편 별로 모은다. 이름표에 쓸 이름까지 같이.
+export function teams(world) {
+  const rows = [[], []];
+  const add = (name, x, mine) => rows[sideOfX(world, x)].push({ name, mine });
+  add(world.mp.myName || '나', world.player.x, true);
+  for (const other of world.mp.others.values()) {
+    if (other.waiting) continue;
+    add(other.name || '?', other.x, false);
+  }
+  return rows;
+}
 
 function serve(world, toSide) {
   const b = world.bag;
@@ -111,19 +151,34 @@ function point(world, toSide) {
 export default {
   id: 'volley',
   name: '배구',
-  line: '가운데 네트, 좌우 두 편. 우리 쪽에 떨어뜨리면 상대 점수. 다섯 점 먼저 (혼자면 연습).',
-  keys: [['⌥ ← →', '달리기'], ['⌥ ↑', '점프'], ['⌥ Space', '때리기 (공중이면 강타)']],
+  line: '빨강 편 대 파랑 편. 우리 쪽에 떨어뜨리면 상대 점수. 다섯 점 먼저 (혼자면 연습).',
+  keys: [['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
+         ['⌥ Space', '때리기 (공중이면 강타)'], ['⌥ M', '편 바꾸기']],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
   noGrab: true,
+  /// 편 이름. 이게 있으면 메뉴에 「편 바꾸기」가 생긴다.
+  teamNames: ['빨강', '파랑'],
+  /// 옷 색은 번호가 아니라 **선 자리**로 정한다. 왼쪽은 빨강, 오른쪽은 파랑.
+  shirt: (world, x) => TEAM_INK[sideOfX(world, x)],
   /// ⌥Space 를 이 게임이 가져간다.
   action: (world) => spike(world),
 
-  /// 자기 코트에 선다. 번호 순으로 갈라 왼쪽·오른쪽을 번갈아 맡는다.
-  stand(world, slot) {
-    const side = slot % 2;
+  /// **네트는 못 넘는다.** 이게 팀전을 팀전으로 만든다 — 넘어 다닐 수 있으면 편이
+  /// 이름뿐이고, 결국 다 같이 공 하나를 쫓는 게임이 된다. 언제나 자기 구역 안이다.
+  /// 편을 바꾸려면 ⌥M → 편 바꾸기.
+  confine(world, p) {
+    const side = world.team ?? 0;
     const half = world.w / 2;
-    world.player.x = side === 0
+    if (side === 0 && p.x > half - NET_GAP) { p.x = half - NET_GAP; p.vx = Math.min(0, p.vx); }
+    if (side === 1 && p.x < half + NET_GAP) { p.x = half + NET_GAP; p.vx = Math.max(0, p.vx); }
+  },
+
+  /// 자기 코트에 선다. 편을 아직 안 정했으면 번호 순으로 갈라 반씩 나눠 갖는다.
+  stand(world, slot) {
+    if (world.team === undefined) world.team = slot % 2;
+    const half = world.w / 2;
+    world.player.x = world.team === 0
       ? half * (0.3 + 0.4 * Math.random())
       : half + half * (0.3 + 0.4 * Math.random());
     world.player.vx = 0;
@@ -149,6 +204,16 @@ export default {
       if (!world.w) return;
       serve(world, Math.random() < 0.5 ? 0 : 1);
       b.started = true;
+    }
+    // 방장은 자기가 만든 명단을 자기도 따른다. 안 그러면 방장만 딴 편에 서 있게 된다.
+    if (world.mp.role === 'host') {
+      const mine = rosterSides(world).get(world.mp.myId);
+      if (mine !== undefined && mine !== world.team) {
+        world.team = mine;
+        const half = world.w / 2;
+        if (mine === 0 && world.player.x > half) world.player.x = half * 0.6;
+        if (mine === 1 && world.player.x < half) world.player.x = half * 1.4;
+      }
     }
     if (world.state !== 'play') return;
 
@@ -238,19 +303,48 @@ export default {
     // 점수. 네트 위에 좌우로.
     const y = netTop - 34;
     text(ctx, String(b.score[0]), netX - 44, y,
-         { font: `800 30px ${HAN}`, color: INK, align: 'center', halo: 3 });
+         { font: `800 30px ${HAN}`, color: TEAM_INK[0], align: 'center', halo: 3 });
     text(ctx, ':', netX, y, { font: `800 24px ${HAN}`, color: PENCIL, align: 'center', halo: 3 });
     text(ctx, String(b.score[1]), netX + 44, y,
-         { font: `800 30px ${HAN}`, color: INK, align: 'center', halo: 3 });
+         { font: `800 30px ${HAN}`, color: TEAM_INK[1], align: 'center', halo: 3 });
+    // 누가 어느 편인지. 점수 밑에 이름을 적어 두면 편을 물어볼 일이 없다.
+    const rows = teams(world);
+    rows.forEach((members, side) => {
+      const at = netX + (side === 0 ? -44 : 44);
+      const label = members.length
+        ? members.map((m) => (m.mine ? `${m.name}(나)` : m.name)).join(' · ')
+        : '아무도 없음';
+      text(ctx, label, at, y + 20, {
+        font: `${members.some((m) => m.mine) ? 800 : 600} 12px ${HAN}`,
+        color: TEAM_INK[side], align: 'center', halo: 3,
+      });
+    });
+
     if (b.wait > 0) {
       text(ctx, '서브', b.ball.x, b.ball.y - 30,
            { font: `700 13px ${HAN}`, color: RED, align: 'center', halo: 3 });
     }
   },
 
+  /// 손님이 「나 편 바꿨다」고 알려 온다. 방장만 듣는다.
+  message(world, from, msg) {
+    if (world.mp.role !== 'host' || typeof msg.s !== 'number') return;
+    (world.bag.picked ??= new Map()).set(from, msg.s ? 1 : 0);
+  },
+
+  /// 편을 바꾼다. 내 화면에서 먼저 옮기고 방장에게 알린다 —
+  /// 방장이 명단을 다시 뿌리면 남들 화면에서도 옮겨진다.
+  swap(world, shell) {
+    world.team = 1 - (world.team ?? 0);
+    (world.bag.picked ??= new Map()).set(world.mp.myId, world.team);
+    if (world.mp.on) shell?.net?.send?.({ t: 'gm', s: world.team });
+  },
+
   pack(world) {
     const b = world.bag;
+    const sides = rosterSides(world);
     return {
+      tm: [...sides.entries()],
       b: [Math.round(b.ball.x * 10) / 10, Math.round(b.ball.y * 10) / 10,
           Math.round(b.ball.vx), Math.round(b.ball.vy),
           Math.round(b.ball.spin * 100) / 100, Math.round(b.ball.spinV * 100) / 100],
@@ -261,6 +355,18 @@ export default {
 
   unpack(world, data) {
     const b = world.bag;
+    // 방장이 나눠 준 편 명단. 내 편이 여기 적힌 대로 바뀐다.
+    if (data?.tm) {
+      b.sides = new Map(data.tm);
+      const mine = b.sides.get(world.mp.myId);
+      if (mine !== undefined && mine !== world.team) {
+        world.team = mine;
+        // 반대편에 서 있었으면 옮겨 준다. 네트를 넘을 수는 없으니 여기서 옮겨야 한다.
+        const half = world.w / 2;
+        if (mine === 0 && world.player.x > half) world.player.x = half * 0.6;
+        if (mine === 1 && world.player.x < half) world.player.x = half * 1.4;
+      }
+    }
     if (!data?.b) return;
     // 지금 그리고 있던 자리와 방금 온 자리의 차이를 남겨 두고 60ms 에 걸쳐 녹인다.
     // 사람한테 쓰는 것과 같은 방법이다 — 톡 끊어 옮기면 공이 순간이동한다.

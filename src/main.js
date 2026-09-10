@@ -48,6 +48,12 @@ world.onMenu = (action) => {
     shell.setFade?.(Number(action.slice(5)));
     return;
   }
+  if (action === 'swap') {
+    const game = gameOf(world);
+    game.swap?.(world, shell);
+    game.stand?.(world, world.team ?? 0, 2);
+    return;
+  }
   const name = SHELL_ACTIONS[action];
   if (name) shell.menu?.(name);
 };
@@ -339,17 +345,22 @@ function render(time) {
   const ceremony = (world.state === 'over' && !!world.mp.winner) || world.state === 'pick';
 
   if (!ceremony) {
+    // 옷 색은 보통 번호로 정하지만, 게임이 다르게 정할 수 있다 — 배구는 편(선 자리)으로 정한다.
+    const game = gameOf(world);
+    const shirtOf = (id, x) => game.shirt?.(world, x, id) ?? shirtColor(id);
+
     // 남들을 먼저 그리고 내가 맨 위에 선다. 겹쳤을 때 내 몸을 놓치면 안 된다.
     for (const other of world.mp.others.values()) {
       upright(other.x, world.groundY, () => drawStickman(ctx, other, time, boilFrame,
-        { name: other.name, faded: other.dead, color: shirtColor(other.id) }));
+        { name: other.name, faded: other.dead, color: shirtOf(other.id, other.x) }));
     }
     // 혼자 할 때는 색을 안 입힌다 — 구분할 사람이 없으면 그냥 낙서가 맞다.
+    // 다만 편이 있는 게임은 혼자여도 입힌다. 내가 어느 편인지가 곧 규칙이다.
     world.player.waiting = world.mp.on && world.mp.waiting && world.player.dead;
     upright(world.player.x, world.groundY, () => drawStickman(ctx, world.player, time, boilFrame, {
       name: world.mp.on ? world.mp.myName : null,
       mine: true,
-      color: world.mp.on ? shirtColor(world.mp.myId) : null,
+      color: world.mp.on || game.shirt ? shirtOf(world.mp.myId, world.player.x) : null,
     }));
   }
   ctx.restore();

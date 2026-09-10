@@ -96,6 +96,8 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
     pick: 0,
     /// 창 투명도. 셸이 정하고 알려 준다 — 실제로 흐리게 만드는 건 창 쪽 일이다.
     fade: 1,
+    /// 편이 있는 게임에서 내가 선 편 (0/1). 판이 바뀌어도 남는다.
+    team: undefined,
     input: { left: false, right: false, jump: false, duck: false },
     player: {
       x: 0, vx: 0, air: 0, vy: 0, crouch: 0, facing: 1, walk: 0, squeeze: 0,
@@ -136,9 +138,10 @@ export function restart(world) {
   // 누르고 있는 키와 기록 콜백은 그대로 넘긴다 — 방향키를 잡은 채 다시 시작하면
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
-          mp, menu, screens, gameId, pick, fade } = world;
+          mp, menu, screens, gameId, pick, fade, team } = world;
   Object.assign(world, createWorld(best, gameId),
-                { w, h, input, onRecord, onDeath, onMenu, onGameOver, mp, menu, screens, pick, fade });
+                { w, h, input, onRecord, onDeath, onMenu, onGameOver,
+                  mp, menu, screens, pick, fade, team });
   world.state = 'ready';
   resize(world, w, h);
   spread(world);
@@ -251,6 +254,8 @@ function movePlayer(world, dt) {
   const hi = world.w - HALF_W - 9;
   if (p.x < lo) { p.x = lo; p.vx = 0; p.knock = 0; }
   if (p.x > hi) { p.x = hi; p.vx = 0; p.knock = 0; }
+  // 게임이 더 좁은 울타리를 칠 수 있다. 배구는 네트 너머로 못 넘어간다.
+  gameOf(world).confine?.(world, p);
 
   if (input.jump && grounded && p.crouch < 0.3 && p.heldBy < 0) {
     p.vy = JUMP_V;
@@ -373,6 +378,14 @@ export function menuItems(world) {
     items.push({ id: 'join', label: '코드로 입장' });
   }
   items.push({ id: 'pick', label: '게임 바꾸기', note: gameById(world.gameId).name });
+  const game = gameById(world.gameId);
+  if (game.teamNames) {
+    items.push({
+      id: 'swap', label: '편 바꾸기',
+      note: game.teamNames[world.team ?? 0],
+      mark: false,
+    });
+  }
   items.push({
     id: 'fade', label: '투명도',
     note: world.fade >= 0.99 ? '그대로' : `${Math.round(world.fade * 100)}%`,
@@ -415,6 +428,11 @@ function chooseMenu(world) {
     case 'screens':
       world.menu.sub = 'screens';
       world.menu.index = Math.max(0, world.screens.findIndex((screen) => screen.current));
+      return;
+    case 'swap':
+      // 편을 바꾸는 유일한 길. 네트는 못 넘으니 여기서 옮겨 준다.
+      openMenu(world, false);
+      world.onMenu?.('swap');
       return;
     case 'fade':
       world.menu.sub = 'fade';
@@ -588,6 +606,8 @@ export function press(world, action, down) {
 
   if (!down) return;
   if (world.state === 'ready') {
+    // 편을 고르는 게임은 방향키로 시작하지 않는다. 시작 전에 걸어서 자기 편으로 가야 하는데,
+    // 한 걸음 떼자마자 판이 열리면 편을 고를 틈이 없다. ⌥R 로 시작한다.
     // 같이 할 때 판을 여는 건 방장이다. 손님이 누르면 방장에게 부탁이 간다.
     world.mp.on ? world.onMenu?.('again') : (world.state = 'play');
   } else if (world.state === 'over' && action !== 'duck' && canRestart(world, 0.9)) {

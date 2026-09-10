@@ -262,6 +262,10 @@ export function handleMessage(world, shell, from, message, api) {
       if (message.st === 'ready' && world.state !== 'ready') world.state = 'ready';
       return;
     }
+    // 게임이 자기끼리 주고받는 말. 셸도 net 도 안을 열어 보지 않는다.
+    case 'gm':
+      gameOf(world).message?.(world, from, message);
+      return;
     case 'go':
       mp.round = message.r;
       mp.results = null;
