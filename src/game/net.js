@@ -8,6 +8,10 @@
 //     아무도 못 알아챈다. 권한을 한쪽에 몰아 두면 서로 튕기는 고무줄이 생긴다.
 //   · 맞았는지는 **자기 화면 기준**으로 판정한다. 내가 본 그림대로 죽어야 억울하지 않다.
 
+// world.js 와 서로를 부르는 모양이 되지만, 값을 읽는 건 모듈이 다 올라온 뒤(호출 시점)라
+// 문제가 없다. 밀쳐 내는 세기는 물리 상수라 world.js 한 곳에만 둔다.
+import { ESCAPE_SHOVE } from './world.js';
+
 const SEND_HZ = 60;
 /// 예측을 이만큼 넘어가서까지 밀지는 않는다. 꾸러미가 끊기면 그 자리에 세운다.
 const MAX_LEAD = 0.18;
@@ -86,10 +90,13 @@ export function interpolate(world, dt) {
     } else if (me.heldBy === other.id) {
       me.heldBy = -1;
     }
-    // 내가 잡은 사람이 뿌리쳤으면 놓는다.
+    // 내가 잡은 사람이 뿌리쳤으면 놓는다. 그냥 놓는 게 아니라 **밀쳐진다** —
+    // 미는 쪽 계산은 그쪽 화면에서 하고, 밀려나는 나는 여기서 뒤로 튄다.
     if (me.grabbing === other.id && other.escapes !== other.seenEscapes) {
       me.grabbing = -1;
+      me.grabAim = 0;
       me.grabCool = 0.7;
+      me.knock = -Math.sign(other.x - me.x || 1) * ESCAPE_SHOVE;
     }
     other.seenEscapes = other.escapes;
 

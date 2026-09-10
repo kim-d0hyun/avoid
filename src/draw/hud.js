@@ -65,13 +65,17 @@ export function drawIntro(ctx, world, time) {
     ['⌥ ← →', '달리기'],
     ['⌥ ↑', '점프'],
     ['⌥ ↓', '웅크리기'],
-    ['⌥ Space', '붙잡기 · 뿌리치기'],
+    ['⌥ Space', '누른 채 붙잡기 · 눌러 뿌리치기'],
     ['⌥ H', '숨기기'],
     ['⌥ M', '메뉴 · 끝내기'],
   ];
   const hint = '아무 방향키나 누르면 시작';
+  // 종이는 **제일 긴 줄**에 맞춘다. 안내 문구만 재면 설명이 종이 밖으로 삐져나간다.
+  ctx.font = `600 16px ${HAN}`;
+  const widest = rows.reduce((most, [, label]) => Math.max(most, ctx.measureText(label).width), 0);
   ctx.font = `700 16px ${HAN}`;
-  paperScrap(ctx, x - 22, y - 30, Math.max(232, ctx.measureText(hint).width + 44),
+  paperScrap(ctx, x - 22, y - 30,
+             Math.max(232, ctx.measureText(hint).width + 44, widest + 130),
              rows.length * 28 + 56, 7);
 
   rows.forEach(([key, label], i) => {

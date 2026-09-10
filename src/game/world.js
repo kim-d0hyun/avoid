@@ -49,11 +49,16 @@ const GRAB_COOLDOWN = 0.7;  // 놓친 뒤 다시 잡기까지
 const GRAB_HOLD_AT = 21;    // 잡고 있을 때 유지되는 거리 — 어깨가 닿을 만큼 붙는다
 const GRABBER_SPEED = 0.58; // 잡은 쪽도 무겁다
 const HELD_SPEED = 0.22;    // 잡힌 쪽은 거의 못 움직인다
-const GRAB_PULL = 420;      // 끌어당기는 힘
+// 뿌리치기. 그냥 풀리기만 하면 「풀렸나?」 싶다 — **밀쳐 내야** 뿌리친 것으로 읽힌다.
+// 미는 쪽이 더 세게 날아가고, 뿌리친 쪽도 그만큼은 아니어도 반동으로 물러난다.
+const ESCAPE_SHOVE = 540;   // 붙잡고 있던 쪽이 밀려나는 세기
+const ESCAPE_KICK = 300;    // 뿌리친 쪽이 반동으로 물러나는 세기
+const KNOCK_TAU = 0.17;     // 밀려남이 잦아드는 시간
 
 /// 이긴 사람이 만세를 부르는 시간. 이 동안은 다음 판을 못 시작한다 —
 /// 이겼다는 걸 볼 새도 없이 다음 판이 시작되면 이길 이유가 없어진다.
 export const VICTORY_SECONDS = 3;
+export { ESCAPE_SHOVE };
 
 /// 난이도. 시간이 곧 난이도이고 다른 손잡이는 없다.
 /// 속도는 3.8배에서 멈추지만 **쏟아지는 양은 안 멈춘다** — 마지막에 사람을 잡는 건 속도가
@@ -94,6 +99,9 @@ export function createWorld(best) {
       groundY: 0, dead: false, deadFor: 0, danger: false,
       /// 붙잡기. grabbing 은 내가 잡은 사람 번호, heldBy 는 나를 잡은 사람 번호 (-1 이면 없음).
       grabbing: -1, heldBy: -1, grabCool: 0, escapes: 0, shake: 0,
+      /// 뿌리치며 밀려난 속도. vx 와 따로 두는 이유는 마찰과 달리기 상한에 안 먹히게 하려고다 —
+      /// vx 에 얹으면 4600/s 짜리 마찰이 70밀리초 만에 먹어 치워서 아무것도 안 보인다.
+      knock: 0,
       /// 팔이 향할 쪽(-1/0/1). 걸음과 따로 논다 — 오른쪽 사람을 잡은 채 왼쪽으로 끌고 갈 수 있다.
       grabAim: 0,
     },
@@ -286,12 +294,16 @@ function movePlayer(world, dt) {
   const fling = MAX_SPEED * 1.7;
   p.vx = Math.max(-fling, Math.min(fling, p.vx));
 
-  p.x += p.vx * dt;
+  p.x += (p.vx + p.knock) * dt;
+  if (p.knock !== 0) {
+    p.knock *= Math.exp(-dt / KNOCK_TAU);
+    if (Math.abs(p.knock) < 8) p.knock = 0;
+  }
   // 벽에 붙으면 속도를 죽인다. 안 죽이면 벽에 낀 채로 달리는 애니메이션이 나온다.
   const lo = HALF_W + 9;
   const hi = world.w - HALF_W - 9;
-  if (p.x < lo) { p.x = lo; p.vx = 0; }
-  if (p.x > hi) { p.x = hi; p.vx = 0; }
+  if (p.x < lo) { p.x = lo; p.vx = 0; p.knock = 0; }
+  if (p.x > hi) { p.x = hi; p.vx = 0; p.knock = 0; }
 
   if (input.jump && grounded && p.crouch < 0.3 && p.heldBy < 0) {
     p.vy = JUMP_V;
@@ -315,6 +327,7 @@ function kill(world) {
   p.dead = true;
   p.deadFor = 0;
   p.vx = 0;
+  p.knock = 0;
   world.shake = 1;
 
   const ms = Math.round(world.elapsed * 1000);
@@ -511,9 +524,16 @@ function grabPressed(world) {
 
   // 잡혀 있으면 먼저 뿌리친다. 한 번이면 풀린다 — 연타로 괴롭히는 게임이 아니다.
   if (p.heldBy >= 0) {
+    const holder = world.mp.others.get(p.heldBy);
     p.heldBy = -1;
     p.escapes = (p.escapes + 1) % 1000;   // 잡은 쪽이 이 숫자가 바뀐 걸 보고 놓는다
     p.grabCool = GRAB_COOLDOWN;
+    // 밀쳐 내며 풀려난다. 미는 반동으로 나도 반대쪽으로 물러난다 —
+    // 붙잡고 있던 쪽이 밀려나는 건 그쪽 화면에서 계산한다(net.js).
+    if (holder) {
+      p.knock = -Math.sign(holder.x - p.x || 1) * ESCAPE_KICK;
+      p.grabAim = 0;
+    }
     return;
   }
   if (p.grabbing >= 0) return;                  // 이미 잡고 있다. 놓는 건 키를 뗄 때다
@@ -583,7 +603,6 @@ function stepGrab(world, dt) {
       const want = Math.sign(dx) * GRAB_HOLD_AT;
       p.x += (dx - want) * Math.min(1, dt * 4);
       p.shake = 1;
-      p.vx += -Math.sign(dx) * GRAB_PULL * 0 * dt;
     }
   }
 }
