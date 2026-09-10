@@ -350,6 +350,14 @@ export function menuItems(world) {
   }
   // 화면 고르기는 한 겹 안으로 들어간다. 모니터가 셋이면 첫 화면이 그것만으로 꽉 찬다.
   // 보던 중에 모니터를 뽑아 한 대만 남으면 고를 것이 없으니 그냥 첫 화면으로 돌아간다.
+  if (world.menu.sub === 'team') {
+    const names = gameById(world.gameId).teamNames ?? [];
+    return names.map((name, side) => ({
+      id: `team:${side}`, label: `${name} 편`,
+      note: side === (world.team ?? 0) ? '지금 여기' : '이쪽으로',
+      mark: side === (world.team ?? 0),
+    }));
+  }
   if (world.menu.sub === 'fade') {
     return FADES.map((f) => ({
       id: `fade:${f}`,
@@ -381,9 +389,8 @@ export function menuItems(world) {
   const game = gameById(world.gameId);
   if (game.teamNames) {
     items.push({
-      id: 'swap', label: '편 바꾸기',
+      id: 'team', label: '편 고르기',
       note: game.teamNames[world.team ?? 0],
-      mark: false,
     });
   }
   items.push({
@@ -429,10 +436,10 @@ function chooseMenu(world) {
       world.menu.sub = 'screens';
       world.menu.index = Math.max(0, world.screens.findIndex((screen) => screen.current));
       return;
-    case 'swap':
-      // 편을 바꾸는 유일한 길. 네트는 못 넘으니 여기서 옮겨 준다.
-      openMenu(world, false);
-      world.onMenu?.('swap');
+    case 'team':
+      // 편을 고르는 유일한 길. 네트는 못 넘으니 여기서 옮겨 준다.
+      world.menu.sub = 'team';
+      world.menu.index = world.team ?? 0;
       return;
     case 'fade':
       world.menu.sub = 'fade';
@@ -446,7 +453,8 @@ function chooseMenu(world) {
       // 화면을 옮기는 동안은 메뉴를 열어 둔다. 창이 그 모니터에 뜨는 걸 눈으로 보고
       // 아니다 싶으면 바로 다른 걸 고를 수 있어야 한다.
       // 화면과 투명도는 고르고도 메뉴를 열어 둔다. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다.
-      if (picked.id.startsWith('screen:') || picked.id.startsWith('fade:')) {
+      if (picked.id.startsWith('screen:') || picked.id.startsWith('fade:')
+          || picked.id.startsWith('team:')) {
         world.onMenu?.(picked.id);
         return;
       }

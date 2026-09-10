@@ -38,23 +38,29 @@ const HAN = '"Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 // 내가 처음에 만든 것은 맞을 때마다 정해진 속도로 리셋해서 영원히 같은 속도로 떠 있었다 —
 // 그게 「느리다」의 정체였다.
 const BALL_R = 20;
-const GRAVITY = 2180;
-const MIN_UP = 1310;        // 맞으면 적어도 이만큼은 위로. 그보다 빨랐으면 그 속도 그대로
-const OFF_CENTER = 44;      // 몸 가운데에서 벗어난 만큼 옆으로 — 대각선은 여기서 나온다
+// 원판 값의 0.82배로 낮춰 둔다. 원판은 432px 코트를 두 사람이 지키지만 여기는 1512px 을
+// 사람이 걸어서 지킨다 — 그대로 쓰면 손이 못 따라간다. 비율은 그대로라 느낌은 같다.
+const SLOW = 0.82;
+const GRAVITY = 2180 * SLOW * SLOW;   // 중력은 시간의 제곱이라 두 번 곱한다
+const MIN_UP = 1310 * SLOW;  // 맞으면 적어도 이만큼은 위로. 그보다 빨랐으면 그 속도 그대로
+const OFF_CENTER = 44 * SLOW;     // 몸 가운데에서 벗어난 만큼 옆으로 — 대각선은 여기서 나온다
 const CARRY = 0.45;         // 치는 사람이 달리던 속도가 실린다
-const SMASH_SIDE = 1760;    // 방향키를 누르고 때리면
-const SMASH_FLAT = 880;     // 안 누르고 때리면 (수평 미사일)
+const SMASH_SIDE = 1760 * SLOW;   // 방향키를 누르고 때리면
+const SMASH_FLAT = 880 * SLOW;    // 안 누르고 때리면 (수평 미사일)
 const SMASH_DOWN = 2.0;     // ⌥↓ 를 누르고 때리면 아래로 이 배수
 const SMASH_UP = 1.6;       // ⌥↑ 를 누르고 때리면 위로 (넘겨 주기)
 const SPIKE_REACH = 88;     // 손이 닿는 거리
-const MAX_SPEED = 2600;
+const MAX_SPEED = 2600 * SLOW;
 const WALL_KEEP = 0.98;     // 옆벽·천장은 거의 손실 없이 반사한다
+const GROUND_KEEP = 0.52;   // 바닥은 많이 죽는다. 두어 번 튀고 만다
+const GROUND_ROLL = 0.86;   // 바닥에 끌리며 가로 속도가 줄어든다
+const LAND_SHOW = 1.0;      // 떨어진 뒤 보여 주는 시간. 이만큼은 굴러다닌다
 // 바닥에서 네트 꼭대기까지.
 //
 // 사람 키가 60, 점프해서 머리가 125까지 간다. 95 로 두면 **서서는 못 넘기고 뛰면 넘긴다** —
 // 원판도 네트가 사람 키의 1.2배쯤이라 뛰면 훌쩍 넘어간다.
 const NET_H = 95;
-const SERVE_UP = 900;
+const SERVE_UP = 900 * SLOW;
 const WIN_AT = 5;
 const RESET_WAIT = 1.1;     // 점수 난 뒤 다음 서브까지
 
@@ -108,6 +114,9 @@ function serve(world, toSide) {
   b.ball.vy = -SERVE_UP;
   b.ball.spin = 0;
   b.ball.spinV = (Math.random() - 0.5) * 2;
+  b.landed = undefined;
+  b.rest = 0;
+  b.tail = [];
   b.wait = RESET_WAIT;
 }
 
@@ -243,8 +252,11 @@ export default {
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
   noGrab: true,
-  /// 편 이름. 이게 있으면 메뉴에 「편 바꾸기」가 생긴다.
+  /// 편 이름. 이게 있으면 메뉴에 「편 고르기」가 생긴다.
   teamNames: ['빨강', '파랑'],
+  /// 판 도중에 누가 들어오면 그 판을 접고 다 같이 다시 시작한다.
+  /// 2대2 하다가 한 명 늘면 편이 어그러지는데, 그걸 다음 판까지 끌고 갈 이유가 없다.
+  restartOnJoin: true,
   /// 옷 색은 번호가 아니라 **선 자리**로 정한다. 왼쪽은 빨강, 오른쪽은 파랑.
   shirt: (world, x) => TEAM_INK[sideOfX(world, x)],
   /// ⌥Space 를 이 게임이 가져간다.
@@ -280,6 +292,7 @@ export default {
     ball: { x: 0, y: 0, vx: 0, vy: 0, spin: 0, spinV: 0, hit: 0, smash: 0, hitX: 0, hitY: 0 },
     tail: [], tailT: 0,
     score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false,
+    landed: undefined, rest: 0,
     // 손님이 받은 공을 부드럽게 따라가려고 남겨 두는 것.
     age: 0, errorX: 0, errorY: 0, baseX: undefined,
   }),
@@ -330,11 +343,24 @@ export default {
     ball.hit = Math.max(0, (ball.hit ?? 0) - dt * 4);
     ball.smash = Math.max(0, (ball.smash ?? 0) - dt * 2.2);
 
-    // 옆벽과 천장은 **거의 손실 없이** 반사한다. 원판도 옆벽은 부호만 뒤집는다.
-    // 벽을 끼고 각을 만드는 게 이 게임의 재미 절반이다.
-    if (ball.x < BALL_R) { ball.x = BALL_R; ball.vx = Math.abs(ball.vx) * WALL_KEEP; ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; }
-    if (ball.x > world.w - BALL_R) { ball.x = world.w - BALL_R; ball.vx = -Math.abs(ball.vx) * WALL_KEEP; ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; }
-    if (ball.y < BALL_R) { ball.y = BALL_R; ball.vy = Math.abs(ball.vy) * WALL_KEEP; ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; }
+    // 옆벽과 천장. **들어간 만큼 되접는다** — 벽에 자리를 붙여 버리면 안 된다.
+    //
+    // 초당 2900픽셀이면 한 프레임에 48픽셀을 간다. 벽을 지난 자리를 그냥 벽에 붙이면
+    // 그 48픽셀이 사라져서 공이 벽에 잠깐 붙었다 튀는 것처럼 보이고, 다음 프레임에도
+    // 조건에 걸려 번쩍임이 계속 뜬다. 들어간 깊이만큼 되접으면 **입사각 그대로 반사각**이
+    // 나오고, 벽을 지나친 그 프레임에만 한 번 튄다.
+    const reflect = (lo, hi, get, set, getV, setV) => {
+      const v = getV();
+      if (get() < lo && v < 0) { set(lo + (lo - get())); setV(-v * WALL_KEEP); return true; }
+      if (get() > hi && v > 0) { set(hi - (get() - hi)); setV(-v * WALL_KEEP); return true; }
+      return false;
+    };
+    const bounced =
+      reflect(BALL_R, world.w - BALL_R, () => ball.x, (v) => { ball.x = v; },
+              () => ball.vx, (v) => { ball.vx = v; })
+      | reflect(BALL_R, Infinity, () => ball.y, (v) => { ball.y = v; },
+                () => ball.vy, (v) => { ball.vy = v; });
+    if (bounced) { ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; }
 
     // 네트. 꼭대기는 넘어가고, 몸통에 맞으면 되돌아온다.
     const netX = world.w / 2;
@@ -353,10 +379,31 @@ export default {
       if (touches(ball, p)) { bounceOff(ball, p); break; }
     }
 
-    // 바닥에 닿으면 그쪽이 실점.
+    // 바닥. **공이 진짜로 떨어져 구르는 것까지 보여 주고** 판을 끊는다.
+    //
+    // 닿는 순간 공을 없애고 점수를 올리면 뚝 끊긴다. 한 번 튀기고, 두 번 튀기고,
+    // 힘이 빠져 구르다 서는 것까지 보인 다음에 다음 서브로 넘어간다.
     if (ball.y + BALL_R >= world.groundY) {
-      point(world, ball.x < netX ? 1 : 0);
-      return;
+      ball.y = world.groundY - BALL_R;
+      if (b.landed === undefined) {
+        // 처음 닿았다. 여기서 점수가 갈린다.
+        b.landed = ball.x < netX ? 1 : 0;
+        b.rest = 0;
+        ball.hit = 1; ball.hitX = ball.x; ball.hitY = world.groundY;
+      }
+      ball.vy = -Math.abs(ball.vy) * GROUND_KEEP;
+      ball.vx *= GROUND_ROLL;
+      if (Math.abs(ball.vy) < 120) { ball.vy = 0; ball.vx *= 0.86; }
+    }
+    if (b.landed !== undefined) {
+      b.rest += dt;
+      // 다 굴렀거나 시간이 다 되면 정리한다.
+      if (b.rest > LAND_SHOW || (Math.abs(ball.vy) < 60 && Math.abs(ball.vx) < 60)) {
+        const side = b.landed;
+        b.landed = undefined;
+        point(world, side);
+        return;
+      }
     }
 
     if (b.score[0] >= WIN_AT || b.score[1] >= WIN_AT) {
@@ -474,10 +521,10 @@ export default {
     if (typeof msg.s === 'number') (world.bag.picked ??= new Map()).set(from, msg.s ? 1 : 0);
   },
 
-  /// 편을 바꾼다. 내 화면에서 먼저 옮기고 방장에게 알린다 —
+  /// 편을 고른다. 내 화면에서 먼저 옮기고 방장에게 알린다 —
   /// 방장이 명단을 다시 뿌리면 남들 화면에서도 옮겨진다.
-  swap(world, shell) {
-    world.team = 1 - (world.team ?? 0);
+  swap(world, shell, side) {
+    world.team = side === undefined ? 1 - (world.team ?? 0) : (side ? 1 : 0);
     (world.bag.picked ??= new Map()).set(world.mp.myId, world.team);
     if (world.mp.on) (shell?.net?.send ?? world.send)?.({ t: 'gm', s: world.team });
   },

@@ -293,6 +293,9 @@ export function handleMessage(world, shell, from, message, api) {
       return;
     }
     case 'again':
+      // 옛 버전 손님이 보내오는 부탁. 이제는 방장만 판을 연다 — 조용히 버린다.
+      return;
+    case 'again_ignored':
       if (mp.role === 'host') startRound(world, shell, api);
       return;
     default:
@@ -390,12 +393,11 @@ export function checkRoundOver(world, shell) {
 
 export function startRound(world, shell, api) {
   const mp = world.mp;
-  // 세리머니 중이면 무시한다. 손님이 눌러도, 방장이 눌러도 마찬가지다.
+  // 세리머니 중이면 무시한다.
   if (world.state === 'over' && mp.winner && world.overFor < 3) return;
-  if (mp.role !== 'host') {
-    shell.net.send({ t: 'again' }); // 손님은 부탁만 한다
-    return;
-  }
+  // **판을 여는 건 방장뿐이다.** 손님이 아무 때나 열면 아직 준비 안 된 사람이 끌려 들어간다 —
+  // 편을 고르는 중일 수도, 방금 들어와 자리를 잡는 중일 수도 있다.
+  if (mp.role !== 'host') return;
   mp.round++;
   mp.results = null;
   mp.winner = null;
@@ -434,6 +436,14 @@ export function peerChanged(world, shell, id, name, joined, api) {
     mp.names.set(id, name);
     mp.alive.set(id, false); // 다음 판부터
     mp.others.set(id, blankOther(id, name));
+    // 어떤 게임은 판 도중에 누가 들어오면 **그 판을 접고 다 같이 다시 시작한다.**
+    // 배구가 그렇다 — 2대2 하다 한 명 늘면 편이 어그러지는데, 그걸 판 끝까지 끌고 갈
+    // 이유가 없다. 똥피하기는 그냥 다음 판에 끼면 되니 접지 않는다.
+    if (mp.role === 'host' && world.state === 'play' && gameOf(world).restartOnJoin) {
+      endRound(world, shell, { winner: null, results: mp.roundResults ?? [] });
+      // 세리머니 없이 곧바로 새 판. 들어온 사람 자리까지 잡아 준다.
+      setTimeout(() => startRound(world, shell, api), 700);
+    }
   } else {
     mp.names.delete(id);
     mp.alive.delete(id);

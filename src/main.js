@@ -48,9 +48,9 @@ world.onMenu = (action) => {
     shell.setFade?.(Number(action.slice(5)));
     return;
   }
-  if (action === 'swap') {
+  if (action.startsWith('team:')) {
     const game = gameOf(world);
-    game.swap?.(world, shell);
+    game.swap?.(world, shell, Number(action.slice(5)));
     game.stand?.(world, world.team ?? 0, 2);
     return;
   }
