@@ -30,6 +30,99 @@ func makeRoomCode() -> String {
     return String(chars.shuffled())
 }
 
+/// 같은 랜에서 쓰는 내 IPv4. 방 정보에 실어 보내려고 쓴다.
+///
+/// Bonjour 가 알려 주는 이름(`...local.`)이 **IPv6 링크로컬로만 풀리는 맥이 많다.**
+/// 사내 AP 가 단말 간 IPv6 를 막거나 불안정하면 붙었다가 바로 끊긴다 —
+/// 그래서 이름에 기대지 않고 숫자 주소를 직접 알려 준다.
+func localIPv4() -> String? {
+    var pointer: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&pointer) == 0, let first = pointer else { return nil }
+    defer { freeifaddrs(pointer) }
+    for item in sequence(first: first, next: { $0.pointee.ifa_next }) {
+        let flags = Int32(item.pointee.ifa_flags)
+        guard flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0,
+              item.pointee.ifa_addr?.pointee.sa_family == UInt8(AF_INET),
+              let name = item.pointee.ifa_name.map({ String(cString: $0) }),
+              name.hasPrefix("en") else { continue }
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        if getnameinfo(item.pointee.ifa_addr, socklen_t(item.pointee.ifa_addr.pointee.sa_len),
+                       &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+            return String(cString: host)
+        }
+    }
+    return nil
+}
+
+/// TCP 설정 한 벌. **IPv4 로 못 박는다** — 링크로컬 IPv6 로 붙으면 망에 따라 조용히 끊긴다.
+/// 살아 있는지도 자주 확인해서, 죽은 줄을 붙잡고 있지 않게 한다.
+private func lanParameters() -> NWParameters {
+    let tcp = NWProtocolTCP.Options()
+    tcp.noDelay = true            // 60Hz 짜리 작은 꾸러미다. 모아 보내면 그게 곧 렉이다.
+    tcp.enableKeepalive = true
+    tcp.keepaliveIdle = 2
+    tcp.keepaliveInterval = 2
+    tcp.keepaliveCount = 3
+    tcp.connectionTimeout = 5
+    let params = NWParameters(tls: nil, tcp: tcp)
+    if let ip = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+        ip.version = .v4
+    }
+    return params
+}
+
+/// 방 이름을 풀어 **IPv4 주소를 꺼내 준다.**
+///
+/// NWBrowser 가 주는 이름표(TXT)는 같은 맥 안에서 찾을 때처럼 비어 오는 경우가 있고,
+/// 이름(`...local.`)을 그대로 쓰면 맥에 따라 IPv6 링크로컬로만 풀린다. 그 길은 사내 AP 에서
+/// 붙었다가 끊기는 원인이다. 그래서 예전 API 로 한 번 더 풀어 **숫자 IPv4 를 직접 집는다.**
+final class Resolver: NSObject, NetServiceDelegate {
+    private let service: NetService
+    private var done: (([NWEndpoint]) -> Void)?
+
+    init(room: String) {
+        service = NetService(domain: "local.", type: netServiceType + ".", name: room)
+        super.init()
+        service.delegate = self
+    }
+
+    func resolve(timeout: TimeInterval, _ done: @escaping ([NWEndpoint]) -> Void) {
+        self.done = done
+        service.resolve(withTimeout: timeout)
+    }
+
+    func netServiceDidResolveAddress(_ sender: NetService) {
+        guard let port = NWEndpoint.Port(rawValue: UInt16(sender.port)) else { finish([]); return }
+        // 상대 맥에 주소가 여럿일 수 있다 (와이파이·이더넷·VPN). **전부 모아** 두고
+        // 차례로 해 본다 — 첫 번째가 닿지 않는 길인 경우가 실제로 있다.
+        var found: [NWEndpoint] = []
+        for data in sender.addresses ?? [] {
+            let text: String? = data.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress?.assumingMemoryBound(to: sockaddr.self),
+                      base.pointee.sa_family == UInt8(AF_INET) else { return nil }
+                var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                guard getnameinfo(base, socklen_t(base.pointee.sa_len), &host, socklen_t(host.count),
+                                  nil, 0, NI_NUMERICHOST) == 0 else { return nil }
+                return String(cString: host)
+            }
+            guard let text, !found.contains(where: { "\($0)" == "\(text):\(port.rawValue)" }) else { continue }
+            found.append(.hostPort(host: NWEndpoint.Host(text), port: port))
+        }
+        finish(found)
+    }
+
+    func netService(_ sender: NetService, didNotResolve error: [String: NSNumber]) {
+        finish([])
+    }
+
+    private func finish(_ endpoints: [NWEndpoint]) {
+        service.stop()
+        let callback = done
+        done = nil
+        callback?(endpoints)
+    }
+}
+
 protocol NetDelegate: AnyObject {
     /// 역할이 바뀌었다. role 은 off / host / guest.
     func netRoleChanged(role: String, code: String?, myId: Int, note: String?)
@@ -59,10 +152,15 @@ final class Net {
 
     private var listener: NWListener?
     private var browser: NWBrowser?
+    private var resolver: Resolver?
     private var peers: [Int: Peer] = [:]
     private var nextId = 1
     /// 손님일 때 호스트로 가는 줄. 손님에게 peers 는 이것 하나뿐이다.
     private var uplink: Peer?
+    /// 붙어 볼 주소들. 앞에서부터 하나씩, 안 되면 다음 것으로 넘어간다.
+    private var candidates: [NWEndpoint] = []
+    private var attempt = 0
+    private var joinedAt: Date?
 
     init(name: String) {
         myName = name
@@ -73,12 +171,11 @@ final class Net {
     func host() -> String? {
         leave()
         let room = makeRoomCode()
-        let options = NWProtocolTCP.Options()
-        options.noDelay = true // 20Hz 짜리 작은 꾸러미다. 모아 보내면 그게 곧 렉이다.
-        let params = NWParameters(tls: nil, tcp: options)
+        let params = lanParameters()
 
-        // 포트가 이미 쓰이고 있으면 아무 포트나 잡는다. 그때는 Bonjour 로만 붙을 수 있다.
+        // 포트가 이미 쓰이고 있으면 아무 포트나 잡는다.
         let listener: NWListener
+        var known: UInt16? = netDefaultPort
         do {
             listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: netDefaultPort)!)
         } catch {
@@ -87,17 +184,30 @@ final class Net {
                 return nil
             }
             listener = fallback
+            known = nil // 뜬 뒤에야 알 수 있다
         }
-        listener.service = NWListener.Service(name: room, type: netServiceType)
+
+        // 이름표는 **시작 전에** 박는다. 뜬 뒤에 바꾸면 이미 방을 본 손님은 옛 이름표를 들고 있어
+        // 주소를 못 읽고 이름으로 붙으려 한다 — 그 길이 바로 IPv6 링크로컬로 새는 길이다.
+        listener.service = Net.service(room: room, port: known)
         listener.newConnectionHandler = { [weak self] connection in
             DispatchQueue.main.async { self?.accept(connection) }
         }
         listener.stateUpdateHandler = { [weak self] state in
-            guard case .failed(let error) = state else { return }
-            DispatchQueue.main.async {
-                self?.leave()
-                self?.delegate?.netRoleChanged(role: "off", code: nil, myId: 0,
-                                               note: "방이 닫혔다 (\(error.localizedDescription))")
+            switch state {
+            case .ready:
+                let port = listener.port?.rawValue ?? netDefaultPort
+                // 기본 포트를 못 잡아 다른 포트로 떴을 때만 이름표를 고친다.
+                if known != port { listener.service = Net.service(room: room, port: port) }
+                debugLog("방 열림 \(localIPv4() ?? "?"):\(port)")
+            case .failed(let error):
+                DispatchQueue.main.async {
+                    self?.leave()
+                    self?.delegate?.netRoleChanged(role: "off", code: nil, myId: 0,
+                                                   note: "방이 닫혔다 (\(error.localizedDescription))")
+                }
+            default:
+                break
             }
         }
         listener.start(queue: .main)
@@ -108,6 +218,15 @@ final class Net {
         myId = 0
         delegate?.netRoleChanged(role: role, code: room, myId: 0, note: nil)
         return room
+    }
+
+    /// 방 이름표. **내 숫자 주소를 적어 둔다** — 손님이 이름을 풀지 않고 여기로 바로 오게.
+    private static func service(room: String, port: UInt16?) -> NWListener.Service {
+        var fields = ["v": appVersion]
+        if let ip = localIPv4() { fields["ip"] = ip }
+        if let port { fields["port"] = String(port) }
+        return NWListener.Service(name: room, type: netServiceType, domain: nil,
+                                  txtRecord: NWTXTRecord(fields).data)
     }
 
     // MARK: 방 찾아 들어가기
@@ -129,8 +248,8 @@ final class Net {
             let hostPart = String(parts[1]).lowercased()
             let bits = hostPart.split(separator: ":", maxSplits: 1)
             let port = bits.count == 2 ? (UInt16(bits[1]) ?? netDefaultPort) : netDefaultPort
-            connect(to: .hostPort(host: NWEndpoint.Host(String(bits[0])),
-                                  port: NWEndpoint.Port(rawValue: port)!))
+            start(candidates: [.hostPort(host: NWEndpoint.Host(String(bits[0])),
+                                          port: NWEndpoint.Port(rawValue: port)!)])
             return
         }
         findOnLAN(room)
@@ -140,6 +259,7 @@ final class Net {
         // 피어투피어(AWDL)는 끄고 진짜 와이파이·이더넷만 쓴다. 켜 두면 같은 망에 있는데도
         // 닿지 않는 주소를 물어 와, 붙자마자 끊기는 일이 생긴다.
         let params = NWParameters()
+        params.includePeerToPeer = false
         let browser = NWBrowser(for: .bonjour(type: netServiceType, domain: nil), using: params)
 
         browser.browseResultsChangedHandler = { [weak self] results, _ in
@@ -148,7 +268,27 @@ final class Net {
                 guard case .service(let name, _, _, _) = result.endpoint, name == room else { continue }
                 self.browser?.cancel()
                 self.browser = nil
-                self.connect(to: result.endpoint)
+
+                // 이름표에 숫자 주소가 적혀 있으면 바로 쓴다. 없으면 직접 풀어서 IPv4 를 집는다.
+                if case .bonjour(let txt) = result.metadata,
+                   let ip = txt["ip"], !ip.isEmpty,
+                   let port = NWEndpoint.Port(txt["port"] ?? String(netDefaultPort)) {
+                    debugLog("방 찾음 → 이름표에 적힌 \(ip):\(port.rawValue)")
+                    self.start(candidates: [.hostPort(host: NWEndpoint.Host(ip), port: port),
+                                            result.endpoint])
+                    return
+                }
+
+                let fallback = result.endpoint
+                let resolver = Resolver(room: room)
+                self.resolver = resolver
+                resolver.resolve(timeout: 5) { [weak self] found in
+                    guard let self, self.uplink == nil, self.role == "guest" else { return }
+                    self.resolver = nil
+                    debugLog("방 찾음 → 후보 \(found.map { "\($0)" }.joined(separator: ", "))"
+                           + (found.isEmpty ? "IPv4 없음, 이름으로" : ""))
+                    self.start(candidates: found.isEmpty ? [fallback] : found + [fallback])
+                }
                 return
             }
         }
@@ -173,12 +313,40 @@ final class Net {
         }
     }
 
-    private func connect(to endpoint: NWEndpoint) {
-        let options = NWProtocolTCP.Options()
-        options.noDelay = true
-        let params = NWParameters(tls: nil, tcp: options)
+    /// **내 주소와 같은 대역을 먼저** 시도한다.
+    ///
+    /// 맥에는 가상머신·VPN 이 만든 인터페이스가 흔히 붙어 있어서, 이름을 풀면 실제 와이파이
+    /// 주소 말고 `192.168.139.x` 같은 것들이 같이 나온다. 그걸 먼저 잡으면 닿지 않는 주소로
+    /// 몇 초씩 기다리다 사람이 「안 되네」 하고 포기한다. 같은 랜에 있으면 앞 세 마디가 같다.
+    private func ordered(_ list: [NWEndpoint]) -> [NWEndpoint] {
+        let myPrefix = localIPv4().map { $0.split(separator: ".").dropLast().joined(separator: ".") }
+        func rank(_ endpoint: NWEndpoint) -> Int {
+            guard case .hostPort(let host, _) = endpoint else { return 3 } // 이름은 맨 뒤
+            let text = "\(host)".split(separator: "%").first.map(String.init) ?? "\(host)"
+            if let myPrefix, text.hasPrefix(myPrefix + ".") { return 0 }   // 같은 대역
+            if text.hasPrefix("127.") { return 1 }                          // 같은 맥
+            return 2
+        }
+        return list.enumerated()
+            .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
+            .map(\.element)
+    }
 
-        let connection = NWConnection(to: endpoint, using: params)
+    /// 후보를 앞에서부터 한 바퀴 돌고, 다 안 되면 한 바퀴 더 돈다 —
+    /// 망이 잠깐 흔들린 것뿐일 수도 있어서 한 번 실패로 포기하지 않는다.
+    private func start(candidates list: [NWEndpoint]) {
+        candidates = ordered(list)
+        attempt = 0
+        debugLog("붙어 볼 순서: \(candidates.map { "\($0)" }.joined(separator: " → "))")
+        guard let first = candidates.first else {
+            delegate?.netRoleChanged(role: "off", code: nil, myId: 0, note: "붙을 주소를 못 찾았다")
+            return
+        }
+        connect(to: first)
+    }
+
+    private func connect(to endpoint: NWEndpoint) {
+        let connection = NWConnection(to: endpoint, using: lanParameters())
         let peer = Peer(id: 0, connection: connection) // 호스트는 언제나 0번
         uplink = peer
 
@@ -186,13 +354,14 @@ final class Net {
             guard let self else { return }
             switch state {
             case .ready:
+                self.joinedAt = Date()
+                debugLog("붙음 → \(connection.currentPath?.remoteEndpoint.map { "\($0)" } ?? "?")")
                 let hello = #"{"t":"__join","name":"\#(Net.escape(self.myName))","#
                     + #""p":\#(netProtocol),"v":"\#(Net.escape(appVersion))"}"#
                 self.line(peer, hello)
             case .failed(let error):
-                self.leave()
-                self.delegate?.netRoleChanged(role: "off", code: nil, myId: 0,
-                                              note: "붙지 못했다 (\(error.localizedDescription))")
+                debugLog("붙기 실패: \(error)")
+                self.giveUpOrRetry(reason: "붙지 못했다 (\(error.localizedDescription))")
             case .cancelled:
                 break
             default:
@@ -201,6 +370,26 @@ final class Net {
         }
         connection.start(queue: .main)
         receive(peer)
+    }
+
+    /// 붙는 데 실패했을 때. 후보를 두 번씩, 목록 끝까지 해 보고 그래도 안 되면 알린다.
+    private func giveUpOrRetry(reason: String) {
+        attempt += 1
+        // 한 바퀴 돌고 한 바퀴 더. 나쁜 주소에 오래 매달리지 않으면서 흔들림에는 버틴다.
+        let index = candidates.isEmpty ? 0 : attempt % candidates.count
+        guard role == "guest", attempt < candidates.count * 2 else {
+            leave()
+            delegate?.netRoleChanged(role: "off", code: nil, myId: 0, note: reason)
+            return
+        }
+        let next = candidates[index]
+        debugLog("다시 붙어 본다 (\(attempt)번째, \(next))")
+        uplink?.connection.cancel()
+        uplink = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self, self.role == "guest", self.uplink == nil else { return }
+            self.connect(to: next)
+        }
     }
 
     // MARK: 손님 받기 (호스트)
@@ -248,18 +437,22 @@ final class Net {
             }
             if isComplete || error != nil {
                 if self.role == "guest" {
-                    // 방에 들어가기도 전에 끊긴 것과, 놀다가 끊긴 것은 원인이 다르다.
-                    // 앞의 경우는 대개 로컬 네트워크 권한이거나 버전 차이다.
                     let joined = peer.ready
-                    debugLog("끊김 (handshake=\(joined ? "완료" : "미완료")) \(error?.localizedDescription ?? "")")
-                    self.leave()
-                    self.delegate?.netRoleChanged(
-                        role: "off", code: nil, myId: 0,
-                        note: joined
-                            ? "방과 끊겼다. 방장이 앱을 껐거나 와이파이가 끊겼을 수 있다."
-                            : "방장에게 닿았는데 붙지 못했다. 두 맥 모두 확인해 보라 —\n"
-                                + "① 시스템 설정 → 개인정보 보호 및 보안 → 로컬 네트워크 에서 「똥피하기」 켜기\n"
-                                + "② 메뉴 막대 💩 에서 두 사람 버전이 같은지 (다르면 업데이트 확인)")
+                    let lived = self.joinedAt.map { Date().timeIntervalSince($0) } ?? 0
+                    debugLog("끊김 (handshake=\(joined ? "완료" : "미완료"), \(String(format: "%.1f", lived))초 뒤) "
+                           + "\(error?.localizedDescription ?? "정상 종료")")
+                    // 오래 놀다 끊긴 게 아니라면 망이 흔들린 것일 수 있다. 몇 번 더 해 본다.
+                    let note = joined
+                        ? "방과 끊겼다. 방장이 앱을 껐거나 와이파이가 끊겼을 수 있다."
+                        : "방장에게 닿았는데 붙지 못했다. 두 맥 모두 확인해 보라 —\n"
+                            + "① 시스템 설정 → 개인정보 보호 및 보안 → 로컬 네트워크 에서 「똥피하기」 켜기\n"
+                            + "② 메뉴 막대 💩 에서 두 사람 버전이 같은지 (다르면 업데이트 확인)"
+                    if lived < 20 {
+                        self.giveUpOrRetry(reason: note)
+                    } else {
+                        self.leave()
+                        self.delegate?.netRoleChanged(role: "off", code: nil, myId: 0, note: note)
+                    }
                 } else {
                     self.drop(peer.id)
                 }
@@ -338,11 +531,14 @@ final class Net {
         listener = nil
         browser?.cancel()
         browser = nil
+        resolver = nil
         uplink?.connection.cancel()
         uplink = nil
         for peer in peers.values { peer.connection.cancel() }
         peers.removeAll()
         nextId = 1
+        candidates = []
+        attempt = 0
         role = "off"
         code = nil
         myId = 0
