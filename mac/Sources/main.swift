@@ -197,6 +197,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(showFromOtherLaunch), name: showNotification, object: nil)
 
+        fixOwnName()
         buildWindow()
         buildStatusItem()
         installHotKeyHandler()
@@ -305,6 +306,36 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     }
 
     /// 같은 앱이 이미 떠 있나. 시험할 때는 여러 벌을 띄워야 해서 DDONG_DEBUG 면 건너뛴다.
+    /// 제 이름을 스스로 고친다.
+    ///
+    /// v1.6.3 까지는 「똥피하기.app」이었다. 그 버전의 업데이터가 새 버전을 갈아 끼우는데,
+    /// 갈아 끼우는 쪽이 **옛 코드**라 이름 바꾸는 법을 모른다 — 그래서 몰겜이 「똥피하기.app」
+    /// 안에 들어앉는다. 속은 새것이라 돌아가기는 하지만 Finder 에는 옛 이름이 남는다.
+    ///
+    /// 그래서 새 앱이 뜰 때 제 이름을 본다. 다르면 옮긴다. 돌고 있는 앱의 번들을 옮기는 건
+    /// 괜찮다 — 실행 파일은 이미 메모리에 올라와 있고, 같은 파일이 자리만 바뀌는 것이다.
+    /// 다시 띄우지도 않는다. 껐다 켜면 새 이름으로 뜬다.
+    private func fixOwnName() {
+        guard let wanted = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+        else { return }
+        let here = Bundle.main.bundleURL
+        guard here.lastPathComponent != "\(wanted).app" else { return }
+        // 개발 중에 dist/ 에서 띄운 것까지 옮기지는 않는다. 깔린 앱만 고친다.
+        let folder = here.deletingLastPathComponent()
+        let installed = folder.path == "/Applications"
+            || folder.path == NSHomeDirectory() + "/Applications"
+        guard installed else { return }
+
+        let target = folder.appendingPathComponent("\(wanted).app")
+        guard !FileManager.default.fileExists(atPath: target.path) else { return }
+        do {
+            try FileManager.default.moveItem(at: here, to: target)
+            debugLog("이름 옮김 \(here.lastPathComponent) → \(target.lastPathComponent)")
+        } catch {
+            debugLog("이름 못 옮김: \(error.localizedDescription)")
+        }
+    }
+
     private func otherInstanceRunning() -> Bool {
         guard let id = Bundle.main.bundleIdentifier else { return false }
         let mine = ProcessInfo.processInfo.processIdentifier
