@@ -115,6 +115,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     private var shotDir: URL?
     private var shotIndex = 0
     private var shotBackground = "#f6f5f2"
+    private var shotScale = 0.6
     private var shotTimer: Timer?
 
     /// 개발용 자동 입장 중인가. 그때는 알림 창 대신 stderr 로만 알린다 — 창이 뜨면 시험이 멈춘다.
@@ -221,6 +222,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         if env["DDONG_DEBUG"] != nil, let dir = env["DDONG_SHOTS"] {
             shotDir = URL(fileURLWithPath: dir, isDirectory: true)
             shotBackground = env["DDONG_SHOT_BG"] ?? "#f6f5f2"
+            // 0.6 이면 파일이 가볍고 눈으로 확인하기에 충분하다. 잘라서 크게 볼 때만 올린다.
+            shotScale = min(2, max(0.2, Double(env["DDONG_SHOT_SCALE"] ?? "") ?? 0.6))
             try? FileManager.default.createDirectory(at: shotDir!, withIntermediateDirectories: true)
             shotTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
                 self?.grabShot()
@@ -662,7 +665,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         guard let shotDir else { return }
         let index = shotIndex
         shotIndex += 1
-        webView.evaluateJavaScript("window.__ddongShot && window.__ddongShot('\(shotBackground)', 0.6)") { value, _ in
+        webView.evaluateJavaScript("window.__ddongShot && window.__ddongShot('\(shotBackground)', \(shotScale))") { value, _ in
             guard let text = value as? String,
                   let comma = text.firstIndex(of: ","),
                   let data = Data(base64Encoded: String(text[text.index(after: comma)...]))
