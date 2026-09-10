@@ -94,8 +94,8 @@ export function drawPick(ctx, world, time) {
   const picked = Math.max(0, Math.min(games.length - 1, world.pick));
   // 세로로 선 종이 한 장. 가로로 눕히면 화면을 가로질러 남의 작업을 덮는다 —
   // 세로로 세우면 좁고, 좁으면 덜 가린다.
-  const w = 252;
-  const h = 196 + games.length * 44;
+  const w = 300;
+  const h = 196 + games.length * 46;
   const x = (world.w - w) / 2;
   const y = (world.h - h) / 2;
 
@@ -109,75 +109,53 @@ export function drawPick(ctx, world, time) {
 
   // 제목은 가운데. 밑에 빨간 볼펜 한 줄.
   const mid = x + w / 2;
-  text(ctx, '몰겜', mid, y + 48, { font: `800 28px ${HAN}`, color: INK, align: 'center', halo: 0 });
-  stroke(ctx, [[mid - 31, y + 57], [mid + 31, y + 57]],
-         { width: 2.2, color: RED, seed: 71, amp: 1, halo: false });
-  text(ctx, '몰래 하는 게임 · 누가 오면 ⌥H', mid, y + 74,
-       { font: `600 9.5px ${KEYS}`, color: PENCIL, align: 'center', halo: 0 });
+  text(ctx, '몰겜', mid, y + 56, { font: `800 34px ${HAN}`, color: INK, align: 'center', halo: 0 });
+  stroke(ctx, [[mid - 37, y + 67], [mid + 37, y + 67]],
+         { width: 2.6, color: RED, seed: 71, amp: 1.1, halo: false });
+  text(ctx, '몰래 하는 게임 · 누가 오면 ⌥H', mid, y + 87,
+       { font: `600 11px ${KEYS}`, color: PENCIL, align: 'center', halo: 0 });
 
   // 낙서는 제목 밑 가운데에 나란히.
-  doodles(ctx, mid - 19, y + 104, time);
+  doodles(ctx, mid - 23, y + 122, time);
 
   games.forEach((game, i) => {
-    const gy = y + 152 + i * 44;
+    const gy = y + 176 + i * 46;
     const on = i === picked;
     if (on) {
-      text(ctx, '▸', x + 20, gy, { font: `700 12px ${KEYS}`, color: RED, halo: 0 });
-      stroke(ctx, [[x + 34, gy + 6], [x + w - 24, gy + 6]],
-             { width: 1.7, color: RED, seed: 73 + i, amp: 0.7, halo: false });
+      text(ctx, '▸', x + 26, gy, { font: `700 14px ${KEYS}`, color: RED, halo: 0 });
+      stroke(ctx, [[x + 42, gy + 7], [x + w - 30, gy + 7]],
+             { width: 1.9, color: RED, seed: 73 + i, amp: 0.8, halo: false });
     }
-    text(ctx, game.name, x + 34, gy, {
-      font: `${on ? 800 : 600} ${on ? 15 : 13}px ${HAN}`, color: on ? INK : PENCIL, halo: 0,
+    // 이름만 세운다. 설명은 안 쓴다 — 무슨 게임인지는 이름이면 충분하고,
+    // 들어가면 시작 화면에 키가 다 적혀 있다.
+    text(ctx, game.name, x + 42, gy, {
+      font: `${on ? 800 : 600} ${on ? 18 : 15}px ${HAN}`, color: on ? INK : PENCIL, halo: 0,
     });
-    if (on) {
-      // 설명은 종이 폭에 맞춰 접는다. 한 줄로 흘리면 종이 밖으로 나간다.
-      wrap(ctx, game.line, x + 34, gy + 17, w - 58, 12,
-           { font: `600 9.5px ${HAN}`, color: PENCIL, halo: 0 });
-    }
   });
 
-  text(ctx, '⌥↑↓ 고르기   ⌥→ 시작', mid, y + h - 20,
-       { font: `700 10px ${KEYS}`, color: RED, align: 'center', halo: 0,
+  text(ctx, '⌥↑↓ 고르기   ⌥→ 시작', mid, y + h - 22,
+       { font: `700 11.5px ${KEYS}`, color: RED, align: 'center', halo: 0,
          alpha: 0.72 + 0.28 * Math.sin(time * 3.4) });
 }
 
-/// 폭에 맞춰 줄을 접는다. 한글은 어절 단위로 끊어야 읽힌다.
-function wrap(ctx, value, x, y, width, step, opts) {
-  ctx.font = opts.font;
-  const words = value.split(' ');
-  let line = '';
-  let row = 0;
-  for (const word of words) {
-    const next = line ? `${line} ${word}` : word;
-    if (ctx.measureText(next).width > width && line) {
-      text(ctx, line, x, y + row * step, opts);
-      line = word;
-      row += 1;
-    } else {
-      line = next;
-    }
-  }
-  if (line) text(ctx, line, x, y + row * step, opts);
-}
-
-/// 종이 귀퉁이 낙서. 떨어지는 똥 하나와 통통 튀는 공 하나 — 있는 게임 둘을 그린 것이다.
+/// 제목 밑 낙서. 떨어지는 똥 하나와 통통 튀는 공 하나 — 있는 게임 둘을 그린 것이다.
 function doodles(ctx, cx, cy, time) {
   const bob = Math.sin(time * 2.2) * 4;
   // 똥. 동글동글한 세 덩이를 쌓는다.
   ctx.save();
   ctx.translate(cx, cy + bob);
-  circle(ctx, 0, 7, 8, { width: 2.1, color: INK, seed: 61, amp: 0.7, halo: false });
-  circle(ctx, -1, -1, 6, { width: 2.1, color: INK, seed: 62, amp: 0.7, halo: false });
-  circle(ctx, 1, -7, 4, { width: 2.1, color: INK, seed: 63, amp: 0.7, halo: false });
+  circle(ctx, 0, 8, 9.5, { width: 2.4, color: INK, seed: 61, amp: 0.8, halo: false });
+  circle(ctx, -1, -1, 7, { width: 2.4, color: INK, seed: 62, amp: 0.8, halo: false });
+  circle(ctx, 1, -8, 4.8, { width: 2.4, color: INK, seed: 63, amp: 0.8, halo: false });
   ctx.restore();
 
   // 공
   const swing = Math.sin(time * 2.8) * 6;
-  circle(ctx, cx + 33, cy - 4 + swing, 9.5, { width: 2.3, color: INK, seed: 64, amp: 0.6, halo: false });
-  stroke(ctx, [[cx + 26, cy - 7 + swing], [cx + 40, cy - 7 + swing]],
-         { width: 1.3, color: PENCIL, seed: 65, amp: 0.4, halo: false });
-  stroke(ctx, [[cx + 26, cy - 0 + swing], [cx + 40, cy - 0 + swing]],
-         { width: 1.3, color: PENCIL, seed: 66, amp: 0.4, halo: false });
+  circle(ctx, cx + 40, cy - 4 + swing, 11.5, { width: 2.6, color: INK, seed: 64, amp: 0.7, halo: false });
+  stroke(ctx, [[cx + 31, cy - 8 + swing], [cx + 49, cy - 8 + swing]],
+         { width: 1.5, color: PENCIL, seed: 65, amp: 0.4, halo: false });
+  stroke(ctx, [[cx + 31, cy + 1 + swing], [cx + 49, cy + 1 + swing]],
+         { width: 1.5, color: PENCIL, seed: 66, amp: 0.4, halo: false });
 }
 
 /// 다시 띄웠을 때 주는 준비 시간. 숨은 사이에 죽어 있으면 억울하다.

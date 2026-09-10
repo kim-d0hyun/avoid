@@ -262,6 +262,14 @@ export function handleMessage(world, shell, from, message, api) {
       // 아직 아무도 시작 안 했으면 기다릴 것도 없다.
       if (message.st === 'ready') mp.waiting = false;
       else if (mp.waiting) world.player.dead = true;
+      // **구경도 판을 봐야 구경이다.** 방장은 한창인데 내 화면만 시작 화면에 멈춰 있으면
+      // 들어온 사람은 아무것도 못 본다. 방장이 판을 돌고 있으면 나도 판으로 들어가되,
+      // 이번 판에는 안 낀다(기다리는 사람으로 둔다).
+      if (message.st === 'play' && world.state !== 'play') {
+        world.state = 'play';
+        mp.waiting = true;
+        world.player.dead = true;
+      }
       if (message.x) gameOf(world).unpack?.(world, message.x);
       if (message.st === 'ready' && world.state !== 'ready') world.state = 'ready';
       return;
