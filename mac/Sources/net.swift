@@ -76,7 +76,6 @@ final class Net {
         let options = NWProtocolTCP.Options()
         options.noDelay = true // 20Hz 짜리 작은 꾸러미다. 모아 보내면 그게 곧 렉이다.
         let params = NWParameters(tls: nil, tcp: options)
-        params.includePeerToPeer = true
 
         // 포트가 이미 쓰이고 있으면 아무 포트나 잡는다. 그때는 Bonjour 로만 붙을 수 있다.
         let listener: NWListener
@@ -138,8 +137,9 @@ final class Net {
     }
 
     private func findOnLAN(_ room: String) {
+        // 피어투피어(AWDL)는 끄고 진짜 와이파이·이더넷만 쓴다. 켜 두면 같은 망에 있는데도
+        // 닿지 않는 주소를 물어 와, 붙자마자 끊기는 일이 생긴다.
         let params = NWParameters()
-        params.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: netServiceType, domain: nil), using: params)
 
         browser.browseResultsChangedHandler = { [weak self] results, _ in
@@ -177,7 +177,6 @@ final class Net {
         let options = NWProtocolTCP.Options()
         options.noDelay = true
         let params = NWParameters(tls: nil, tcp: options)
-        params.includePeerToPeer = true
 
         let connection = NWConnection(to: endpoint, using: params)
         let peer = Peer(id: 0, connection: connection) // 호스트는 언제나 0번
@@ -249,8 +248,18 @@ final class Net {
             }
             if isComplete || error != nil {
                 if self.role == "guest" {
+                    // 방에 들어가기도 전에 끊긴 것과, 놀다가 끊긴 것은 원인이 다르다.
+                    // 앞의 경우는 대개 로컬 네트워크 권한이거나 버전 차이다.
+                    let joined = peer.ready
+                    debugLog("끊김 (handshake=\(joined ? "완료" : "미완료")) \(error?.localizedDescription ?? "")")
                     self.leave()
-                    self.delegate?.netRoleChanged(role: "off", code: nil, myId: 0, note: "방과 끊겼다")
+                    self.delegate?.netRoleChanged(
+                        role: "off", code: nil, myId: 0,
+                        note: joined
+                            ? "방과 끊겼다. 방장이 앱을 껐거나 와이파이가 끊겼을 수 있다."
+                            : "방장에게 닿았는데 붙지 못했다. 두 맥 모두 확인해 보라 —\n"
+                                + "① 시스템 설정 → 개인정보 보호 및 보안 → 로컬 네트워크 에서 「똥피하기」 켜기\n"
+                                + "② 메뉴 막대 💩 에서 두 사람 버전이 같은지 (다르면 업데이트 확인)")
                 } else {
                     self.drop(peer.id)
                 }
@@ -265,7 +274,9 @@ final class Net {
         if text.hasPrefix(#"{"t":"__join""#) {
             // 꾸러미 모양이 다르면 들이지 않는다. 붙여 놓고 이상하게 노는 것보다 낫다.
             let theirs = Int(Net.field(text, "p") ?? "") ?? 0
+            debugLog("들어오려 함: \(Net.field(text, "name") ?? "?") 규약=\(theirs) 버전=\(Net.field(text, "v") ?? "?")")
             guard theirs == netProtocol else {
+                debugLog("규약 불일치로 거절 (내 규약 \(netProtocol))")
                 line(peer, #"{"t":"__deny","v":"\#(Net.escape(appVersion))"}"#)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                     self?.drop(peer.id)

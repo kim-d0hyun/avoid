@@ -115,7 +115,7 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   // 색이 낙서를 덮어 버리면 이 게임의 그림체가 아니게 된다. 소매는 어깨에서 팔꿈치까지만.
   // 몸통 잉크가 흰 후광을 두르고 위에 얹히므로, 그 폭보다 넓게 칠해야 색이 남는다.
   if (opts.color) {
-    const shirt = { color: opts.color, alpha: 0.58, halo: false, amp: 0.5 };
+    const shirt = { color: opts.color, alpha: 0.8, halo: false, amp: 0.5 };
     stroke(ctx, [[0, hipY], [shldX * 0.5, (hipY + shldY) / 2], [shldX, shldY]],
            { ...shirt, width: 22, seed: seed + 31 });
     stroke(ctx, [armA[0], armA[1]], { ...shirt, width: 16, seed: seed + 32 });
