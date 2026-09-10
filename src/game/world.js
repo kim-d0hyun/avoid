@@ -262,14 +262,17 @@ function movePlayer(world, dt) {
   if (p.squeeze < 0.01) p.squeeze = 0;
 
   const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-  let top = MAX_SPEED - (MAX_SPEED - CROUCH_SPEED) * p.crouch;
+  // 게임마다 발이 다르다. 똥피하기는 피하는 게임이라 조금 느려야 손에 잡히고,
+  // 배구는 넓은 코트를 지켜야 해서 그대로 둔다.
+  const pace = gameOf(world).pace ?? 1;
+  let top = (MAX_SPEED - (MAX_SPEED - CROUCH_SPEED) * p.crouch) * pace;
   top *= Math.max(SQUEEZE_FLOOR, 1 - SQUEEZE_TOP * p.squeeze);
   // 잡은 쪽은 무겁고, 잡힌 쪽은 거의 못 간다.
   if (p.heldBy >= 0) top *= HELD_SPEED;
   else if (p.grabbing >= 0) top *= GRABBER_SPEED;
   if (dir !== 0) {
     // 남에게 끼여 있으면 발이 헛돈다. 못 가는 게 아니라 느려지는 것이라 뚫고 나갈 수는 있다.
-    const accel = ACCEL * (1 - SQUEEZE_DRAG * p.squeeze);
+    const accel = ACCEL * pace * (1 - SQUEEZE_DRAG * p.squeeze);
     p.vx += dir * accel * (grounded ? 1 : AIR_CONTROL) * dt;
     p.vx = Math.max(-top, Math.min(top, p.vx));
     p.facing = dir;

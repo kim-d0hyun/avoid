@@ -337,11 +337,21 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         }
     }
 
+    /// 이미 한 벌이 떠 있나.
+    ///
+    /// **등록만 남은 유령을 가려내야 한다.** 앱을 켜 둔 채로 번들을 갈아 끼우면(설치
+    /// 스크립트가 그렇게 한다) macOS 에 죽은 등록이 남는다. 그걸 그대로 믿으면 새로 깐
+    /// 앱이 「이미 하나 떠 있네」 하며 조용히 꺼진다 — 아무 말도 없이, 영영.
+    /// 그래서 번호를 받아 **정말 살아 있는지 직접 물어본다.**
     private func otherInstanceRunning() -> Bool {
         guard let id = Bundle.main.bundleIdentifier else { return false }
         let mine = ProcessInfo.processInfo.processIdentifier
-        return NSRunningApplication.runningApplications(withBundleIdentifier: id)
-            .contains { $0.processIdentifier != mine }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: id).contains {
+            guard $0.processIdentifier != mine, $0.processIdentifier > 0, !$0.isTerminated
+            else { return false }
+            // kill(pid, 0) 은 죽이지 않는다. 「이 번호 살아 있나」만 묻는 것이다.
+            return kill($0.processIdentifier, 0) == 0
+        }
     }
 
     @objc private func showFromOtherLaunch() {

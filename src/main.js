@@ -358,7 +358,9 @@ function render(time) {
     ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
   }
 
-  if (ground) ctx.drawImage(ground, 0, world.groundY - 8);
+  // 고르는 화면에는 바닥이 없다. 아직 아무 판도 안 열렸는데 땅부터 그리면
+  // 게임이 이미 시작된 것처럼 보인다.
+  if (ground && world.state !== 'pick') ctx.drawImage(ground, 0, world.groundY - 8);
   gameOf(world).draw(ctx, world, time, boilFrame, upright);
 
   // 우승 세리머니 중에는 판 위의 사람들을 지운다. 마지막에 서 있던 자리에 시체와
