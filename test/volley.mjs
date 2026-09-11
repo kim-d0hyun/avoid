@@ -7,7 +7,7 @@ const R = new URL('../src/', import.meta.url).href;
 const w = await import(R + 'game/world.js');
 const { games } = await import(R + 'games/index.js');
 const volley = games.find((g) => g.id === 'volley');
-const { spike, slideGauge } = await import(R + 'games/volley.js');
+const { spike, slideGauge, matchOver, deuce } = await import(R + 'games/volley.js');
 const { BODY_H } = await import(R + 'draw/stickman.js');
 
 import { check, say, note, done } from './check.mjs';
@@ -149,6 +149,34 @@ say('벽 — 아주 빠른 공도 벽에 안 붙는다');
   check('한자리에 머문 프레임 없음', stuck, 0);
   check('벽을 뚫지 않았다', Math.min(...xs) >= 15, true);
   check('되돌아 나왔다', b.ball.vx > 0, true);
+}
+
+say('듀스 — 다섯 점 먼저, 단 두 점 차로');
+{
+  check('4:4 는 듀스', deuce([4, 4]), true);
+  check('4:3 은 아직 듀스 아님', deuce([4, 3]), false);
+  check('5:4 도 듀스 (두 점 차가 안 났다)', deuce([5, 4]), true);
+  check('5:3 은 끝', matchOver([5, 3]), true);
+  check('5:4 는 안 끝', matchOver([5, 4]), false);
+  check('6:4 는 끝', matchOver([6, 4]), true);
+  check('7:6 은 안 끝', matchOver([7, 6]), false);
+  check('8:6 은 끝', matchOver([8, 6]), true);
+  check('0:5 는 끝', matchOver([0, 5]), true);
+
+  // 판 안에서도 그렇게 굴러가나. 5:4 로 공이 떠 있으면 끝내지 않고, 6:4 가 되면 끝낸다.
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0;
+  const ends = [];
+  world.onGameOver = (r) => ends.push(r);
+  b.score = [5, 4]; b.ball.x = 500; b.ball.y = 300; b.ball.vx = 0; b.ball.vy = -100;
+  for (let i = 0; i < 5; i++) volley.update(world, 1 / 60);
+  check('5:4 에서는 판이 안 끝난다', ends.length, 0);
+  check('점수가 그대로다', b.score.join(':'), '5:4');
+  b.score = [6, 4];
+  for (let i = 0; i < 5; i++) volley.update(world, 1 / 60);
+  check('6:4 가 되면 끝난다', ends.length, 1);
+  check('빨강 편이 이겼다', ends[0]?.side, 0);
+  check('순위표에 점수가 실린다', ends[0]?.rows?.[0]?.[2], 6);
 }
 
 say('바닥 — 닿는 즉시 끝');

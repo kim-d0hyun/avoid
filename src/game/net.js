@@ -135,9 +135,12 @@ export function interpolate(world, dt) {
     other.x = Math.max(12, Math.min(world.w - 12, raw));
 
     // 점프는 포물선이라 속도만으로는 안 맞는다. 중력까지 넣어 이어 그린다.
-    const flight = other.baseAir + other.vy * other.age - 0.5 * GRAVITY * other.age * other.age;
+    // 단, **세로 속도가 0이면 서 있는 것**이다 — 선반·상자·남의 머리 위에 선 사람(넷이서)을
+    // 꾸러미 사이마다 중력으로 내려앉히면 발판 위에서 덜덜 떨린다.
+    const g = other.vy === 0 ? 0 : GRAVITY;
+    const flight = other.baseAir + other.vy * other.age - 0.5 * g * other.age * other.age;
     other.air = Math.max(0, flight);
-    other.vyDraw = other.air > 0 ? other.vy - GRAVITY * other.age : 0;
+    other.vyDraw = other.air > 0 ? other.vy - g * other.age : 0;
 
     other.crouch += (other.tcrouch - other.crouch) * Math.min(1, dt * 18);
     // 다리를 굴리려면 속도가 있어야 한다. 실제로 움직인 만큼을 쓴다.
@@ -183,6 +186,7 @@ export function pump(world, dt, shell) {
     if (!mp.lost && now() - mp.heard > LOST_AFTER) {
       // 허공에 대고 계속 보내지 않는다. 방을 놓고 혼자로 돌아간다.
       mp.lost = true;
+      say(world, '방장과 연결이 끊겼다');
       world.onMenu?.('leave');
       return;
     }
@@ -276,6 +280,13 @@ export function handleMessage(world, shell, from, message, api) {
     world.onMenu?.('leave');
     return;
   }
+  // 방장이 방을 깼다. 나가면 셸이 「방 없음」을 알려 오고, 그때 홈으로 나간다(main.js).
+  if (message.t === 'bye') {
+    if (mp.role !== 'guest') return;
+    say(world, '방장이 방을 깼다');
+    world.onMenu?.('leave');
+    return;
+  }
 
   // 손님이 이름을 고쳤다. 방장이 이름표를 갈아 끼우고 다음 스냅샷에 실어 나눠 준다.
   if (message.t === 'nm') {
@@ -346,13 +357,26 @@ export function handleMessage(world, shell, from, message, api) {
 
       // **모양을 안 믿는다.** 남이 보낸 글자다 — 줄이 잘렸거나, 다음 버전이 칸을 바꿨거나,
       // 아무거나 올 수 있다. 여기서 터지면 그 프레임 처리가 통째로 날아간다.
+      const seen = new Set();
       for (const row of Array.isArray(message.pl) ? message.pl : []) {
         if (!Array.isArray(row) || row.length < 8) continue;
+        seen.add(row[0]);
         if (row[0] === mp.myId) continue; // 내 몸은 내가 안다
         const other = mp.others.get(row[0]) ?? blankOther(row[0], mp.names.get(row[0]) ?? '');
         // 여기까지 오는 데 걸린 시간 = 방장이 들고 있던 시간 + 방장에서 나까지의 편도.
         applyPacket(other, ['p', ...row.slice(1, 11)], (row[11] ?? 0) + mp.rtt / 2);
         mp.others.set(row[0], other);
+      }
+      // **스냅샷에 없는 사람은 나간 사람이다.** 방장은 나간 사람을 자기 장부에서 지우지만
+      // 손님에게는 따로 알리지 않는다 — 여기서 안 지우면 나간 사람이 다른 손님 화면에
+      // 마지막 자리에 가만히 선 채로 남는다.
+      if (Array.isArray(message.pl)) {
+        for (const id of [...mp.others.keys()]) {
+          if (seen.has(id)) continue;
+          mp.others.delete(id);
+          mp.names.delete(id);
+          mp.alive.delete(id);
+        }
       }
       // 판 도중에 들어왔으면 구경만 한다. 안 보이던 똥에 맞아 죽는 것보다 낫다.
       // 아직 아무도 시작 안 했으면 기다릴 것도 없다.

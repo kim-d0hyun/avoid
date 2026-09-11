@@ -5,7 +5,7 @@ import { drawStickman } from './draw/stickman.js';
 import { makeGround, drawClock, drawIntro, drawFreeze, drawStamp, drawRoom, drawResults, drawMenu,
   drawVictory, drawPick, drawToast } from './draw/hud.js';
 import { createWorld, resize, update, press, restart, spread, gameOf,
-  pickGame } from './game/world.js';
+  pickGame, goHome } from './game/world.js';
 import { games } from './games/index.js';
 import { pump, handleMessage, peerChanged, roleChanged, reportDeath, startRound,
   endRound } from './game/net.js';
@@ -37,6 +37,8 @@ const SHELL_ACTIONS = { host: 'host', join: 'join', leave: 'leave', hide: 'hide'
                         copy: 'copy', name: 'name', quitYes: 'quit' };
 world.onMenu = (action) => {
   if (action === 'again') {
+    // 판이 여럿인 게임에서 하던 판을 되감는 것이면 횟수를 센다 (단계 끝에 보여 준다).
+    if (gameOf(world).noResults && world.state === 'play') world.bagResets = (world.bagResets ?? 0) + 1;
     world.mp.on ? startRound(world, shell, { restart }) : restart(world);
     return;
   }
@@ -78,6 +80,11 @@ world.onMenu = (action) => {
     shell.setOptionHide?.(action.slice(5) === '1');
     return;
   }
+  // ⌥ 고정. 키를 다시 거는 것은 셸이 한다.
+  if (action.startsWith('bare:')) {
+    shell.setBare?.(action.slice(5) === '1');
+    return;
+  }
   if (action.startsWith('team:')) {
     const game = gameOf(world);
     game.swap?.(world, shell, Number(action.slice(5)));
@@ -108,13 +115,22 @@ world.onGameOver = (result) => {
 };
 
 world.debug = !!shell.debug;
+// 개발용. 판이 여럿인 게임을 특정 판에서 바로 열어 본다.
+if (shell.debug && typeof shell.stage === 'number' && shell.stage >= 0) window.__ddongStageAt = shell.stage;
 // 게임이 방장에게 직접 말을 걸어야 할 때 (배구에서 손님이 「내가 때렸다」고 알릴 때).
-world.send = (message) => shell.net.send(message);
+world.send = (message, to) => shell.net.send(message, to);
 world.log = (text) => shell.log(text);
 world.fade = shell.fade ?? 1;
 window.__ddongFade = (value) => { world.fade = value; };
 // 메뉴 막대도 「무슨 게임으로 방을 열까」를 물어야 한다. 게임 목록은 여기만 안다.
 shell.setGames?.(games.map((game) => ({ id: game.id, name: game.name })));
+/// 개발용 판 번호. pickGame 뒤에 world.stage 를 덮어쓰고 다시 연다.
+const applyDebugStage = () => {
+  if (window.__ddongStageAt === undefined || gameOf(world).id !== 'coop') return;
+  world.stage = window.__ddongStageAt; world.bagResets = 0;
+  restart(world);
+  window.__ddongStageAt = undefined;
+};
 /// 셸이 메뉴 막대에서 게임을 고르고 방을 열 때. 방을 열기 전에 갈아 끼운다.
 window.__ddongPickGame = (id) => { pickGame(world, id); spread(world); };
 world.size = shell.size ?? 1;
@@ -122,12 +138,14 @@ world.spot = shell.spot ?? 'c';
 world.optionHide = shell.optionHide !== false;
 // 창 크기가 바뀌면 판을 다시 맞춘다. 창이 먼저 줄고 이 알림이 뒤에 와서, 여기서
 // 한 번 더 맞춰야 새 배율이 그림에 반영된다.
-shell.onLayout?.((size, spot, optionHide) => {
+shell.onLayout?.((size, spot, optionHide, bare) => {
   world.size = size;
   world.spot = spot;
   world.optionHide = optionHide !== false;
+  world.bare = !!bare;
   fit();
 });
+world.bare = !!shell.bare;
 world.screens = shell.screens ?? [];
 shell.onScreens?.((list) => { world.screens = Array.isArray(list) ? list : []; });
 
@@ -159,6 +177,14 @@ function fit() {
   // 창 크기만큼 판도 좁히면 코트만 좁아지고 졸라맨·똥은 그대로 커서, 같은 게임이
   // 아니라 「사람이 커진 게임」이 된다. 화면 전체로 볼 때와 같은 그림이어야 한다.
   const shrink = shared ? 1 : (world.size ?? 1);
+  // 카메라가 있는 게임(넷이서)은 판이 화면보다 크다. 판 크기는 게임이 정하고, 창은 그 일부를 본다.
+  if (gameOf(world).camera) {
+    const k = world.size ?? 1;
+    view = { dpr, sx: k, sy: k, screenW, screenH, squash: 1 };
+    ground = null;
+    gameOf(world).resize?.(world);
+    return;
+  }
   const w = shared?.w ?? screenW / shrink;
   const h = shared?.h ?? screenH / shrink;
   // squash 로 가로 늘림을 물건 단위로 되돌린다 → 화면 비율이 달라도 안 찌그러진다.
@@ -198,7 +224,7 @@ if (shell.debug) {
 // MARK: 입력
 
 // 셸이 전역 핫키로 잡아 보내 준다. 창이 포커스를 안 가져가므로 이 길이 유일하다.
-shell.onInput((action, down) => press(world, action, down));
+shell.onInput((action, down) => { press(world, action, down); applyDebugStage(); });
 
 shell.onVisible((visible) => {
   hidden = !visible;
@@ -211,10 +237,14 @@ shell.onVisible((visible) => {
 // MARK: 같이 하기
 
 shell.net.onRole((role, code, id, name) => {
+  const wasOn = world.mp.on;
   roleChanged(world, role, code, id, name);
   // 방을 나가면 내 화면 크기로 돌아온다. 방장은 처음부터 자기 크기로 논다.
   if (role !== 'guest' && shared) setSize(null, null);
-  if (world.state === 'ready') spread(world);
+  // **방을 나오면 홈으로.** 방장이 깼든, 쫓겨났든, 스스로 나갔든 — 남의 판 한가운데에
+  // 혼자 남겨 두지 않는다. 방장 자신도 방을 깨면 홈으로 온다.
+  if (wasOn && !world.mp.on) goHome(world);
+  else if (world.state === 'ready') spread(world);
 });
 shell.net.onPeer((id, name, joined) => {
   if (shell.debug) shell.log(`상대 ${joined ? '들어옴' : '나감'} id=${id} 이름=[${name}]`);
@@ -423,9 +453,14 @@ function render(time) {
     ctx.translate((Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
   }
 
+  // 카메라가 있는 게임은 내 사람을 따라 판을 옮겨 그린다. 화면 크기는 판 단위로 넘긴다.
+  const camGame = gameOf(world);
+  const cam = camGame.camera?.(world, screenW / sx, screenH / sy);
+  if (cam) ctx.translate(-cam.x, -cam.y);
+
   // 고르는 화면에는 바닥이 없다. 아직 아무 판도 안 열렸는데 땅부터 그리면
   // 게임이 이미 시작된 것처럼 보인다.
-  if (ground && world.state !== 'pick') ctx.drawImage(ground, 0, world.groundY - 8);
+  if (ground && world.state !== 'pick' && !camGame.noGround) ctx.drawImage(ground, 0, world.groundY - 8);
   gameOf(world).draw(ctx, world, time, boilFrame, upright);
 
   // 우승 세리머니 중에는 판 위의 사람들을 지운다. 마지막에 서 있던 자리에 시체와
@@ -443,8 +478,10 @@ function render(time) {
     const hostId = world.mp.role === 'host' ? world.mp.myId : world.mp.hostId;
 
     // 남들을 먼저 그리고 내가 맨 위에 선다. 겹쳤을 때 내 몸을 놓치면 안 된다.
+    // 사람을 그리는 법도 게임이 정할 수 있다 — 넷이서는 네모다 (머리 위에 서야 하니까).
+    const figure = game.figure ?? drawStickman;
     for (const other of world.mp.others.values()) {
-      upright(other.x, world.groundY, () => drawStickman(ctx, other, time, boilFrame,
+      upright(other.x, world.groundY, () => figure(ctx, other, time, boilFrame,
         { name: other.name, faded: other.dead, color: shirtOf(other.id, other.x),
           mark: markOf(other.id),
           crown: world.mp.on && other.id === hostId }));
@@ -452,7 +489,7 @@ function render(time) {
     // 혼자 할 때는 색을 안 입힌다 — 구분할 사람이 없으면 그냥 낙서가 맞다.
     // 다만 편이 있는 게임은 혼자여도 입힌다. 내가 어느 편인지가 곧 규칙이다.
     world.player.waiting = world.mp.on && world.mp.waiting && world.player.dead;
-    upright(world.player.x, world.groundY, () => drawStickman(ctx, world.player, time, boilFrame, {
+    upright(world.player.x, world.groundY, () => figure(ctx, world.player, time, boilFrame, {
       name: world.mp.on ? world.mp.myName : null,
       mine: true,
       crown: world.mp.on && world.mp.role === 'host',
@@ -479,6 +516,11 @@ function render(time) {
   const game = gameOf(world);
   if (!game.noClock) drawClock(ctx, hud);
   if (world.mp.on) drawRoom(ctx, hud);
+  // 게임이 제 글자판을 덧그린다 (넷이서 — 판 이름·출구·화면 밖 친구). 판 좌표 → 글자판 좌표.
+  if (game.hud) {
+    const c = cam ?? { x: 0, y: 0 };
+    game.hud(ctx, hud, time, (wx, wy) => [(wx - c.x) * sx / hs, (wy - c.y) * sy / hs]);
+  }
   if (world.state === 'ready') drawIntro(ctx, hud, time);
   if (world.state === 'over') {
     // 순위표를 안 쓰는 게임은 이긴 편만 남긴다. 그때는 「다음 판」 안내도 우승 쪽이 갖는다.

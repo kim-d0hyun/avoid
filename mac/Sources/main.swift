@@ -20,6 +20,7 @@ private let fadeKey = "windowFade"
 private let sizeKey = "windowSize"
 private let spotKey = "windowSpot"
 private let optionHideKey = "hideOnOption"
+private let bareKey = "bareKeys"
 private let nameKey = "playerName"
 
 /// 고를 수 있는 창 크기. 화면에서 차지하는 비율이다.
@@ -226,6 +227,21 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         }
     }
 
+    /// **⌥ 고정.** 켜 두면 게임이 보이는 동안 방향키·스페이스가 ⌥ 없이 그대로 게임에 간다.
+    ///
+    /// 넷이서 하는 협동 게임을 ⌥ 를 잡은 채로 삼십 분씩 할 수는 없다. 대신 그동안 방향키는
+    /// 다른 앱에 안 간다 — 숨기면(⌥H) 바로 돌려준다. ⌥H · ⌥M · ⌥R 은 그대로 ⌥ 를 쓴다.
+    /// 글자 키까지 뺏으면 옆 창에 글을 못 쓴다.
+    private var bareKeys: Bool {
+        get { UserDefaults.standard.bool(forKey: bareKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: bareKey)
+            if !isHidden { unregisterPlayHotKeys(); registerPlayHotKeys() }
+            pushLayout()
+            refreshMenu()
+        }
+    }
+
     /// 보이기 시작한 때. 이때부터 유예 시간이 지나야 「옵션 떼면 숨기기」가 걸린다 —
     /// ⌥H 로 켜고 손을 떼는 그 0.5초에 바로 숨어 버리면 켤 수가 없다.
     private var armAt = Date()
@@ -246,7 +262,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
 
     private func pushLayout() {
         webView?.evaluateJavaScript(
-            "window.__ddongLayout && window.__ddongLayout(\(windowSize), '\(windowSpot)', \(hideOnOption))")
+            "window.__ddongLayout && window.__ddongLayout(\(windowSize), '\(windowSpot)', \(hideOnOption), \(bareKeys))")
     }
 
     private func applyFade() {
@@ -355,16 +371,18 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         // 시험용. 사람 손 없이 키를 눌러 본다 — 메뉴를 타고 「게임 끝내기」까지 가는 길처럼,
         // 눈으로 보고 손으로 눌러야만 확인되던 것을 확인할 때 쓴다.
         //   DDONG_KEYS="2:menu,2.4:duck,2.8:right"   → 초:동작 을 쉼표로 잇는다
+        //   DDONG_KEYS="3:right:6"                  → 3초에 눌러 6초에 뗀다 (걷기·사다리 같은 「누르고 있기」)
         if env["DDONG_DEBUG"] != nil, let plan = env["DDONG_KEYS"] {
             for step in plan.split(separator: ",") {
                 let parts = step.split(separator: ":")
-                guard parts.count == 2, let at = Double(parts[0]) else { continue }
+                guard parts.count >= 2, let at = Double(parts[0]) else { continue }
                 let action = String(parts[1])
+                let hold = parts.count >= 3 ? (Double(parts[2]) ?? at) - at : 0.06
                 DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak self] in
                     guard let self else { return }
-                    debugLog("키 \(action)")
+                    debugLog("키 \(action)\(hold > 0.1 ? " (\(hold)초)" : "")")
                     self.send(action, true)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { self.send(action, false) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + max(0.06, hold)) { self.send(action, false) }
                 }
             }
         }
@@ -522,6 +540,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
           setFade: (value) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'fade', value,
           }),
+          // 개발용. DDONG_STAGE=7 로 띄우면 넷이서를 그 판에서 시작한다 (DDONG_DEBUG 와 같이).
+          stage: \(ProcessInfo.processInfo.environment["DDONG_DEBUG"] != nil ? (Int(ProcessInfo.processInfo.environment["DDONG_STAGE"] ?? "") ?? -1) : -1),
           // 무슨 게임들이 있나. 메뉴 막대의 「방 만들기」가 이걸로 갈린다.
           setGames: (list) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'games', list,
@@ -530,6 +550,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
           size: \(windowSize),
           spot: '\(windowSpot)',
           optionHide: \(hideOnOption),
+          bare: \(bareKeys),
+          setBare: (on) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'bare', on,
+          }),
           onLayout: (handler) => { window.__ddongLayout = handler },
           setOptionHide: (on) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'optionHide', on,
@@ -676,7 +700,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                 menu.addItem(withTitle: "안 잡히면  \(full)  복사",
                              action: #selector(copyCodeWithAddress), keyEquivalent: "").target = self
             }
-            menu.addItem(withTitle: "방 닫기", action: #selector(leaveRoom), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "방 깨기 — 모두 홈으로", action: #selector(leaveRoom), keyEquivalent: "").target = self
         case "guest":
             let title = NSMenuItem(title: "방 \(net.code ?? "") 에 들어가 있음", action: nil, keyEquivalent: "")
             title.isEnabled = false
@@ -736,6 +760,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         let sizeParent = NSMenuItem(title: "창 크기", action: nil, keyEquivalent: "")
         sizeParent.submenu = sizes
         menu.addItem(sizeParent)
+
+        let bareItem = NSMenuItem(title: "⌥ 고정 — 방향키만으로 한다", action: #selector(toggleBare),
+                                  keyEquivalent: "")
+        bareItem.target = self
+        bareItem.state = bareKeys ? .on : .off
+        menu.addItem(bareItem)
 
         let peek = NSMenuItem(title: "옵션 떼면 숨기기", action: #selector(toggleOptionHide),
                               keyEquivalent: "")
@@ -813,6 +843,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     }
 
     @objc private func toggleOptionHide() { hideOnOption = !hideOnOption }
+    @objc private func toggleBare() { bareKeys = !bareKeys }
 
     @objc private func pickSize(_ sender: NSMenuItem) {
         windowSize = Double(sender.tag) / 100
@@ -857,9 +888,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         for key in HK.play {
             var ref: EventHotKeyRef?
             let id = EventHotKeyID(signature: OSType(0x44444F47), id: key.id)
-            let status = RegisterEventHotKey(UInt32(key.code), UInt32(optionKey), id,
+            // ⌥ 고정이면 방향키·스페이스·Z 는 맨손으로. 글자 키(R·M)는 언제나 ⌥ 와 같이.
+            let bare = bareKeys && !["restart", "menu"].contains(key.action)
+            let status = RegisterEventHotKey(UInt32(key.code), bare ? 0 : UInt32(optionKey), id,
                                              GetApplicationEventTarget(), 0, &ref)
-            debugLog("⌥\(key.action) status=\(status)")
+            debugLog("\(bare ? "" : "⌥")\(key.action) status=\(status)")
             playHotKeys.append(ref)
         }
     }
@@ -914,7 +947,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         // 안 건다 — ⌥H 를 누르고 손을 떼는 사이에 바로 숨으면 켤 수가 없다.
         let optionDown = NSEvent.modifierFlags.contains(.option)
         if !isHidden, optionDown { sawOption = true }
-        if shouldHideOnOption(visible: !isHidden, armed: hideOnOption, sawOption: sawOption,
+        if shouldHideOnOption(visible: !isHidden, armed: hideOnOption && !bareKeys, sawOption: sawOption,
                               shownFor: Date().timeIntervalSince(armAt),
                               optionDown: optionDown, grace: optionGrace) {
             debugLog("옵션을 뗐다 → 숨김")
@@ -931,7 +964,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             }
         }
         guard !isHidden, !held.isEmpty else { return }
-        if !NSEvent.modifierFlags.contains(.option) {
+        if !bareKeys, !NSEvent.modifierFlags.contains(.option) {
             releaseAll()
             return
         }
@@ -1192,6 +1225,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             if let spot = body["spot"] as? String { windowSpot = spot }
         case "optionHide":
             if let on = body["on"] as? Bool { hideOnOption = on }
+        case "bare":
+            if let on = body["on"] as? Bool { bareKeys = on }
         case "kick":
             if let id = body["id"] as? Int {
                 debugLog("내보냄 \(id)")

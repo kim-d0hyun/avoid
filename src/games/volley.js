@@ -368,6 +368,17 @@ function drawSlideGauge(ctx, world, upright) {
   });
 }
 
+/// 끝났나. 다섯 점 먼저, 단 **두 점 차**로. 4:4 부터는 듀스 — 5:4 로는 안 끝나고 6:4 라야 끝난다.
+export function matchOver(score) {
+  const [a, c] = score;
+  return Math.max(a, c) >= WIN_AT && Math.abs(a - c) >= 2;
+}
+
+/// 듀스 중인가. 둘 다 네 점 이상이면 그때부터는 두 점 차 싸움이다.
+export function deuce(score) {
+  return Math.min(score[0], score[1]) >= WIN_AT - 1;
+}
+
 function point(world, toSide) {
   const b = world.bag;
   b.score[toSide]++;
@@ -378,7 +389,7 @@ function point(world, toSide) {
 export default {
   id: 'volley',
   name: '배구',
-  line: '빨강 편 대 파랑 편. 우리 쪽에 떨어뜨리면 상대 점수. 다섯 점 먼저 (혼자면 연습).',
+  line: '빨강 편 대 파랑 편. 우리 쪽에 떨어뜨리면 상대 점수. 다섯 점 먼저, 4:4 부터는 듀스 (두 점 차).',
   keys: [['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
          ['⌥ Space', '때리기 — 뛰어서 누르면 강타'],
          ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↓', '내리꽂기 (공이 손 밑이면 그냥도)'],
@@ -561,7 +572,7 @@ export default {
       return;
     }
 
-    if (b.score[0] >= WIN_AT || b.score[1] >= WIN_AT) {
+    if (matchOver(b.score)) {
       const won = b.score[0] > b.score[1] ? 0 : 1;
       // 순위표 칸은 [이름, 시간ms, 개수, 번호] 다. 배구에서는 「점수」를 개수 칸에 넣는다.
       const rows = [0, 1]
@@ -642,6 +653,11 @@ export default {
     text(ctx, ':', netX, y, { font: `800 24px ${HAN}`, color: PENCIL, align: 'center', halo: 3 });
     text(ctx, String(b.score[1]), netX + 44, y,
          { font: `800 30px ${HAN}`, color: TEAM_INK[1], align: 'center', halo: 3 });
+    // 듀스. 두 점 차가 나야 끝난다는 걸 점수 위에 적어 둔다 — 안 그러면 5:4 에 왜 안 끝나냐고 묻는다.
+    if (deuce(b.score)) {
+      text(ctx, '듀스 — 두 점 차로', netX, y - 28,
+           { font: `800 13px ${HAN}`, color: RED, align: 'center', halo: 3 });
+    }
     // 누가 어느 편인지. 점수 밑에 이름을 적어 두면 편을 물어볼 일이 없다.
     const rows = teams(world);
     rows.forEach((members, side) => {

@@ -78,8 +78,10 @@ export function drawIntro(ctx, world, time) {
   // ⌥M 은 한 줄로 족하다. 게임마다 메뉴에서 하는 일이 달라 그 일을 적어 준다 —
   // 배구가 제 목록에 ⌥M 을 또 넣어서 같은 키가 두 줄로 서 있었다.
   const menuDoes = gameOf(world).teamNames ? '메뉴 · 편 고르기' : '메뉴 · 게임 바꾸기';
-  const rows = [...gameOf(world).keys,
-                ['⌥ H', world.optionHide === false ? '숨기기' : '숨기기 (⌥ 를 떼도 숨는다)'],
+  // ⌥ 고정이면 방향키·Space 줄에서 ⌥ 를 지운다. H·M·R 은 그대로 ⌥ 와 같이 누른다.
+  const bare = (key) => (world.bare && !/[HMR]/.test(key) ? key.replace(/⌥ ?/g, '') : key);
+  const rows = [...gameOf(world).keys.map(([k, v]) => [bare(k), v]),
+                ['⌥ H', world.optionHide === false || world.bare ? '숨기기' : '숨기기 (⌥ 를 떼도 숨는다)'],
                 ['⌥ M', menuDoes]];
   const stop = gameOf(world).blocked?.(world);
   const hint = stop ? `${stop} — ⌥M 에서 편을 고른다`

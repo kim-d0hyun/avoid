@@ -13,7 +13,7 @@ import Network
 let netServiceType = "_ddong._tcp"
 /// 주고받는 꾸러미의 모양 번호. **꾸러미에 칸을 더하거나 뜻을 바꾸면 반드시 올린다.**
 /// 이게 없으면 몇 명만 업데이트한 사무실에서 구·신 버전이 아무 말 없이 붙어 조용히 어긋난다.
-let netProtocol = 4
+let netProtocol = 5
 /// 고정 포트. Bonjour 가 막힌 망에서 `코드@192.168.0.7` 로 직접 붙을 수 있어야 해서 고정한다.
 let netDefaultPort: UInt16 = 51301
 
@@ -545,6 +545,10 @@ final class Net {
 
     // MARK: 나가기
 
+    /// 방을 나간다. 방장이면 방이 깨진다.
+    ///
+    /// **말없이 끊지 않는다.** 그냥 끊으면 손님들은 4초 뒤에야 「조용해졌다」로 알아채고,
+    /// 그동안 판 한가운데에 멈춰 있다. 「깨졌다」를 한 줄 보내고 그 줄이 나갈 틈을 조금 주고 끊는다.
     func leave() {
         listener?.cancel()
         listener = nil
@@ -553,8 +557,16 @@ final class Net {
         resolver = nil
         uplink?.connection.cancel()
         uplink = nil
-        for peer in peers.values { peer.connection.cancel() }
+        let gone = Array(peers.values)
+        for peer in gone where peer.ready { line(peer, "{\"t\":\"bye\"}") }
         peers.removeAll()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            for peer in gone {
+                // 다음 방의 같은 번호를 잘못 떨어뜨리지 않게, 끊김 알림은 떼고 끊는다.
+                peer.connection.stateUpdateHandler = nil
+                peer.connection.cancel()
+            }
+        }
         nextId = 1
         candidates = []
         attempt = 0

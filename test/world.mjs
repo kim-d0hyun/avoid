@@ -76,7 +76,7 @@ say('같이 하기 — 방을 열 때 무슨 게임인지부터 고른다');
 
   into(w, 'host');
   check('또 한 겹', w.menu.path, ['together', 'host']);
-  check('게임 목록', labels(w), ['똥피하기', '배구']);
+  check('게임 목록', labels(w), ['똥피하기', '배구', '넷이서']);
   check('처음 짚는 것은 하던 게임', w.menu.index, 0);
 
   tap(w, 'duck');                                    // 배구
@@ -92,7 +92,7 @@ say('같이 하기 — 방 안에서는 코드 복사와 닫기');
   tap(w, 'menu');
   check('방 이름이 옆에 뜬다', menuItems(w)[1].note, '방 K3P9 · 1명');
   into(w, 'together');
-  check('고를 것', labels(w), ['이름 바꾸기', '코드 복사', '방 닫기']);
+  check('고를 것', labels(w), ['이름 바꾸기', '코드 복사', '방 깨기 — 모두 홈으로']);
   check('코드가 옆에', menuItems(w)[1].note, 'K3P9');
   w.mp.role = 'guest';
   check('손님은 나가기', labels(w)[2], '방에서 나가기');
@@ -120,7 +120,7 @@ say('내보내기 — 방장만, 그 자리에서');
   tap(w, 'menu');
   into(w, 'together');
   check('방장에게는 내보내기가 있다', labels(w),
-        ['이름 바꾸기', '코드 복사', '내보내기', '방 닫기']);
+        ['이름 바꾸기', '코드 복사', '내보내기', '방 깨기 — 모두 홈으로']);
   check('몇 명인지 옆에', menuItems(w)[2].note, '2명');
 
   into(w, 'kick');
@@ -134,7 +134,7 @@ say('내보내기 — 방장만, 그 자리에서');
 
   w.mp.others.delete(3);                             // 셸이 끊고 알려 준다
   w.mp.others.delete(2);
-  check('다 내보내면 한 겹 나온다', labels(w), ['이름 바꾸기', '코드 복사', '방 닫기']);
+  check('다 내보내면 한 겹 나온다', labels(w), ['이름 바꾸기', '코드 복사', '방 깨기 — 모두 홈으로']);
   check('길도 나왔다', w.menu.path, ['together']);
 }
 
@@ -153,7 +153,7 @@ say('화면 — 크기·자리·투명도·띄울 화면이 한 겹 안에 모�
   const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
   tap(w, 'menu');
   into(w, 'screen');
-  check('화면 전체면 「창 위치」가 없다', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기']);
+  check('화면 전체면 「창 위치」가 없다', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기', '⌥ 고정 — 방향키만으로']);
 
   into(w, 'size');
   check('두 겹 안', w.menu.path, ['screen', 'size']);
@@ -169,7 +169,7 @@ say('화면 — 크기·자리·투명도·띄울 화면이 한 겹 안에 모�
   tap(w, 'left');
   check('한 겹 뒤로', w.menu.path, ['screen']);
   check('줄이고 나면 「창 위치」가 생긴다', labels(w),
-        ['창 크기', '창 위치', '투명도', '⌥ 떼면 숨기기']);
+        ['창 크기', '창 위치', '투명도', '⌥ 떼면 숨기기', '⌥ 고정 — 방향키만으로']);
   check('첫 줄 옆에 지금 상태', menuItems(w).find((i) => i.id === 'size').note, '절반');
 
   into(w, 'spot');
@@ -208,7 +208,7 @@ say('화면 — 모니터가 여럿이면 「띄울 화면」이 생긴다');
   const w = make(THREE);
   tap(w, 'menu');
   into(w, 'screen');
-  check('네 줄', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기', '띄울 화면']);
+  check('다섯 줄', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기', '⌥ 고정 — 방향키만으로', '띄울 화면']);
   check('지금 어디에 떠 있는지 옆에 적는다',
         menuItems(w).find((i) => i.id === 'where').note, 'Built-in Retina Display');
 
@@ -231,7 +231,7 @@ say('화면 — 고르는 중에 모니터를 뽑으면 한 겹 나온다');
   into(w, 'screen');
   into(w, 'where');
   w.screens = [THREE[0]];
-  check('목록이 아니라 화면 설정으로', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기']);
+  check('목록이 아니라 화면 설정으로', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기', '⌥ 고정 — 방향키만으로']);
   check('길도 한 겹 나왔다', w.menu.path, ['screen']);
 }
 

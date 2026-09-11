@@ -110,10 +110,14 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
     spot: 'c',
     /// ⌥ 를 떼면 바로 숨을지. 숨기는 일은 셸이 한다.
     optionHide: true,
+    /// ⌥ 고정 — 방향키·Space 가 ⌥ 없이 온다. 키를 거는 일은 셸이 한다.
+    bare: false,
     /// 잠깐 떠 있다 사라지는 한 줄. 왜 갑자기 혼자가 됐는지 같은 걸 알려 준다.
     toast: null,
     /// 편이 있는 게임에서 내가 선 편 (0/1). 판이 바뀌어도 남는다.
     team: undefined,
+    /// 판이 여럿인 게임(넷이서)의 지금 판 번호와 되감은 횟수. restart 가 지켜 준다.
+    stage: 0, bagResets: 0,
     input: { left: false, right: false, jump: false, duck: false },
     player: {
       x: 0, vx: 0, air: 0, vy: 0, crouch: 0, facing: 1, walk: 0, squeeze: 0,
@@ -164,6 +168,7 @@ export function startSlide(world, dir) {
 /// 게임을 갈아 끼운다. 판은 처음부터 다시 시작한다.
 export function pickGame(world, gameId) {
   world.gameId = gameById(gameId).id;
+  world.stage = 0; world.bagResets = 0;      // 판이 여럿인 게임은 첫 판부터
   restart(world);
   world.state = 'ready';
 }
@@ -172,12 +177,12 @@ export function restart(world) {
   // 누르고 있는 키와 기록 콜백은 그대로 넘긴다 — 방향키를 잡은 채 다시 시작하면
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
-          mp, menu, screens, gameId, pick, fade, size, spot, optionHide, toast,
-          team, debug, log, send } = world;
+          mp, menu, screens, gameId, pick, fade, size, spot, optionHide, bare, toast,
+          team, debug, log, send, stage, bagResets } = world;
   Object.assign(world, createWorld(best, gameId),
                 { w, h, input, onRecord, onDeath, onMenu, onGameOver,
-                  mp, menu, screens, pick, fade, size, spot, optionHide, toast,
-                  team, debug, log, send });
+                  mp, menu, screens, pick, fade, size, spot, optionHide, bare, toast,
+                  team, debug, log, send, stage, bagResets });
   world.state = 'ready';
   // 혼자 할 때도 우승 표시가 남는다 (배구). 안 지우면 세리머니가 다음 판까지 따라와서
   // 사람들이 화면에서 사라진 채로 판이 돈다.
@@ -390,7 +395,9 @@ export function update(world, dt) {
   }
 
   if (world.mp.on && !game.noGrab) stepGrab(world, dt);
-  if (!p.dead) movePlayer(world, dt);
+  // 게임이 제 물리를 가지면 그걸 쓴다 (넷이서 — 층·사다리·상자 위의 사람). 죽음도 그쪽이 본다.
+  if (game.move) game.move(world, dt);
+  else if (!p.dead) movePlayer(world, dt);
 
   // 시작 전에도 게임은 굴린다. 배구는 여기서 공을 올려 두고 기다린다 —
   // 시작 신호가 와야 공이 생기면 첫 프레임에 공이 화면 구석에서 튀어나온다.
@@ -500,7 +507,8 @@ function togetherItems(world) {
   if (mp.role === 'host' && mp.others.size) {
     rows.push({ id: 'kick', into: 'kick', label: '내보내기', note: `${mp.others.size}명` });
   }
-  rows.push({ id: 'leave', label: mp.role === 'host' ? '방 닫기' : '방에서 나가기' });
+  // 방장이 나가면 방이 깨진다 — 모두 홈으로 나간다. 손님이 나가면 자기만 홈으로.
+  rows.push({ id: 'leave', label: mp.role === 'host' ? '방 깨기 — 모두 홈으로' : '방에서 나가기' });
   return rows;
 }
 
@@ -518,6 +526,10 @@ function screenItems(world) {
   const peek = world.optionHide !== false;
   rows.push({ id: `peek:${peek ? 0 : 1}`, label: '⌥ 떼면 숨기기',
               note: peek ? '켜짐' : '꺼짐', mark: peek });
+  // ⌥ 고정. 켜 두면 방향키·Space 가 ⌥ 없이 게임에 간다 (보이는 동안만). ⌥H·⌥M·⌥R 은 그대로.
+  const bare = !!world.bare;
+  rows.push({ id: `bare:${bare ? 0 : 1}`, label: '⌥ 고정 — 방향키만으로',
+              note: bare ? '켜짐' : '꺼짐', mark: bare });
   if (world.screens.length > 1) {
     const here = world.screens.find((screen) => screen.current);
     rows.push({ id: 'where', into: 'where', label: '띄울 화면', note: here?.name ?? '' });
@@ -590,6 +602,13 @@ export function menuItems(world) {
   }
 }
 
+/// 게임 고르는 화면(홈)으로 나간다. 메뉴의 「홈으로 나가기」와, 방이 깨졌을 때 모두가 오는 곳.
+export function goHome(world) {
+  openMenu(world, false);
+  world.state = 'pick';
+  world.pick = Math.max(0, games.findIndex((g) => g.id === world.gameId));
+}
+
 function openMenu(world, open) {
   world.menu.open = open;
   world.menu.index = 0;
@@ -630,7 +649,7 @@ export function menuBack(world) {
 
 /// 고르고도 메뉴를 열어 두는 것들. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다 —
 /// 창이 그 모니터에 뜨는 걸 보고 아니다 싶으면 바로 다른 걸 고른다.
-const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:', 'peek:', 'kick:'];
+const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:', 'peek:', 'bare:', 'kick:'];
 
 function chooseMenu(world) {
   const items = menuItems(world);
@@ -654,9 +673,7 @@ function chooseMenu(world) {
       world.menu.index = 1; // 기본 선택은 「아니」 — 손이 미끄러져 꺼지면 안 된다
       return;
     case 'pick':
-      openMenu(world, false);
-      world.state = 'pick';
-      world.pick = Math.max(0, games.findIndex((g) => g.id === world.gameId));
+      goHome(world);
       return;
     case 'again':
       openMenu(world, false);
@@ -822,7 +839,9 @@ export function press(world, action, down) {
   }
 
   if (action === 'restart') {
-    if (down && canRestart(world)) world.onMenu?.('again');
+    // 되감을 수 있는 게임(넷이서)은 판 도중에도 ⌥R 이 먹는다. 방장만 — 손님이 누르면 부탁이 간다.
+    const rewind = gameOf(world).rewindable && world.state === 'play';
+    if (down && (canRestart(world) || rewind)) world.onMenu?.('again');
     return;
   }
   if (!(action in world.input)) return;

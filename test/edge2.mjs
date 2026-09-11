@@ -214,4 +214,71 @@ say('㉖ 고르는 화면에서 메뉴를 열고 게임 바꾸기');
   check('여전히 고르는 화면', world.state, 'pick');
 }
 
-done('경우의 수 ⑮~㉖');
+say('㉘ 손님끼리 — 한 사람이 나가면 다른 손님 화면에서도 사라진다');
+{
+  const world = make('dodge');
+  net.roleChanged(world, 'guest', 'K3P9', 3, '나');
+  const row = (id, x) => [id, x, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0];
+  const snap = (pl) => net.handleMessage(world, shell, 0,
+    { t: 's', ms: 1000, st: 'play', r: 1, pl, vw: 1512, vh: 944, g: 'dodge',
+      nm: [[0, '방장'], [2, '둘째'], [3, '나']] }, api(world));
+  snap([row(0, 300), row(2, 600), row(3, 900)]);
+  ok('방장과 둘째가 보인다', world.mp.others.has(0) && world.mp.others.has(2));
+  ok('내 몸은 남으로 안 만든다', !world.mp.others.has(3));
+  check('이름표도 붙었다', world.mp.others.get(2)?.name, '둘째');
+  // 둘째가 「게임 끝내기」로 나갔다. 방장의 다음 스냅샷에는 둘째가 없다.
+  snap([row(0, 310), row(3, 900)]);
+  ok('둘째가 사라졌다 (가만히 선 채로 남지 않는다)', !world.mp.others.has(2));
+  ok('이름표도 지웠다', !world.mp.names.has(2));
+  ok('방장은 그대로', world.mp.others.has(0));
+  // pl 이 아예 없는(모양이 깨진) 스냅샷은 아무도 지우지 않는다.
+  net.handleMessage(world, shell, 0, { t: 's', ms: 1100, st: 'play', r: 1, vw: 1512, vh: 944 }, api(world));
+  ok('pl 없는 스냅샷으로는 안 지운다', world.mp.others.has(0));
+  for (let i = 0; i < 30; i++) w.update(world, 1 / 60);
+  ok('안 터진다', Number.isFinite(world.player.x));
+}
+
+say('㉙ 방장이 방을 깨면 — 손님은 방을 나가고, 방을 나온 사람은 홈으로');
+{
+  const world = make('volley');
+  net.roleChanged(world, 'guest', 'K3P9', 2, '나');
+  world.state = 'play';
+  let left = 0;
+  world.onMenu = (a) => { if (a === 'leave') left++; };
+  net.handleMessage(world, shell, 0, { t: 'bye' }, api(world));
+  check('방을 나간다', left, 1);
+  ok('왜 나갔는지 뜬다', world.toast?.text?.includes('깼다'));
+  // 셸이 「방 없음」을 알려 오면 main.js 가 goHome 을 부른다. 그 길을 그대로 따라가 본다.
+  const wasOn = world.mp.on;
+  net.roleChanged(world, 'off', null, 0, '나');
+  if (wasOn && !world.mp.on) w.goHome(world);
+  check('홈(게임 고르기)으로 나왔다', world.state, 'pick');
+  check('하던 게임에 손가락이 놓여 있다', games[world.pick]?.id, 'volley');
+  ok('메뉴는 닫혀 있다', !world.menu.open);
+  ok('남들은 지워졌다', world.mp.others.size === 0);
+  // 방장이 bye 를 받으면 무시한다 (손님이 장난으로 보내도 방이 안 깨진다).
+  const host = make('dodge', true);
+  let hostLeft = 0; host.onMenu = (a) => { if (a === 'leave') hostLeft++; };
+  net.handleMessage(host, shell, 5, { t: 'bye' }, api(host));
+  check('방장은 bye 를 무시한다', hostLeft, 0);
+}
+
+say('㉚ 방을 나온 사람이 마침 준비 화면이었어도 홈으로');
+{
+  const world = make('dodge');
+  net.roleChanged(world, 'host', 'K3P9', 0, '나');
+  world.state = 'ready';
+  const wasOn = world.mp.on;
+  net.roleChanged(world, 'off', null, 0, '나');
+  if (wasOn && !world.mp.on) w.goHome(world);
+  check('홈으로', world.state, 'pick');
+  // 방에 있던 적이 없으면(처음 켤 때의 off) 홈으로 끌고 가지 않는다.
+  const fresh = make('dodge');
+  fresh.state = 'ready';
+  const was = fresh.mp.on;
+  net.roleChanged(fresh, 'off', null, 0, '나');
+  if (was && !fresh.mp.on) w.goHome(fresh);
+  check('처음 켤 때의 off 는 그대로 준비 화면', fresh.state, 'ready');
+}
+
+done('경우의 수 ⑮~㉚');
