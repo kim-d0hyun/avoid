@@ -82,7 +82,8 @@ export function drawIntro(ctx, world, time) {
   const bare = (key) => (world.bare && !/[HMR]/.test(key) ? key.replace(/⌥ ?/g, '') : key);
   const rows = [...gameOf(world).keys.map(([k, v]) => [bare(k), v]),
                 ['⌥ H', world.optionHide === false || world.bare ? '숨기기' : '숨기기 (⌥ 를 떼도 숨는다)'],
-                ['⌥ M', menuDoes]];
+                ['⌥ M', menuDoes],
+                ['⌥ P', world.bare ? '⌥ 고정 끄기 — 다시 ⌥ 를 잡고 한다' : '⌥ 고정 — 방향키만으로 한다']];
   const stop = gameOf(world).blocked?.(world);
   const hint = stop ? `${stop} — ⌥M 에서 편을 고른다`
     : world.mp.on && world.mp.role !== 'host' ? '방장이 시작하기를 기다리는 중'
@@ -132,6 +133,21 @@ export function drawIntro(ctx, world, time) {
   text(ctx, hint, x, y + rows.length * 28 + 14,
        { font: `700 16px ${HAN}`, color: RED, alpha: pulse, halo: 0 });
   ctx.restore();
+}
+
+/// ⌥ 고정 표시. **위 한가운데에 늘 붙어 있는 작은 꼬리표.**
+///
+/// 고정이 켜져 있으면 방향키가 다른 앱에 안 간다 — 그걸 모르고 옆 창에 글을 쓰다 커서만
+/// 움직이면 고장 난 줄 안다. 켜졌는지 꺼졌는지가 항상 보여야 하고, 어느 키로 바꾸는지도
+/// 그 자리에 적혀 있어야 한다. 위 가장자리에 반쯤 걸쳐 두어 종이가 아니라 꼬리표로 읽히게 한다.
+export function drawLockBadge(ctx, world) {
+  const on = !!world.bare;
+  const label = on ? '⌥ 고정 중 — 방향키만으로 · ⌥P 끔' : '⌥ 잡고 하기 · ⌥P 로 고정';
+  ctx.font = `${on ? 800 : 600} 11px ${HAN}`;
+  const w = ctx.measureText(label).width + 26;
+  const x = Math.round((world.w - w) / 2);
+  paperScrap(ctx, x, -10, w, 30, 5);
+  text(ctx, label, x + 13, 13, { font: `${on ? 800 : 600} 11px ${HAN}`, color: on ? RED : PENCIL, halo: 0 });
 }
 
 /// 켜면 제일 먼저 나오는 화면. 무슨 게임을 할지 고른다.
@@ -220,7 +236,9 @@ export function drawToast(ctx, world) {
   ctx.font = `700 15px ${HAN}`;
   const w = ctx.measureText(label).width + 52;
   const x = (world.w - w) / 2;
-  const y = 26;
+  // 위가 아니라 **가운데 아래.** 위 한가운데는 안내 종이·⌥ 고정 꼬리표·시계가 사는 자리라
+  // 거기 얹으면 안내의 첫 줄을 덮는다. 사람이 선 바닥보다는 위, 메뉴가 뜨는 가운데보다는 아래.
+  const y = Math.round(world.h * 0.64);
   const alpha = Math.min(1, left / 0.6);
   ctx.save();
   ctx.globalAlpha = alpha;

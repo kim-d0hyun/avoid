@@ -21,6 +21,16 @@ private let sizeKey = "windowSize"
 private let spotKey = "windowSpot"
 private let optionHideKey = "hideOnOption"
 private let bareKey = "bareKeys"
+
+/// 설정이 사는 곳.
+///
+/// **DDONG_DEBUG 로 띄운 시험용 인스턴스는 따로 산다.** 같은 번들 아이디라 기본값 도메인도
+/// 같아서, 시험 중에 ⌥P 를 눌러 본 것이 설치된 앱의 「⌥ 고정」을 켜 버렸다 — 게임하던 사람의
+/// 방향키가 말없이 게임으로 갔다. 시험은 자기 서랍(…​.debug)만 쓴다. `-windowSize 0.4` 같은
+/// 실행 인자는 두 서랍 모두에 먹는다 (인자 도메인은 어느 인스턴스에나 앞에 선다).
+private let store: UserDefaults = ProcessInfo.processInfo.environment["DDONG_DEBUG"] != nil
+    ? (UserDefaults(suiteName: "dev.turban.ddong-dodge.debug") ?? .standard)
+    : .standard
 private let nameKey = "playerName"
 
 /// 고를 수 있는 창 크기. 화면에서 차지하는 비율이다.
@@ -51,6 +61,7 @@ private enum HK {
     static let menu: UInt32 = 7     // ⌥M — 게임 안 메뉴
     static let grab: UInt32 = 8     // ⌥Space — 붙잡기
     static let grabAlt: UInt32 = 9  // ⌥Z — ⌥Space 를 입력기가 먹는 자리가 있어 뒷길을 둔다
+    static let lock: UInt32 = 10    // ⌥P — ⌥ 고정 켜고 끄기. 고정 중에도 ⌥ 와 같이 누른다
 
     /// 게임 중에만 거는 것들. 숨기면 반드시 푼다 — ⌥←/⌥→ 는 맥에서 「단어 단위 이동」이라
     /// 계속 잡고 있으면 남의 글쓰기를 망친다. 창이 안 보이면 그 키는 원래 주인에게 돌려준다.
@@ -63,6 +74,7 @@ private enum HK {
         (menu, kVK_ANSI_M, "menu"),
         (grab, kVK_Space, "grab"),
         (grabAlt, kVK_ANSI_Z, "grab"),
+        (lock, kVK_ANSI_P, "lock"),
     ]
 
     static func action(_ id: UInt32) -> String? { play.first { $0.id == id }?.action }
@@ -154,12 +166,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         get {
             let env = ProcessInfo.processInfo.environment
             if env["DDONG_DEBUG"] != nil, let forced = env["DDONG_NAME"] { return String(forced.prefix(nameMax)) }
-            if let saved = UserDefaults.standard.string(forKey: nameKey), !saved.isEmpty { return saved }
+            if let saved = store.string(forKey: nameKey), !saved.isEmpty { return saved }
             return guessName(NSFullUserName())
         }
         set {
             let trimmed = String(newValue.trimmingCharacters(in: .whitespacesAndNewlines).prefix(nameMax))
-            UserDefaults.standard.set(trimmed, forKey: nameKey)
+            store.set(trimmed, forKey: nameKey)
             net.myName = trimmed
             pushNetRole()
             refreshMenu()
@@ -167,7 +179,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     }
 
     /// 이름을 손으로 정한 적이 있나.
-    private var hasNamed: Bool { !(UserDefaults.standard.string(forKey: nameKey) ?? "").isEmpty }
+    private var hasNamed: Bool { !(store.string(forKey: nameKey) ?? "").isEmpty }
 
     /// 창 투명도. 남의 작업 화면 위에 얹는 게임이라 「살짝만 보이게」 두고 싶을 때가 있다.
     ///
@@ -176,11 +188,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     /// 낙서가 낙서인 채로 옅어진다.
     private var windowFade: Double {
         get {
-            let saved = UserDefaults.standard.double(forKey: fadeKey)
+            let saved = store.double(forKey: fadeKey)
             return saved <= 0 ? 1 : min(1, max(0.4, saved))
         }
         set {
-            UserDefaults.standard.set(min(1, max(0.4, newValue)), forKey: fadeKey)
+            store.set(min(1, max(0.4, newValue)), forKey: fadeKey)
             applyFade()
             refreshMenu()
         }
@@ -189,11 +201,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     /// 창이 화면에서 차지하는 비율. 1 이면 지금까지와 같이 화면 전체다.
     private var windowSize: Double {
         get {
-            let saved = UserDefaults.standard.double(forKey: sizeKey)
+            let saved = store.double(forKey: sizeKey)
             return saved <= 0 ? 1 : min(1, max(0.2, saved))
         }
         set {
-            UserDefaults.standard.set(min(1, max(0.2, newValue)), forKey: sizeKey)
+            store.set(min(1, max(0.2, newValue)), forKey: sizeKey)
             moveToChosenScreen()
             pushLayout()
             refreshMenu()
@@ -202,10 +214,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
 
     /// 작게 띄운 창을 화면 어느 구석에 둘지. 화면 전체면 아무 뜻이 없다.
     private var windowSpot: String {
-        get { UserDefaults.standard.string(forKey: spotKey) ?? "c" }
+        get { store.string(forKey: spotKey) ?? "c" }
         set {
             guard windowSpots.contains(where: { $0.id == newValue }) else { return }
-            UserDefaults.standard.set(newValue, forKey: spotKey)
+            store.set(newValue, forKey: spotKey)
             moveToChosenScreen()
             pushLayout()
             refreshMenu()
@@ -217,9 +229,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     /// 이 게임은 ⌥ 를 잡고 한다. 그러니 ⌥ 를 놓는 순간이 곧 「그만한다」다 — 사람이 오면
     /// ⌥H 를 찾아 누르는 것보다 잡고 있던 손을 펴는 게 빠르다. 다시 보려면 ⌥H.
     private var hideOnOption: Bool {
-        get { UserDefaults.standard.object(forKey: optionHideKey) as? Bool ?? true }
+        get { store.object(forKey: optionHideKey) as? Bool ?? true }
         set {
-            UserDefaults.standard.set(newValue, forKey: optionHideKey)
+            store.set(newValue, forKey: optionHideKey)
             armAt = Date()            // 켜자마자 숨지 않게 유예를 다시 준다
             sawOption = false         // 메뉴에서 막 켠 참이라 「잡았다 놓기」를 새로 센다
             pushLayout()
@@ -233,9 +245,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     /// 다른 앱에 안 간다 — 숨기면(⌥H) 바로 돌려준다. ⌥H · ⌥M · ⌥R 은 그대로 ⌥ 를 쓴다.
     /// 글자 키까지 뺏으면 옆 창에 글을 못 쓴다.
     private var bareKeys: Bool {
-        get { UserDefaults.standard.bool(forKey: bareKey) }
+        get { store.bool(forKey: bareKey) }
         set {
-            UserDefaults.standard.set(newValue, forKey: bareKey)
+            store.set(newValue, forKey: bareKey)
             if !isHidden { unregisterPlayHotKeys(); registerPlayHotKeys() }
             pushLayout()
             refreshMenu()
@@ -248,6 +260,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     /// 보이기 시작한 뒤로 ⌥ 를 한 번이라도 잡았나. **잡았다 놓아야 그만두는 것**이다 —
     /// 한 번도 안 잡았으면 아직 시작도 안 한 것이라 숨기지 않는다 (앱을 막 켠 사람).
     private var sawOption = false
+    /// ⌥P 로 고정을 끈 직후. ⌥ 를 놓는 것을 한 번 봐준다 — 놓았다 다시 잡은 뒤부터 센다.
+    private var optionMustLift = false
     /// **시간으로 봐주지 않는다.** ⌥ 를 놓으면 놓은 것이다 — 켠 지 1초든 한 시간이든 같다.
     /// 0.25초만 두는 이유는 ⌥H 가 두 키를 같이 누르는 동작이라서다. H 를 떼고 ⌥ 를 떼는
     /// 그 몇십 밀리초를 「놓았다」로 세면 ⌥H 를 눌러도 켜지지 않은 것처럼 보인다.
@@ -271,12 +285,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     }
 
     private var bestMs: Int {
-        get { UserDefaults.standard.integer(forKey: bestMsKey) }
-        set { UserDefaults.standard.set(newValue, forKey: bestMsKey) }
+        get { store.integer(forKey: bestMsKey) }
+        set { store.set(newValue, forKey: bestMsKey) }
     }
     private var bestDodged: Int {
-        get { UserDefaults.standard.integer(forKey: bestDodgedKey) }
-        set { UserDefaults.standard.set(newValue, forKey: bestDodgedKey) }
+        get { store.integer(forKey: bestDodgedKey) }
+        set { store.set(newValue, forKey: bestDodgedKey) }
     }
 
     // MARK: 시작
@@ -381,6 +395,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                 DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak self] in
                     guard let self else { return }
                     debugLog("키 \(action)\(hold > 0.1 ? " (\(hold)초)" : "")")
+                    if action == "lock" { self.toggleBare(); return }   // ⌥P 는 셸의 스위치다
                     self.send(action, true)
                     DispatchQueue.main.asyncAfter(deadline: .now() + max(0.06, hold)) { self.send(action, false) }
                 }
@@ -606,7 +621,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     }
 
     private func chosenScreen() -> NSScreen {
-        let saved = UserDefaults.standard.integer(forKey: screenKey)
+        let saved = store.integer(forKey: screenKey)
         if saved != 0, let match = NSScreen.screens.first(where: { $0.number == saved }) { return match }
         return NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first ?? NSScreen.main!
     }
@@ -658,7 +673,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     /// 게임 안 메뉴에서도, 메뉴 막대에서도 여기로 온다. 고른 화면은 다음에 켤 때도 기억한다.
     private func chooseScreen(_ number: Int) {
         guard NSScreen.screens.contains(where: { $0.number == number }) else { return }
-        UserDefaults.standard.set(number, forKey: screenKey)
+        store.set(number, forKey: screenKey)
         moveToChosenScreen()
         pushScreens()
         refreshMenu()
@@ -761,7 +776,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         sizeParent.submenu = sizes
         menu.addItem(sizeParent)
 
-        let bareItem = NSMenuItem(title: "⌥ 고정 — 방향키만으로 한다", action: #selector(toggleBare),
+        let bareItem = NSMenuItem(title: "⌥ 고정 — 방향키만으로  ⌥P", action: #selector(toggleBare),
                                   keyEquivalent: "")
         bareItem.target = self
         bareItem.state = bareKeys ? .on : .off
@@ -843,7 +858,17 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     }
 
     @objc private func toggleOptionHide() { hideOnOption = !hideOnOption }
-    @objc private func toggleBare() { bareKeys = !bareKeys }
+    /// ⌥P. **끄는 쪽이면 ⌥ 를 한 번 놓았다 다시 잡아야** 「⌥ 떼면 숨기기」가 다시 산다 —
+    /// P 를 누른 그 손이 ⌥ 를 놓는 것은 「그만한다」가 아니다. 안 그러면 ⌥P 로 고정을 끄는 순간
+    /// 게임이 숨어 버려서, 끈 게 아니라 꺼진 것처럼 보인다.
+    @objc private func toggleBare() {
+        bareKeys = !bareKeys
+        debugLog("⌥P → ⌥ 고정 \(bareKeys ? "켬" : "끔")")
+        if !bareKeys {
+            sawOption = false
+            optionMustLift = true
+        }
+    }
 
     @objc private func pickSize(_ sender: NSMenuItem) {
         windowSize = Double(sender.tag) / 100
@@ -888,8 +913,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         for key in HK.play {
             var ref: EventHotKeyRef?
             let id = EventHotKeyID(signature: OSType(0x44444F47), id: key.id)
-            // ⌥ 고정이면 방향키·스페이스·Z 는 맨손으로. 글자 키(R·M)는 언제나 ⌥ 와 같이.
-            let bare = bareKeys && !["restart", "menu"].contains(key.action)
+            // ⌥ 고정이면 방향키·스페이스·Z 는 맨손으로. 글자 키(R·M·P)는 언제나 ⌥ 와 같이.
+            let bare = bareKeys && !["restart", "menu", "lock"].contains(key.action)
             let status = RegisterEventHotKey(UInt32(key.code), bare ? 0 : UInt32(optionKey), id,
                                              GetApplicationEventTarget(), 0, &ref)
             debugLog("\(bare ? "" : "⌥")\(key.action) status=\(status)")
@@ -909,6 +934,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             return
         }
         guard let action = HK.action(id), !isHidden else { return }
+        // ⌥P — ⌥ 고정. 게임에 보내는 키가 아니라 셸의 스위치다.
+        if action == "lock" {
+            if pressed { toggleBare() }
+            return
+        }
 
         if pressed {
             guard held[action] == nil else { return } // 키 반복은 한 번만 센다
@@ -946,7 +976,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         // 상태를 물어보기만 하는 것이라 손쉬운 사용 권한이 필요 없다. 켠 직후 잠깐은
         // 안 건다 — ⌥H 를 누르고 손을 떼는 사이에 바로 숨으면 켤 수가 없다.
         let optionDown = NSEvent.modifierFlags.contains(.option)
-        if !isHidden, optionDown { sawOption = true }
+        if optionMustLift {
+            if !optionDown { optionMustLift = false }
+        } else if !isHidden, optionDown {
+            sawOption = true
+        }
         if shouldHideOnOption(visible: !isHidden, armed: hideOnOption && !bareKeys, sawOption: sawOption,
                               shownFor: Date().timeIntervalSince(armAt),
                               optionDown: optionDown, grace: optionGrace) {
@@ -1006,6 +1040,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             registerPlayHotKeys()
             armAt = Date()
             sawOption = false
+            optionMustLift = false
         }
         webView.evaluateJavaScript("window.__ddongVisible && window.__ddongVisible(\(!hidden))")
         refreshMenu()

@@ -3,9 +3,9 @@
 import { boil, shirtColor } from './draw/ink.js';
 import { drawStickman } from './draw/stickman.js';
 import { makeGround, drawClock, drawIntro, drawFreeze, drawStamp, drawRoom, drawResults, drawMenu,
-  drawVictory, drawPick, drawToast } from './draw/hud.js';
+  drawVictory, drawPick, drawToast, drawLockBadge } from './draw/hud.js';
 import { createWorld, resize, update, press, restart, spread, gameOf,
-  pickGame, goHome } from './game/world.js';
+  pickGame, goHome, say } from './game/world.js';
 import { games } from './games/index.js';
 import { pump, handleMessage, peerChanged, roleChanged, reportDeath, startRound,
   endRound } from './game/net.js';
@@ -142,7 +142,13 @@ shell.onLayout?.((size, spot, optionHide, bare) => {
   world.size = size;
   world.spot = spot;
   world.optionHide = optionHide !== false;
+  const was = world.bare;
   world.bare = !!bare;
+  // ⌥P 로 바꾼 순간 무엇이 됐는지 한 줄. 위의 작은 표시가 바뀐 것만으로는 눈치채기 어렵다.
+  if (was !== world.bare) {
+    say(world, world.bare ? '⌥ 고정 켬 — 방향키만으로 한다 (⌥P 로 끔)'
+                          : '⌥ 고정 끔 — ⌥ 를 잡고 한다 (⌥P 로 켬)', 3);
+  }
   fit();
 });
 world.bare = !!shell.bare;
@@ -507,6 +513,9 @@ function render(time) {
   const hs = Math.max(0.5, Math.min(1, Math.sqrt(sy)));
   ctx.setTransform(dpr * hs, 0, 0, dpr * hs, 0, 0);
   const hud = { ...world, w: screenW / hs, h: screenH / hs, groundY: world.groundY * sy / hs };
+  // ⌥ 고정 중인지. 위 한가운데에 늘 붙어 있다 — 방향키가 게임에 가는지 남의 글에 가는지가
+  // 이 한 줄에 달렸다.
+  drawLockBadge(ctx, hud);
   if (world.state === 'pick') {
     drawPick(ctx, hud, time);
     if (world.menu.open) drawMenu(ctx, hud);

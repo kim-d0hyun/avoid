@@ -526,9 +526,10 @@ function screenItems(world) {
   const peek = world.optionHide !== false;
   rows.push({ id: `peek:${peek ? 0 : 1}`, label: '⌥ 떼면 숨기기',
               note: peek ? '켜짐' : '꺼짐', mark: peek });
-  // ⌥ 고정. 켜 두면 방향키·Space 가 ⌥ 없이 게임에 간다 (보이는 동안만). ⌥H·⌥M·⌥R 은 그대로.
+  // ⌥ 고정. 켜 두면 방향키·Space 가 ⌥ 없이 게임에 간다 (보이는 동안만). ⌥H·⌥M·⌥R·⌥P 는 그대로.
+  // 단축키는 ⌥P 다 — 이 줄은 지금 상태를 보여 주고, 급하면 여기서도 뒤집을 수 있게 둔다.
   const bare = !!world.bare;
-  rows.push({ id: `bare:${bare ? 0 : 1}`, label: '⌥ 고정 — 방향키만으로',
+  rows.push({ id: `bare:${bare ? 0 : 1}`, label: '⌥ 고정 — 방향키만으로 (⌥P)',
               note: bare ? '켜짐' : '꺼짐', mark: bare });
   if (world.screens.length > 1) {
     const here = world.screens.find((screen) => screen.current);
