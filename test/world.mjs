@@ -3,7 +3,7 @@
 // 고칠 때마다 `npm test` 로 전부 돌린다. 결과는 test/결과.md 에 남는다.
 
 import './dom-stub.mjs';
-const { createWorld, resize, press, menuItems, update } = await import(new URL('../src/game/world.js', import.meta.url));
+const { createWorld, resize, press, menuItems, update, restart } = await import(new URL('../src/game/world.js', import.meta.url));
 const { interpolate } = await import(new URL('../src/game/net.js', import.meta.url));
 
 import { check, say, done } from './check.mjs';
@@ -30,15 +30,55 @@ say('메뉴 — 화면이 한 대면 고를 것이 없다');
 {
   const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
   tap(w, 'menu');
-  check('항목', labels(w), ['이어서 하기', '방 만들기', '코드로 입장', '게임 바꾸기', '투명도', '화면 숨기기', '게임 끝내기']);
+  check('항목', labels(w), ['이어서 하기', '방 만들기', '코드로 입장', '게임 바꾸기', '투명도', '창 크기', '화면 숨기기', '게임 끝내기']);
 }
 
 say('메뉴 — 화면이 여럿이면 항목이 생긴다');
 {
   const w = make(THREE);
   tap(w, 'menu');
-  check('항목', labels(w), ['이어서 하기', '방 만들기', '코드로 입장', '게임 바꾸기', '투명도', '띄울 화면 바꾸기', '화면 숨기기', '게임 끝내기']);
+  check('항목', labels(w), ['이어서 하기', '방 만들기', '코드로 입장', '게임 바꾸기', '투명도', '띄울 화면 바꾸기', '창 크기', '화면 숨기기', '게임 끝내기']);
   check('지금 어디에 떠 있는지 옆에 적는다', menuItems(w)[5].note, 'Built-in Retina Display');
+}
+
+say('창 크기 — 줄이면 놓을 자리도 고르게 된다');
+{
+  const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
+  tap(w, 'menu');
+  check('화면 전체일 때는 「창 위치」가 없다', labels(w).includes('창 위치'), false);
+  check('지금 크기를 옆에 적는다', menuItems(w).find((i) => i.id === 'size').note, '화면 전체');
+
+  // 「창 크기」로 내려가 들어간다
+  while (menuItems(w)[w.menu.index].id !== 'size') tap(w, 'duck');
+  tap(w, 'right');
+  check('안으로 들어왔다', w.menu.sub, 'size');
+  check('고를 것들', labels(w), ['화면 전체', '3/4', '절반', '작게', '아주 작게']);
+  check('지금 것에 점', menuItems(w).map((i) => !!i.mark), [true, false, false, false, false]);
+
+  tap(w, 'duck'); tap(w, 'duck');                    // 「절반」
+  tap(w, 'right');
+  check('셸로 넘어간 것', w.picked, ['size:0.55']);
+  check('고르고도 메뉴는 열려 있다', [w.menu.open, w.menu.sub], [true, 'size']);
+
+  // 셸이 실제로 창을 줄이고 알려 준다
+  w.size = 0.55;
+  tap(w, 'left');
+  check('줄이고 나면 「창 위치」가 생긴다', labels(w).includes('창 위치'), true);
+  while (menuItems(w)[w.menu.index].id !== 'spot') tap(w, 'duck');
+  tap(w, 'right');
+  check('놓을 자리', labels(w), ['정중앙', '왼쪽 위', '오른쪽 위', '왼쪽 아래', '오른쪽 아래']);
+  tap(w, 'duck'); tap(w, 'duck');                    // 「오른쪽 위」
+  tap(w, 'right');
+  check('셸로 넘어간 것', w.picked, ['size:0.55', 'spot:tr']);
+}
+
+say('창 크기 — 판을 다시 시작해도 남는다');
+{
+  const w = make([]);
+  w.size = 0.4; w.spot = 'br';
+  restart(w);
+  check('크기', w.size, 0.4);
+  check('자리', w.spot, 'br');
 }
 
 say('메뉴 — 화면 고르기로 들어가고 나오기');

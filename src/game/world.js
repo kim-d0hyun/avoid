@@ -105,6 +105,9 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
     pick: 0,
     /// 창 투명도. 셸이 정하고 알려 준다 — 실제로 흐리게 만드는 건 창 쪽 일이다.
     fade: 1,
+    /// 창이 화면에서 차지하는 비율과, 작게 띄웠을 때 놓인 자리. 이것도 셸이 정한다.
+    size: 1,
+    spot: 'c',
     /// 편이 있는 게임에서 내가 선 편 (0/1). 판이 바뀌어도 남는다.
     team: undefined,
     input: { left: false, right: false, jump: false, duck: false },
@@ -165,11 +168,14 @@ export function restart(world) {
   // 누르고 있는 키와 기록 콜백은 그대로 넘긴다 — 방향키를 잡은 채 다시 시작하면
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
-          mp, menu, screens, gameId, pick, fade, team, debug, log, send } = world;
+          mp, menu, screens, gameId, pick, fade, size, spot, team, debug, log, send } = world;
   Object.assign(world, createWorld(best, gameId),
                 { w, h, input, onRecord, onDeath, onMenu, onGameOver,
-                  mp, menu, screens, pick, fade, team, debug, log, send });
+                  mp, menu, screens, pick, fade, size, spot, team, debug, log, send });
   world.state = 'ready';
+  // 혼자 할 때도 우승 표시가 남는다 (배구). 안 지우면 세리머니가 다음 판까지 따라와서
+  // 사람들이 화면에서 사라진 채로 판이 돈다.
+  if (!mp.on) { mp.winner = null; mp.results = null; }
   resize(world, w, h);
   spread(world);
   gameOf(world).begin?.(world);
@@ -389,6 +395,29 @@ export function canRestart(world, minimum = 0.45) {
 /// 40% 밑으로는 안 내려간다 — 안 보이는 게임은 숨긴 것과 같고, 그건 ⌥H 가 할 일이다.
 export const FADES = [1, 0.85, 0.7, 0.55, 0.4];
 
+/// 고를 수 있는 창 크기. 화면에서 차지하는 비율이다. 셸(main.swift)의 목록과 같아야 한다.
+///
+/// 화면 전체가 부담스럽다는 사람이 있다. 판은 그대로 돌고 **창만 작아진다** —
+/// 안에서 보는 그림은 같고 크기만 준다.
+export const SIZES = [[1, '화면 전체'], [0.75, '3/4'], [0.55, '절반'], [0.4, '작게'], [0.28, '아주 작게']];
+
+/// 작게 띄운 창을 화면 어디에 둘지.
+export const SPOTS = [['c', '정중앙'], ['tl', '왼쪽 위'], ['tr', '오른쪽 위'],
+                      ['bl', '왼쪽 아래'], ['br', '오른쪽 아래']];
+
+const sizeName = (value) => (SIZES.find(([v]) => Math.abs(v - value) < 0.02)?.[1] ?? '화면 전체');
+const spotName = (id) => (SPOTS.find(([v]) => v === id)?.[1] ?? '정중앙');
+
+/// 창 크기·창 위치 두 줄. 메뉴 첫 화면 어디에서나 같은 모양으로 붙는다.
+function layoutItems(world) {
+  const rows = [{ id: 'size', label: '창 크기', note: sizeName(world.size ?? 1) }];
+  // 화면 전체면 놓을 자리가 하나뿐이다. 고를 게 없는 줄은 안 세운다.
+  if ((world.size ?? 1) < 0.999) {
+    rows.push({ id: 'spot', label: '창 위치', note: spotName(world.spot ?? 'c') });
+  }
+  return rows;
+}
+
 /// 메뉴에 세울 것들. 상황에 따라 달라지므로 그릴 때와 고를 때가 같은 함수를 본다.
 export function menuItems(world) {
   if (world.menu.confirmQuit) {
@@ -402,6 +431,21 @@ export function menuItems(world) {
       id: `team:${side}`, label: `${name} 편`,
       note: side === (world.team ?? 0) ? '지금 여기' : '이쪽으로',
       mark: side === (world.team ?? 0),
+    }));
+  }
+  if (world.menu.sub === 'size') {
+    return SIZES.map(([value, name]) => ({
+      id: `size:${value}`,
+      label: name,
+      note: value === 1 ? '지금까지와 같다' : `${Math.round(value * 100)}%`,
+      mark: Math.abs(value - (world.size ?? 1)) < 0.02,
+    }));
+  }
+  if (world.menu.sub === 'spot') {
+    return SPOTS.map(([id, name]) => ({
+      id: `spot:${id}`,
+      label: name,
+      mark: id === (world.spot ?? 'c'),
     }));
   }
   if (world.menu.sub === 'fade') {
@@ -430,6 +474,7 @@ export function menuItems(world) {
       const here = world.screens.find((screen) => screen.current);
       picking.push({ id: 'screens', label: '띄울 화면 바꾸기', note: here?.name ?? '' });
     }
+    picking.push(...layoutItems(world));
     picking.push({ id: 'hide', label: '화면 숨기기' });
     picking.push({ id: 'quit', label: '게임 끝내기' });
     return picking;
@@ -462,6 +507,7 @@ export function menuItems(world) {
     const here = world.screens.find((screen) => screen.current);
     items.push({ id: 'screens', label: '띄울 화면 바꾸기', note: here?.name ?? '' });
   }
+  items.push(...layoutItems(world));
   items.push({ id: 'hide', label: '화면 숨기기' });
   items.push({ id: 'quit', label: '게임 끝내기' });
   return items;
@@ -506,6 +552,14 @@ function chooseMenu(world) {
       world.menu.sub = 'fade';
       world.menu.index = Math.max(0, FADES.findIndex((f) => Math.abs(f - world.fade) < 0.02));
       return;
+    case 'size':
+      world.menu.sub = 'size';
+      world.menu.index = Math.max(0, SIZES.findIndex(([v]) => Math.abs(v - (world.size ?? 1)) < 0.02));
+      return;
+    case 'spot':
+      world.menu.sub = 'spot';
+      world.menu.index = Math.max(0, SPOTS.findIndex(([v]) => v === (world.spot ?? 'c')));
+      return;
     case 'again':
       openMenu(world, false);
       world.onMenu?.('again');
@@ -515,6 +569,7 @@ function chooseMenu(world) {
       // 아니다 싶으면 바로 다른 걸 고를 수 있어야 한다.
       // 화면과 투명도는 고르고도 메뉴를 열어 둔다. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다.
       if (picked.id.startsWith('screen:') || picked.id.startsWith('fade:')
+          || picked.id.startsWith('size:') || picked.id.startsWith('spot:')
           || picked.id.startsWith('team:')) {
         world.onMenu?.(picked.id);
         return;

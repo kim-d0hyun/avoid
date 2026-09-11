@@ -48,6 +48,15 @@ world.onMenu = (action) => {
     shell.setFade?.(Number(action.slice(5)));
     return;
   }
+  // 창 크기와 자리도 창이 하는 일이다. 판은 그대로 돌고 창만 작아진다.
+  if (action.startsWith('size:')) {
+    shell.setSize?.(Number(action.slice(5)));
+    return;
+  }
+  if (action.startsWith('spot:')) {
+    shell.setSpot?.(action.slice(5));
+    return;
+  }
   if (action.startsWith('team:')) {
     const game = gameOf(world);
     game.swap?.(world, shell, Number(action.slice(5)));
@@ -65,12 +74,15 @@ world.onGameOver = (result) => {
     if (world.mp.role !== 'host') return;   // 끝났다고 정하는 건 방장이다
     endRound(world, shell, {
       // 이름이 없으면 이긴 사람 없이 끝난 것이다 (한쪽 편이 비어서 접은 판).
-      winner: result.name ? { id: -1, name: result.name } : null,
+      // 번호에 편을 실어 보낸다 (-1 빨강, -2 파랑) — 받는 쪽이 옷 색을 알아야 한다.
+      winner: result.name ? { id: -1 - (result.side ?? 0), name: result.name } : null,
       results: result.rows ?? [],
     });
   } else {
     world.state = 'over';
     world.overFor = 0;
+    // 혼자여도 이긴 편은 이긴 편이다. 세리머니와 우승 표시는 이 값을 보고 뜬다.
+    world.mp.winner = result.name ? { id: -1 - (result.side ?? 0), name: result.name } : null;
   }
 };
 
@@ -80,6 +92,9 @@ world.send = (message) => shell.net.send(message);
 world.log = (text) => shell.log(text);
 world.fade = shell.fade ?? 1;
 window.__ddongFade = (value) => { world.fade = value; };
+world.size = shell.size ?? 1;
+world.spot = shell.spot ?? 'c';
+shell.onLayout?.((size, spot) => { world.size = size; world.spot = spot; });
 world.screens = shell.screens ?? [];
 shell.onScreens?.((list) => { world.screens = Array.isArray(list) ? list : []; });
 
@@ -413,12 +428,21 @@ function render(time) {
     if (world.menu.open) drawMenu(ctx, hud);
     return;
   }
-  drawClock(ctx, hud);
+  // 시계는 「오래 버티기」 게임의 물건이다. 배구처럼 점수로 끝나는 판에서는 안 띄운다.
+  const game = gameOf(world);
+  if (!game.noClock) drawClock(ctx, hud);
   if (world.mp.on) drawRoom(ctx, hud);
   if (world.state === 'ready') drawIntro(ctx, hud, time);
   if (world.state === 'over') {
-    world.mp.on && world.mp.results ? drawResults(ctx, hud) : drawStamp(ctx, hud);
-    if (world.mp.winner) drawVictory(ctx, hud, time, shirtColor(world.mp.winner.id));
+    // 순위표를 안 쓰는 게임은 이긴 편만 남긴다. 그때는 「다음 판」 안내도 우승 쪽이 갖는다.
+    if (!game.noResults) {
+      world.mp.on && world.mp.results ? drawResults(ctx, hud) : drawStamp(ctx, hud);
+    }
+    if (world.mp.winner) {
+      const id = world.mp.winner.id;
+      drawVictory(ctx, hud, time, game.shirt?.(world, world.w / 2, id) ?? shirtColor(id),
+                  !!game.noResults);
+    }
   }
   if (world.frozen > 0) drawFreeze(ctx, hud);
   if (world.menu.open) drawMenu(ctx, hud);

@@ -13,6 +13,8 @@ const TORSO = 25, NECK = 7, HEAD_R = 9.5;
 const HIP_Y = -(THIGH + SHIN + 1);
 /// 발끝에서 머리 꼭대기까지. 판정 상자가 이 값을 쓴다.
 export const BODY_H = -HIP_Y + TORSO + NECK + HEAD_R * 2;
+/// 내리꽂는 팔이 도는 시간. 게임 쪽(배구)이 p.swing 에 이 값을 넣으면 그 자세가 나온다.
+export const SWING_TIME = 0.3;
 
 function limb(ox, oy, a1, l1, a2, l2) {
   const jx = ox + Math.sin(a1) * l1;
@@ -49,6 +51,23 @@ function pose(p, time) {
       hipY: HIP_Y, lean: 0.02, bob: sway * 0.6,
       legs: [[-0.16, -0.18], [0.17, 0.19]],
       arms: [[1.15, 2.35], [-1.15, -2.35]],   // 팔짱
+    };
+  }
+
+  // **내리꽂기.** 팔을 머리 뒤로 젖혔다가 공을 때려 내린다.
+  //
+  // 공이 빨라지는 것만으로는 「세게 쳤다」가 안 읽힌다. 치는 사람이 실제로 내려치는
+  // 동작을 해야 맞은 공이 세 보인다 — 0.3초 동안 팔이 위에서 아래로 돈다.
+  if (p.swing > 0) {
+    const t = Math.max(0, Math.min(1, p.swing / SWING_TIME));
+    const e = 1 - t * t;                     // 0 때린 순간 → 1 다 돌아간 뒤
+    const a = -1.65 + e * 2.95;              // 머리 뒤 → 앞 아래
+    return {
+      hipY: HIP_Y, lean: 0.10 + e * 0.46, bob: 0,
+      // 다리는 접어 올린다. 공중에서 상체만 도는 그림은 인형처럼 보인다.
+      legs: [[-0.62, -1.30], [0.40, 0.74]],
+      // 때리는 팔 하나가 크게 돌고, 반대 팔은 그 반동으로 조금만 따라간다.
+      arms: [[a, a + 0.34], [-0.5 - e * 0.9, -0.9 - e * 1.2]],
     };
   }
 

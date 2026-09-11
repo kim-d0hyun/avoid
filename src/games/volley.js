@@ -13,7 +13,7 @@
 // 속도로 사이를 메워 그리고, 어긋난 만큼은 사람한테 쓰는 것과 같은 방식으로 녹인다.
 
 import { INK, RED, PENCIL, stroke, circle, text } from '../draw/ink.js';
-import { BODY_H } from '../draw/stickman.js';
+import { BODY_H, SWING_TIME } from '../draw/stickman.js';
 import { startSlide, SLIDE_COOL } from '../game/world.js';
 
 // 편은 옷 색으로 가른다. 번호가 아니라 **보이는 것**으로 갈라야 한 눈에 읽힌다.
@@ -39,16 +39,18 @@ const HAN = '"Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 // 내가 처음에 만든 것은 맞을 때마다 정해진 속도로 리셋해서 영원히 같은 속도로 떠 있었다 —
 // 그게 「느리다」의 정체였다.
 const BALL_R = 20;
-// 원판 값의 0.82배로 낮춰 둔다. 원판은 432px 코트를 두 사람이 지키지만 여기는 1512px 을
+// 원판 값의 0.66배로 낮춰 둔다. 원판은 432px 코트를 두 사람이 지키지만 여기는 1512px 을
 // 사람이 걸어서 지킨다 — 그대로 쓰면 손이 못 따라간다. 비율은 그대로라 느낌은 같다.
-const SLOW = 0.72;
+// 시간을 통째로 늦추는 값이라 중력·속도·강타가 한꺼번에 같은 비율로 준다.
+const SLOW = 0.66;
 const GRAVITY = 2180 * SLOW * SLOW;   // 중력은 시간의 제곱이라 두 번 곱한다
 const MIN_UP = 1310 * SLOW;  // 맞으면 적어도 이만큼은 위로. 그보다 빨랐으면 그 속도 그대로
 const OFF_CENTER = 44 * SLOW;     // 몸 가운데에서 벗어난 만큼 옆으로 — 대각선은 여기서 나온다
 const CARRY = 0.45;         // 치는 사람이 달리던 속도가 실린다
 const SMASH_SIDE = 1760 * SLOW;   // 방향키를 누르고 때리면
 const SMASH_FLAT = 880 * SLOW;    // 안 누르고 때리면 (수평 미사일)
-const SMASH_DOWN = 2.0;     // ⌥↓ 를 누르고 때리면 아래로 이 배수
+/// 내리꽂는 세로 속도. **손보다 아래에 있는 공을 때렸을 때** 여기까지 간다.
+const SMASH_DIVE = 2350 * SLOW;     // ⌥↓ 를 누르고 때리면 아래로 이 배수
 const SMASH_UP = 1.6;       // ⌥↑ 를 누르고 때리면 위로 (넘겨 주기)
 const SPIKE_REACH = 88;     // 손이 닿는 거리
 const MAX_SPEED = 2600 * SLOW;
@@ -58,7 +60,10 @@ const WALL_KEEP = 0.98;     // 옆벽·천장은 거의 손실 없이 반사한�
 const CEIL = 54;
 // 위로 이보다 빠르게는 안 보낸다. 중력 1130 에서 1250 이면 690픽셀쯤 오르는데,
 // 그게 화면의 4분의 3이다 — **웬만하면 천장까지 안 간다.**
-const MAX_UP = 1250;
+const MAX_UP = 1150;
+/// 공기 저항 계수 (1/픽셀). 초당 깎이는 비율이 DRAG × 속도다 —
+/// 1800짜리 강타는 1초에 3할쯤 잦아들고, 500짜리 토스는 1할이 채 안 된다.
+const DRAG = 0.00017;
 // 바닥에서 네트 꼭대기까지.
 //
 // 사람 키가 60, 점프해서 머리가 125까지 간다. 95 로 두면 **서서는 못 넘기고 뛰면 넘긴다** —
@@ -189,19 +194,56 @@ function applyHit(world, at, want) {
   if (at.air <= 12) {
     // 토스. 위로 올려 주고 옆으로는 살짝만.
     ball.vx = clamp(dx * OFF_CENTER * 0.6 + held * 240, MAX_SPEED);
-    ball.vy = -Math.min(MAX_UP, Math.max(Math.abs(ball.vy), MIN_UP) * 0.95);
+    // 받아 올릴 때마다 조금씩 죽인다. 1에 가까우면 랠리가 돌수록 공이 빨라져서
+    // 나중에는 아무도 못 받는다 — 원판도 여기서 조금 깎는다.
+    ball.vy = -Math.min(MAX_UP, Math.max(Math.abs(ball.vy), MIN_UP) * 0.90);
   } else {
+    // 공중 강타. **손보다 공이 아래에 있으면 꽂는다.**
+    //
+    // 실제 배구의 스파이크가 그렇다 — 공보다 높이 떠야 내리칠 수 있고, 밑에서 올려치면
+    // 아무리 세게 쳐도 넘겨 주는 공이 된다. 그래서 이 게임의 스파이크는 외우는 키가 아니라
+    // **뜨는 때를 맞추는 일**이 된다: 공이 떨어지기를 기다렸다가 손 높이 밑에서 때린다.
+    //
+    //   공이 손보다 아래  →  내리꽂기 (깊을수록 가파르다)
+    //   공이 손 높이      →  수평 미사일 (원판의 그 장면)
+    //   ⌥↓               →  무조건 최대로 꽂는다
+    //   ⌥↑               →  높이 넘겨 주기
+    const hand = at.groundY - at.air - BODY_H * 0.86;
+    const under = (ball.y - hand) / (BODY_H * 0.55);
+    const dive = want.down ? 1 : want.up ? 0 : Math.max(0, Math.min(1, under));
+    // 높이 뜰수록 세다. 뛰자마자 치는 것과 꼭대기에서 치는 것이 같으면 점프에 뜻이 없다.
+    const lift = 0.78 + 0.34 * Math.min(1, at.air / 120);
     const side = held !== 0 ? held : away;
-    ball.vx = clamp(side * (held !== 0 ? SMASH_SIDE : SMASH_FLAT), MAX_SPEED);
-    if (want.down) ball.vy = Math.max(Math.abs(ball.vy), MIN_UP * 0.7) * SMASH_DOWN;
+    // 가파르게 꽂을수록 가로로는 덜 간다. 힘의 총량은 그대로 두고 방향만 아래로 돌린다.
+    ball.vx = clamp(side * (held !== 0 ? SMASH_SIDE : SMASH_FLAT) * lift * (1 - 0.32 * dive),
+                    MAX_SPEED);
+    if (dive > 0.02) ball.vy = clamp(SMASH_DIVE * dive * lift, MAX_SPEED);
     else if (want.up) ball.vy = -Math.min(MAX_UP, Math.abs(ball.vy) * SMASH_UP);
     else ball.vy = 0;                              // 수평 미사일
     ball.vy = clamp(ball.vy, MAX_SPEED);
-    ball.smash = 1;
+    // 번쩍임 세기. 가파르게 꽂을수록 크게 터진다.
+    ball.smash = Math.max(0.4, dive);
   }
   ball.spinV = clamp(ball.vx * 0.006, 12);
   ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y;
+  // 손님 화면에도 같은 번쩍임과 같은 내리치는 팔이 보여야 한다. 다음 꾸러미에 실어 보낸다.
+  b.flash = [Math.round(ball.x), Math.round(ball.y), Math.round((ball.smash ?? 0) * 100) / 100];
   return true;
+}
+
+/// 때린 사람에게 내리치는 팔을 잠깐 남긴다. 꾸러미에는 「어디서 터졌나」만 오므로
+/// 그 자리에 떠 있던 사람을 찾아 붙인다 — 번호를 따로 실어 보낼 만큼 중요한 값이 아니다.
+function markSwing(world, x, y) {
+  let best = null;
+  let near = 130 * 130;
+  for (const p of [world.player, ...world.mp.others.values()]) {
+    if (p.dead || (p.air ?? 0) <= 8) continue;
+    const dx = p.x - x;
+    const dy = (p.groundY - p.air - BODY_H * 0.7) - y;
+    const gap = dx * dx + dy * dy;
+    if (gap < near) { near = gap; best = p; }
+  }
+  if (best) best.swing = SWING_TIME;
 }
 
 /// ⌥Space — 때리기.
@@ -242,7 +284,11 @@ export function spike(world) {
   // 손님은 방장에게 부탁한다. 내 화면에서도 바로 반응은 보여 주되(손맛),
   // 진짜로 정하는 건 방장이다 — 곧 오는 꾸러미가 이 값을 덮는다.
   if (world.mp.role === 'guest') world.send?.({ t: 'gm', k: 'hit', at, want });
-  return applyHit(world, at, want);
+  const hit = applyHit(world, at, want);
+  // 손님은 공을 못 건드리지만 **팔은 바로 돈다.** 내 손이 0.1초 늦게 움직이면
+  // 내가 친 게 아니라 화면이 친 것처럼 느껴진다.
+  if (hit && p.air > 0) p.swing = SWING_TIME;
+  return hit;
 }
 
 /// 지나온 자리를 몇 개 남긴다. 빠른 공이 빨라 보이려면 잔상이 있어야 한다 —
@@ -269,10 +315,14 @@ function report(world, b, dt) {
     + ` v=${Math.round(Math.hypot(b.ball.vx, b.ball.vy))} 점수=${b.score.join(':')}`);
 }
 
-/// 맞은 자국·강타 번쩍임이 시간에 따라 사그라든다.
-function ball0(b, dt) {
+/// 맞은 자국·강타 번쩍임·내리치는 팔이 시간에 따라 사그라든다.
+function ball0(world, b, dt) {
   b.ball.hit = Math.max(0, (b.ball.hit ?? 0) - dt * 4);
   b.ball.smash = Math.max(0, (b.ball.smash ?? 0) - dt * 2.2);
+  // 팔 도는 시간은 world 가 모르는 값이라 여기서 줄인다.
+  for (const p of [world.player, ...world.mp.others.values()]) {
+    if (p.swing > 0) p.swing = Math.max(0, p.swing - dt);
+  }
 }
 
 /// 머리 위 게이지. **비었다가 쭉 차면 다시 던질 수 있다.**
@@ -328,8 +378,8 @@ export default {
   line: '빨강 편 대 파랑 편. 우리 쪽에 떨어뜨리면 상대 점수. 다섯 점 먼저 (혼자면 연습).',
   keys: [['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
          ['⌥ Space', '때리기 — 뛰어서 누르면 강타'],
-         ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↓', '내리꽂기'],
-         ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 를 잡고 누르면 그쪽으로 (머리 위 막대가 차면 또)'],
+         ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↓', '내리꽂기 (공이 손 밑이면 그냥도)'],
+         ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 쪽으로, 머리 위 막대가 차면'],
          ['⌥ M', '편 바꾸기']],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
@@ -344,7 +394,14 @@ export default {
   /// 공이 빈 코트에 떨어지면 그냥 점수만 쌓인다.
   blocked: (world) => emptySide(world),
   /// 옷 색은 번호가 아니라 **선 자리**로 정한다. 왼쪽은 빨강, 오른쪽은 파랑.
-  shirt: (world, x) => TEAM_INK[sideOfX(world, x)],
+  /// 만세 부르는 우승 인형은 번호가 음수로 온다 (-1 빨강, -2 파랑) — 그건 자리로 못 정한다.
+  shirt: (world, x, id) => TEAM_INK[id < 0 ? -1 - id : sideOfX(world, x)],
+
+  /// **시계를 안 띄운다.** 배구는 오래 버티는 게임이 아니다. 점수는 네트 위에 있고,
+  /// 시간은 아무 뜻이 없는데 화면 왼쪽 위를 제일 큰 글씨로 차지하고 있었다.
+  noClock: true,
+  /// **순위표도 안 띄운다.** 끝나면 이긴 편만 남는다 — 만세 부르는 인형과 편 이름.
+  noResults: true,
   /// ⌥Space 를 이 게임이 가져간다.
   action: (world) => spike(world),
 
@@ -420,14 +477,14 @@ export default {
       b.ball.x = b.baseX + b.baseVX * b.age + b.errorX;
       b.ball.y = b.baseY + b.baseVY * b.age + 0.5 * GRAVITY * b.age * b.age + b.errorY;
       b.ball.spin += b.ball.spinV * dt;
-      ball0(b, dt);
+      ball0(world, b, dt);
       trail(b, dt);
       report(world, b, dt);
       return;
     }
 
     // 자국은 서브를 기다리는 동안에도 사그라든다. 안 그러면 그 자리에 얼어붙는다.
-    ball0(b, dt);
+    ball0(world, b, dt);
     // **판이 도는 중에 한쪽이 비면 거기서 끊는다.** 안 그러면 빈 코트에 공이 떨어지며
     // 혼자 남은 편이 다섯 점을 채운다 — 이긴 것도 아니고 진 것도 아닌 판이 된다.
     b.emptyFor = emptySide(world) ? (b.emptyFor ?? 0) + dt : 0;
@@ -442,6 +499,19 @@ export default {
 
     const ball = b.ball;
     ball.vy += GRAVITY * dt;
+
+    // 공기 저항. **빠를수록 많이 깎인다** (제곱 저항).
+    //
+    // 이게 없으면 한 번 세게 때린 공이 그 속도를 영영 갖고 다닌다. 벽과 사람 사이를
+    // 같은 세기로 왕복하는 게 「너무 튄다」로 읽힌다. 살살 올린 공은 거의 그대로고,
+    // 미사일처럼 날아간 공만 눈에 띄게 잦아든다 — 실제 공이 그렇다.
+    const speed = Math.hypot(ball.vx, ball.vy);
+    if (speed > 0) {
+      const lose = Math.min(0.5, DRAG * speed * dt);
+      ball.vx -= ball.vx * lose;
+      ball.vy -= ball.vy * lose;
+    }
+
     ball.x += ball.vx * dt;
     ball.y += ball.vy * dt;
     ball.spin += ball.spinV * dt;
@@ -601,6 +671,7 @@ export default {
       if (Math.abs(other.x - msg.at.x) > 120) { world.debug && world.log?.(`손님타격 무시(자리차이) ${from}`); return; }
       const ok = applyHit(world, { x: other.x, air: other.air, groundY: world.groundY,
                                    side: msg.at.side === 1 ? 1 : 0 }, msg.want);
+      if (ok && other.air > 0) other.swing = SWING_TIME;
       world.debug && world.log?.(`손님타격 ${from} ${ok ? '먹힘' : '안닿음'}`);
       return;
     }
@@ -618,6 +689,8 @@ export default {
   pack(world) {
     const b = world.bag;
     const sides = rosterSides(world);
+    const flash = b.flash;
+    b.flash = null;                              // 한 번만 보낸다
     return {
       tm: [...sides.entries()],
       b: [Math.round(b.ball.x * 10) / 10, Math.round(b.ball.y * 10) / 10,
@@ -625,11 +698,19 @@ export default {
           Math.round(b.ball.spin * 100) / 100, Math.round(b.ball.spinV * 100) / 100],
       s: b.score,
       w: Math.round(b.wait * 100) / 100,
+      // 방금 터진 타격. 있을 때만 싣고 바로 비운다.
+      f: flash ?? undefined,
     };
   },
 
   unpack(world, data) {
     const b = world.bag;
+    // 방장 쪽에서 누가 때렸다. 번쩍임과 내리치는 팔을 같이 띄운다.
+    if (Array.isArray(data?.f) && data.f.length === 3 && data.f.every(Number.isFinite)) {
+      const [hx, hy, hard] = data.f;
+      b.ball.hit = 1; b.ball.hitX = hx; b.ball.hitY = hy; b.ball.smash = hard;
+      markSwing(world, hx, hy);
+    }
     // 방장이 나눠 준 편 명단. 내 편이 여기 적힌 대로 바뀐다.
     if (Array.isArray(data?.tm)) {
       b.sides = new Map(data.tm.filter((r) => Array.isArray(r) && r.length === 2));

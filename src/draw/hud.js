@@ -58,6 +58,20 @@ export function drawClock(ctx, world) {
   text(ctx, best, x + 3, 106, { font: `600 15px ${HAN}`, color: PENCIL, halo: 0 });
 }
 
+/// 종이 한 장을 화면 안에 넣는다.
+///
+/// 창을 작게 띄울 수 있게 되면서 **카드가 화면보다 커지는 일**이 생겼다. 30% 로 줄인 창은
+/// 450×280 밖에 안 되는데 메뉴 종이는 300×470 이다. 줄을 빼거나 글자만 줄이는 대신
+/// 통째로 줄인다 — 비율이 그대로라 「작게 띄운 같은 화면」으로 읽힌다.
+/// 반드시 save/restore 사이에서 부른다.
+function fitCenter(ctx, world, w, h) {
+  const fit = Math.min(1, (world.w - 20) / w, (world.h - 20) / h);
+  if (fit >= 1) return;
+  ctx.translate(world.w / 2, world.h / 2);
+  ctx.scale(fit, fit);
+  ctx.translate(-world.w / 2, -world.h / 2);
+}
+
 export function drawIntro(ctx, world, time) {
   const x = 72;
   const y = world.groundY - 196;
@@ -70,9 +84,30 @@ export function drawIntro(ctx, world, time) {
   ctx.font = `600 16px ${HAN}`;
   const widest = rows.reduce((most, [, label]) => Math.max(most, ctx.measureText(label).width), 0);
   ctx.font = `700 16px ${HAN}`;
-  paperScrap(ctx, x - 22, y - 30,
-             Math.max(232, ctx.measureText(hint).width + 44, widest + 130),
-             rows.length * 28 + 56, 7);
+  const cw = Math.max(232, ctx.measureText(hint).width + 44, widest + 130);
+  const ch = rows.length * 28 + 56;
+  const left = x - 22;
+  // **창을 작게 띄우면 이 종이가 화면을 넘어간다.** 배구는 줄이 아홉이라 300픽셀이 넘는데,
+  // 창을 40% 로 줄이면 화면 세로가 그만하다. 두 가지로 넣는다:
+  //
+  //   1) 밑으로 넘치면 위로 끌어올린다. 바닥에 세우는 게 원칙이지만 화면 밖보다는 낫다
+  //   2) 그러고도 화면의 3분의 2를 넘으면 통째로 줄인다 — 안내가 판을 덮으면 안 된다
+  //
+  // 글자만 줄이거나 줄을 빼지 않는다. 종이와 여백이 따로 놀고, 모르는 키가 생긴다.
+  const want = y - 30;
+  const top = Math.min(want, world.h - 12 - ch);
+  const bottom = top + ch;
+  const fit = Math.min(1, (world.w - left - 16) / cw, (world.h * 0.66) / ch);
+  ctx.save();
+  ctx.translate(0, top - want);
+  if (fit < 1) {
+    // 왼쪽 아래를 붙잡고 줄인다. 바닥에 서 있는 종이라 밑변이 움직이면 떠 보인다.
+    ctx.translate(left, bottom);
+    ctx.scale(fit, fit);
+    ctx.translate(-left, -bottom);
+  }
+
+  paperScrap(ctx, left, y - 30, cw, ch, 7);
 
   rows.forEach(([key, label], i) => {
     const ly = y + i * 28;
@@ -84,6 +119,7 @@ export function drawIntro(ctx, world, time) {
   const pulse = 0.72 + 0.28 * Math.sin(time * 3.4);
   text(ctx, hint, x, y + rows.length * 28 + 14,
        { font: `700 16px ${HAN}`, color: RED, alpha: pulse, halo: 0 });
+  ctx.restore();
 }
 
 /// 켜면 제일 먼저 나오는 화면. 무슨 게임을 할지 고른다.
@@ -102,6 +138,8 @@ export function drawPick(ctx, world, time) {
   ctx.fillStyle = 'rgba(20, 18, 16, 0.16)';
   ctx.fillRect(0, 0, world.w, world.h);
 
+  ctx.save();
+  fitCenter(ctx, world, w, h);
   paperScrap(ctx, x, y, w, h, 5);
   stroke(ctx, [[x + 8, y + 8], [x + w - 8, y + 8],
                [x + w - 8, y + h - 8], [x + 8, y + h - 8]],
@@ -136,6 +174,7 @@ export function drawPick(ctx, world, time) {
   text(ctx, '⌥↑↓ 고르기   ⌥→ 시작', mid, y + h - 22,
        { font: `700 11.5px ${KEYS}`, color: RED, align: 'center', halo: 0,
          alpha: 0.72 + 0.28 * Math.sin(time * 3.4) });
+  ctx.restore();
 }
 
 /// 제목 밑 낙서. 떨어지는 똥 하나와 통통 튀는 공 하나 — 있는 게임 둘을 그린 것이다.
@@ -348,6 +387,8 @@ export function drawMenu(ctx, world) {
   ctx.fillStyle = 'rgba(20, 18, 16, 0.28)';
   ctx.fillRect(0, 0, world.w, world.h);
 
+  ctx.save();
+  fitCenter(ctx, world, w, h + 80);
   paperScrap(ctx, x, y, w, h, 17);
   stroke(ctx, [[x + 8, y + 8], [x + w - 8, y + 8], [x + w - 8, y + h - 8], [x + 8, y + h - 8]],
          { width: 2, color: INK, seed: 19, amp: 1.4, close: true, sharp: true, halo: false });
@@ -355,6 +396,8 @@ export function drawMenu(ctx, world) {
   const title = world.menu.confirmQuit ? '정말 끝낼까?'
     : picking ? '어느 화면에 띄울까?'
     : world.menu.sub === 'fade' ? '얼마나 흐리게?'
+    : world.menu.sub === 'size' ? '창을 얼마나 크게?'
+    : world.menu.sub === 'spot' ? '창을 어디에?'
     : '몰겜';
   text(ctx, title, x + 26, y + 40, { font: `800 19px ${HAN}`, color: INK, halo: 0 });
 
@@ -392,13 +435,14 @@ export function drawMenu(ctx, world) {
   // 화면을 고르는 동안은 메뉴가 안 닫히니 ⌥← 가 「닫기」가 아니라 「뒤로」다.
   text(ctx, world.menu.sub ? '⌥↑↓ 고르기   ⌥→ 바꾸기   ⌥← 뒤로' : '⌥↑↓ 고르기   ⌥→ 확인   ⌥← 닫기',
        x + 26, fy, { font: `600 12px ${KEYS}`, color: PENCIL, halo: 0 });
+  ctx.restore();
 }
 
 // MARK: 우승
 
 /// 이긴 사람이 화면 한가운데서 만세를 부른다. 이 3초가 지나야 다음 판을 시작할 수 있다 —
 /// 이긴 사람이 이겼다는 걸 볼 새도 없이 다음 판이 시작되면 이길 이유가 없어진다.
-export function drawVictory(ctx, world, time, color) {
+export function drawVictory(ctx, world, time, color, alone = false) {
   const winner = world.mp.winner;
   if (!winner) return;
   const rise = Math.min(1, world.overFor / 0.3);
@@ -420,4 +464,14 @@ export function drawVictory(ctx, world, time, color) {
   text(ctx, `${winner.name} 승!`, world.w / 2, world.groundY - 150, {
     font: `800 30px ${HAN}`, color: RED, align: 'center', alpha: rise,
   });
+
+  // 순위표 없이 이 카드만 뜨는 게임(배구)에서는 「다음 판」 안내도 여기가 갖는다.
+  if (!alone) return;
+  const left = VICTORY_SECONDS - world.overFor;
+  if (left > 0) {
+    hint(ctx, `다음 판까지 ${Math.ceil(left)}초`, world.w / 2, world.groundY - 210, 0.85);
+  } else if (canRestart(world)) {
+    hint(ctx, world.mp.on ? '⌥R  누르면 다음 판' : '⌥R  또는  아무 방향키나 눌러 다시',
+         world.w / 2, world.groundY - 210, 0.72 + 0.28 * Math.sin(world.overFor * 3.4));
+  }
 }

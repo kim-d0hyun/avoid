@@ -8,6 +8,7 @@ const w = await import(R + 'game/world.js');
 const { games } = await import(R + 'games/index.js');
 const volley = games.find((g) => g.id === 'volley');
 const { spike, slideGauge } = await import(R + 'games/volley.js');
+const { BODY_H } = await import(R + 'draw/stickman.js');
 
 import { check, say, note, done } from './check.mjs';
 function mk() {
@@ -262,6 +263,72 @@ say('슬라이딩 — 방향키가 방향을 정한다');
   check('공이 왼쪽, 키 안 잡음 → 왼쪽', dive({}, 250), -1);
   check('공이 오른쪽인데 ⌥← 를 잡음 → 왼쪽', dive({ left: true }, 950), -1);
   check('공이 왼쪽인데 ⌥→ 를 잡음 → 오른쪽', dive({ right: true }, 250), 1);
+}
+
+say('스파이크 — 공보다 높이 떠서 때려야 꽂힌다');
+{
+  // 손 높이를 기준으로 공을 놓고 때려 본다. air 는 발이 땅에서 뜬 높이.
+  const hit = ({ air = 100, under = 0, keys = {} }) => {
+    const world = mk(); world.state = 'play'; world.team = 0;
+    const b = world.bag; b.started = true; b.wait = 0;
+    const p = world.player;
+    p.x = 400; p.air = air; p.vy = 0;
+    const hand = p.groundY - p.air - BODY_H * 0.86;
+    b.ball.x = 400; b.ball.y = hand + under; b.ball.vx = 0; b.ball.vy = 120;
+    Object.assign(world.input, { left: false, right: false, jump: false, duck: false }, keys);
+    const ok = spike(world);
+    return { ok, vx: b.ball.vx, vy: b.ball.vy, swing: p.swing ?? 0 };
+  };
+
+  const flat = hit({ under: 0 });
+  check('손 높이의 공은 수평 미사일', Math.abs(flat.vy) < 1, true);
+  check('앞으로 나간다', flat.vx > 300, true);
+
+  const deep = hit({ under: BODY_H * 0.5 });
+  check('손보다 한참 밑이면 아래로 꽂힌다', deep.vy > 900, true);
+  check('꽂을수록 가로는 준다', deep.vx < flat.vx, true);
+  note(`손 높이 vy=${flat.vy.toFixed(0)} · 손 밑 vy=${deep.vy.toFixed(0)}`);
+
+  const half = hit({ under: BODY_H * 0.25 });
+  check('중간 높이는 중간 각도', half.vy > 100 && half.vy < deep.vy, true);
+
+  const low = hit({ air: 20, under: BODY_H * 0.5 });
+  check('낮게 뛰면 덜 세다', low.vy < deep.vy, true);
+
+  const forced = hit({ under: -20, keys: { duck: true } });
+  check('⌥↓ 는 손 위의 공도 꽂는다', forced.vy > 900, true);
+
+  const lob = hit({ under: BODY_H * 0.5, keys: { jump: true } });
+  check('⌥↑ 는 밑에서 때려도 올려 준다', lob.vy < 0, true);
+
+  check('때린 사람 팔이 돈다', deep.swing > 0, true);
+
+  // 땅에서는 토스. 뛰어야 꽂힌다.
+  const toss = hit({ air: 0, under: BODY_H * 0.3 });
+  check('땅에서 때리면 위로 올라간다', toss.vy < 0, true);
+  check('땅에서는 팔이 안 돈다', toss.swing, 0);
+}
+
+say('공기 저항 — 세게 때린 공만 눈에 띄게 잦아든다');
+{
+  // 중력이 안 섞이도록 가로로만 날린다.
+  const glide = (vx) => {
+    const world = mk(); world.state = 'play'; world.team = 0;
+    const b = world.bag; b.started = true; b.wait = 0;
+    b.ball.x = 756; b.ball.y = 300; b.ball.vx = vx; b.ball.vy = 0;
+    for (let i = 0; i < 30; i++) {                 // 0.5초
+      b.ball.y = 300; b.ball.vy = 0;               // 중력은 빼고 본다
+      if (b.ball.x < 120 || b.ball.x > 1390) b.ball.x = 756;   // 벽은 안 건드린다
+      volley.update(world, 1 / 60);
+    }
+    return b.ball.vx / vx;
+  };
+  const fast = glide(1800);
+  const soft = glide(400);
+  check('강타는 반 초에 1할 넘게 준다', fast < 0.88, true);
+  check('살살 올린 공은 거의 그대로', soft > 0.96, true);
+  check('빠를수록 많이 깎인다', fast < soft, true);
+  note(`반 초 뒤 남은 속도 — 강타 ${(fast * 100).toFixed(0)}% · 토스 ${(soft * 100).toFixed(0)}%`);
 }
 
 say('슬라이딩 게이지 — 비었다가 꽉 차면 또 된다');

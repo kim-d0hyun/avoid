@@ -17,7 +17,23 @@ private let bestMsKey = "bestMs"
 private let bestDodgedKey = "bestDodged"
 private let screenKey = "screenNumber"
 private let fadeKey = "windowFade"
+private let sizeKey = "windowSize"
+private let spotKey = "windowSpot"
 private let nameKey = "playerName"
+
+/// 고를 수 있는 창 크기. 화면에서 차지하는 비율이다.
+///
+/// 전체 화면이 부담스럽다는 사람이 있다. 남의 자리에서 보이는 게 싫기도 하고, 화면 전체에
+/// 똥이 쏟아지면 일하던 창을 못 읽기도 한다. 판은 그대로 돌고 **창만 작아진다** —
+/// 안에서 보는 그림은 같고 크기만 준다.
+let windowSizes: [(scale: Double, name: String)] = [
+    (1, "화면 전체"), (0.75, "3/4"), (0.55, "절반"), (0.4, "작게"), (0.28, "아주 작게"),
+]
+
+/// 작게 띄운 창을 화면 어디에 둘지.
+let windowSpots: [(id: String, name: String)] = [
+    ("c", "정중앙"), ("tl", "왼쪽 위"), ("tr", "오른쪽 위"), ("bl", "왼쪽 아래"), ("br", "오른쪽 아래"),
+]
 
 /// 키를 아직 잡고 있는지 확인하는 주기. 상태를 물어보기만 하므로 손쉬운 사용 권한이 필요 없다.
 private let pollInterval: TimeInterval = 1.0 / 60.0
@@ -166,6 +182,38 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             applyFade()
             refreshMenu()
         }
+    }
+
+    /// 창이 화면에서 차지하는 비율. 1 이면 지금까지와 같이 화면 전체다.
+    private var windowSize: Double {
+        get {
+            let saved = UserDefaults.standard.double(forKey: sizeKey)
+            return saved <= 0 ? 1 : min(1, max(0.2, saved))
+        }
+        set {
+            UserDefaults.standard.set(min(1, max(0.2, newValue)), forKey: sizeKey)
+            moveToChosenScreen()
+            pushLayout()
+            refreshMenu()
+        }
+    }
+
+    /// 작게 띄운 창을 화면 어느 구석에 둘지. 화면 전체면 아무 뜻이 없다.
+    private var windowSpot: String {
+        get { UserDefaults.standard.string(forKey: spotKey) ?? "c" }
+        set {
+            guard windowSpots.contains(where: { $0.id == newValue }) else { return }
+            UserDefaults.standard.set(newValue, forKey: spotKey)
+            moveToChosenScreen()
+            pushLayout()
+            refreshMenu()
+        }
+    }
+
+    /// 게임 안 메뉴도 지금 크기·자리를 알아야 표시를 맞춘다.
+    private func pushLayout() {
+        webView?.evaluateJavaScript(
+            "window.__ddongLayout && window.__ddongLayout(\(windowSize), '\(windowSpot)')")
     }
 
     private func applyFade() {
@@ -362,7 +410,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     // MARK: 창
 
     private func buildWindow() {
-        let frame = chosenScreen().visibleFrame // 메뉴 막대와 Dock 자리는 비워 둔다
+        let frame = chosenFrame()
 
         window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isOpaque = false
@@ -427,6 +475,16 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
           setFade: (value) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'fade', value,
           }),
+          // 창 크기와 자리. 화면 전체가 부담스러운 사람이 쓴다.
+          size: \(windowSize),
+          spot: '\(windowSpot)',
+          onLayout: (handler) => { window.__ddongLayout = handler },
+          setSize: (value) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'size', value,
+          }),
+          setSpot: (spot) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'spot', spot,
+          }),
           net: {
             role: 'off', code: null, id: 0, name: '\(Net.escape(playerName))', peers: [],
             // to 를 안 주면 모두에게. 손님이 부르면 어차피 받는 곳은 호스트 하나다.
@@ -470,9 +528,28 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         return NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first ?? NSScreen.main!
     }
 
+    /// 창이 놓일 자리. 화면 전체면 쓸 수 있는 만큼 다 쓰고, 줄였으면 고른 구석에 붙인다.
+    private func chosenFrame() -> NSRect {
+        let area = chosenScreen().visibleFrame   // 메뉴 막대와 Dock 자리는 비워 둔다
+        let scale = windowSize
+        guard scale < 0.999 else { return area }
+        let w = (area.width * scale).rounded()
+        let h = (area.height * scale).rounded()
+        let right = area.maxX - w
+        let top = area.maxY - h
+        switch windowSpot {
+        case "tl": return NSRect(x: area.minX, y: top, width: w, height: h)
+        case "tr": return NSRect(x: right, y: top, width: w, height: h)
+        case "bl": return NSRect(x: area.minX, y: area.minY, width: w, height: h)
+        case "br": return NSRect(x: right, y: area.minY, width: w, height: h)
+        default: return NSRect(x: (area.midX - w / 2).rounded(),
+                               y: (area.midY - h / 2).rounded(), width: w, height: h)
+        }
+    }
+
     private func moveToChosenScreen() {
         let screen = chosenScreen()
-        window.setFrame(screen.visibleFrame, display: true)
+        window.setFrame(chosenFrame(), display: true)
         debugLog("창 → \(screen.localizedName)(#\(screen.number)) "
                + "\(Int(window.frame.width))×\(Int(window.frame.height)) "
                + "@\(Int(window.frame.minX)),\(Int(window.frame.minY)) "
@@ -535,6 +612,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             title.isEnabled = false
             menu.addItem(title)
             menu.addItem(withTitle: "코드 복사", action: #selector(copyCode), keyEquivalent: "").target = self
+            // 회사 와이파이가 단말끼리의 통신을 막으면 코드만으로는 못 찾는다. 그때 쓰는 주소.
+            if let full = codeWithAddress() {
+                menu.addItem(withTitle: "안 잡히면  \(full)  복사",
+                             action: #selector(copyCodeWithAddress), keyEquivalent: "").target = self
+            }
             menu.addItem(withTitle: "방 닫기", action: #selector(leaveRoom), keyEquivalent: "").target = self
         case "guest":
             let title = NSMenuItem(title: "방 \(net.code ?? "") 에 들어가 있음", action: nil, keyEquivalent: "")
@@ -567,6 +649,34 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         fadeParent.submenu = fades
         menu.addItem(.separator())
         menu.addItem(fadeParent)
+
+        // 창 크기. 화면 전체가 부담스러우면 줄인다.
+        let sizes = NSMenu()
+        for step in windowSizes {
+            let item = NSMenuItem(title: step.name, action: #selector(pickSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = Int((step.scale * 100).rounded())
+            item.state = abs(step.scale - windowSize) < 0.02 ? .on : .off
+            sizes.addItem(item)
+        }
+        let sizeParent = NSMenuItem(title: "창 크기", action: nil, keyEquivalent: "")
+        sizeParent.submenu = sizes
+        menu.addItem(sizeParent)
+
+        // 창 위치. 화면 전체일 때는 놓을 자리가 하나뿐이라 안 보여 준다.
+        if windowSize < 0.999 {
+            let spots = NSMenu()
+            for (index, spot) in windowSpots.enumerated() {
+                let item = NSMenuItem(title: spot.name, action: #selector(pickSpot(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = index
+                item.state = spot.id == windowSpot ? .on : .off
+                spots.addItem(item)
+            }
+            let spotParent = NSMenuItem(title: "창 위치", action: nil, keyEquivalent: "")
+            spotParent.submenu = spots
+            menu.addItem(spotParent)
+        }
 
         let choices = screenChoices()
         if choices.count > 1 {
@@ -620,6 +730,15 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
 
     @objc private func pickFade(_ sender: NSMenuItem) {
         windowFade = Double(sender.tag) / 100
+    }
+
+    @objc private func pickSize(_ sender: NSMenuItem) {
+        windowSize = Double(sender.tag) / 100
+    }
+
+    @objc private func pickSpot(_ sender: NSMenuItem) {
+        guard windowSpots.indices.contains(sender.tag) else { return }
+        windowSpot = windowSpots[sender.tag].id
     }
 
     // MARK: 입력
@@ -803,16 +922,27 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         return true
     }
 
+    /// 방을 열고 **아무 창도 띄우지 않는다.**
+    ///
+    /// 코드를 알림창으로 알려 주던 자리다. 게임을 하려고 연 방인데 모달이 화면 한가운데
+    /// 뜨면 그것부터 치워야 한다. 코드는 이미 두 군데에 있다 — 화면 오른쪽 위 종이쪽지와
+    /// 메뉴 막대. 안 잡히는 와이파이용 `코드@아이피` 도 메뉴에 둔다.
     @objc private func makeRoom() {
         guard confirmName() else { return }
-        guard let code = net.host() else { return }
+        guard net.host() != nil else { return }
         refreshMenu()
-        alert(title: "방을 열었다", body: """
-        입장 코드는  \(code)  다.
+    }
 
-        같은 와이파이에 있는 사람이 메뉴 막대 💩 → 코드로 입장 에서 이 네 글자를 치면 들어온다.
-        회사 와이파이가 단말끼리의 통신을 막아 못 찾으면, \(code)@\(localAddress() ?? "내IP") 처럼 쳐서 붙으면 된다.
-        """, copy: code)
+    /// 단말끼리의 통신을 막는 와이파이에서 쓰는 주소. `K3P9@192.168.0.5` 꼴.
+    private func codeWithAddress() -> String? {
+        guard let code = net.code, let ip = localAddress() else { return nil }
+        return "\(code)@\(ip)"
+    }
+
+    @objc private func copyCodeWithAddress() {
+        guard let full = codeWithAddress() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(full, forType: .string)
     }
 
     @objc private func copyCode() {
@@ -919,6 +1049,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             if let number = body["number"] as? Int { chooseScreen(number) }
         case "fade":
             if let value = body["value"] as? Double { windowFade = value }
+        case "size":
+            if let value = body["value"] as? Double { windowSize = value }
+        case "spot":
+            if let spot = body["spot"] as? String { windowSpot = spot }
         case "net":
             // 게임이 짠 꾸러미를 그대로 흘려보낸다. 셸은 안을 열어 보지 않는다.
             if let payload = body["payload"] as? String {
