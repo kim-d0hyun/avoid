@@ -220,6 +220,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         set {
             UserDefaults.standard.set(newValue, forKey: optionHideKey)
             armAt = Date()            // 켜자마자 숨지 않게 유예를 다시 준다
+            sawOption = false         // 메뉴에서 막 켠 참이라 「잡았다 놓기」를 새로 센다
             pushLayout()
             refreshMenu()
         }
@@ -228,6 +229,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     /// 보이기 시작한 때. 이때부터 유예 시간이 지나야 「옵션 떼면 숨기기」가 걸린다 —
     /// ⌥H 로 켜고 손을 떼는 그 0.5초에 바로 숨어 버리면 켤 수가 없다.
     private var armAt = Date()
+    /// 보이기 시작한 뒤로 ⌥ 를 한 번이라도 잡았나. **잡았다 놓아야 그만두는 것**이다 —
+    /// 한 번도 안 잡았으면 아직 시작도 안 한 것이라 숨기지 않는다 (앱을 막 켠 사람).
+    private var sawOption = false
     private let optionGrace: TimeInterval = 1.6
 
     /// 게임 안 메뉴도 지금 크기·자리를 알아야 표시를 맞춘다.
@@ -888,10 +892,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         //
         // 상태를 물어보기만 하는 것이라 손쉬운 사용 권한이 필요 없다. 켠 직후 잠깐은
         // 안 건다 — ⌥H 를 누르고 손을 떼는 사이에 바로 숨으면 켤 수가 없다.
-        if shouldHideOnOption(visible: !isHidden, armed: hideOnOption,
+        let optionDown = NSEvent.modifierFlags.contains(.option)
+        if !isHidden, optionDown { sawOption = true }
+        if shouldHideOnOption(visible: !isHidden, armed: hideOnOption, sawOption: sawOption,
                               shownFor: Date().timeIntervalSince(armAt),
-                              optionDown: NSEvent.modifierFlags.contains(.option),
-                              grace: optionGrace) {
+                              optionDown: optionDown, grace: optionGrace) {
             debugLog("옵션을 뗐다 → 숨김")
             setHidden(true)
         }
@@ -947,6 +952,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             window.orderFrontRegardless()
             registerPlayHotKeys()
             armAt = Date()
+            sawOption = false
         }
         webView.evaluateJavaScript("window.__ddongVisible && window.__ddongVisible(\(!hidden))")
         refreshMenu()
