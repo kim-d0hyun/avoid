@@ -373,9 +373,22 @@ function clip(ctx, value, font, room) {
 }
 
 /// 메뉴 막대 아이콘을 못 찾아도 여기서 끝낼 수 있어야 한다. 그게 이 메뉴의 존재 이유다.
+/// 한 겹 안으로 들어갔을 때의 제목. 무엇을 고르는 중인지 제목이 말해 줘야 한다.
+const MENU_TITLES = {
+  'team': '어느 편으로?',
+  'together': '같이 하기',
+  'together/host': '무슨 게임으로 방을 열까?',
+  'screen': '화면',
+  'screen/size': '창을 얼마나 크게?',
+  'screen/spot': '창을 어디에?',
+  'screen/fade': '얼마나 흐리게?',
+  'screen/where': '어느 화면에 띄울까?',
+};
+
 export function drawMenu(ctx, world) {
   const items = menuItems(world);
-  const picking = world.menu.sub === 'screens' && world.screens.length > 1;
+  const at = world.menu.path.join('/');
+  const picking = at === 'screen/where' && world.screens.length > 1;
   // 모니터 이름은 「DELL U2723QE」처럼 길다. 그 화면에서만 종이를 넓게 쓴다.
   const w = picking ? 400 : 300;
   const foot = world.mp.on ? 52 : 34;
@@ -393,12 +406,7 @@ export function drawMenu(ctx, world) {
   stroke(ctx, [[x + 8, y + 8], [x + w - 8, y + 8], [x + w - 8, y + h - 8], [x + 8, y + h - 8]],
          { width: 2, color: INK, seed: 19, amp: 1.4, close: true, sharp: true, halo: false });
 
-  const title = world.menu.confirmQuit ? '정말 끝낼까?'
-    : picking ? '어느 화면에 띄울까?'
-    : world.menu.sub === 'fade' ? '얼마나 흐리게?'
-    : world.menu.sub === 'size' ? '창을 얼마나 크게?'
-    : world.menu.sub === 'spot' ? '창을 어디에?'
-    : '몰겜';
+  const title = world.menu.confirmQuit ? '정말 끝낼까?' : (MENU_TITLES[at] ?? '몰겜');
   text(ctx, title, x + 26, y + 40, { font: `800 19px ${HAN}`, color: INK, halo: 0 });
 
   items.forEach((item, i) => {
@@ -433,7 +441,7 @@ export function drawMenu(ctx, world) {
     fy += 18;
   }
   // 화면을 고르는 동안은 메뉴가 안 닫히니 ⌥← 가 「닫기」가 아니라 「뒤로」다.
-  text(ctx, world.menu.sub ? '⌥↑↓ 고르기   ⌥→ 바꾸기   ⌥← 뒤로' : '⌥↑↓ 고르기   ⌥→ 확인   ⌥← 닫기',
+  text(ctx, at ? '⌥↑↓ 고르기   ⌥→ 고름   ⌥← 뒤로' : '⌥↑↓ 고르기   ⌥→ 확인   ⌥← 닫기',
        x + 26, fy, { font: `600 12px ${KEYS}`, color: PENCIL, halo: 0 });
   ctx.restore();
 }

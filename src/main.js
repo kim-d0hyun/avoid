@@ -4,7 +4,9 @@ import { boil, shirtColor } from './draw/ink.js';
 import { drawStickman } from './draw/stickman.js';
 import { makeGround, drawClock, drawIntro, drawFreeze, drawStamp, drawRoom, drawResults, drawMenu,
   drawVictory, drawPick } from './draw/hud.js';
-import { createWorld, resize, update, press, restart, spread, gameOf } from './game/world.js';
+import { createWorld, resize, update, press, restart, spread, gameOf,
+  pickGame } from './game/world.js';
+import { games } from './games/index.js';
 import { pump, handleMessage, peerChanged, roleChanged, reportDeath, startRound,
   endRound } from './game/net.js';
 
@@ -31,7 +33,8 @@ world.onRecord = (record) => shell.saveBest(record);
 world.onDeath = (record) => reportDeath(world, shell, record);
 
 // 게임 안 메뉴에서 고른 것. 방을 열고 닫는 일은 셸이 해야 해서 이름만 넘긴다.
-const SHELL_ACTIONS = { host: 'host', join: 'join', leave: 'leave', hide: 'hide', quitYes: 'quit' };
+const SHELL_ACTIONS = { host: 'host', join: 'join', leave: 'leave', hide: 'hide',
+                        copy: 'copy', quitYes: 'quit' };
 world.onMenu = (action) => {
   if (action === 'again') {
     world.mp.on ? startRound(world, shell, { restart }) : restart(world);
@@ -46,6 +49,14 @@ world.onMenu = (action) => {
   // 글씨가 뭉갠다 — 창 전체의 투명도를 낮춰야 낙서 그대로 옅어진다.
   if (action.startsWith('fade:')) {
     shell.setFade?.(Number(action.slice(5)));
+    return;
+  }
+  // **무슨 게임으로 방을 열지 고르고 여는 길.** 게임을 먼저 갈아 끼우고 방을 연다 —
+  // 열고 나서 바꾸면 그 사이에 들어온 사람이 딴 게임을 보고 있게 된다.
+  if (action.startsWith('host:')) {
+    pickGame(world, action.slice(5));
+    spread(world);
+    shell.menu?.('host');
     return;
   }
   // 창 크기와 자리도 창이 하는 일이다. 판은 그대로 돌고 창만 작아진다.
@@ -92,6 +103,10 @@ world.send = (message) => shell.net.send(message);
 world.log = (text) => shell.log(text);
 world.fade = shell.fade ?? 1;
 window.__ddongFade = (value) => { world.fade = value; };
+// 메뉴 막대도 「무슨 게임으로 방을 열까」를 물어야 한다. 게임 목록은 여기만 안다.
+shell.setGames?.(games.map((game) => ({ id: game.id, name: game.name })));
+/// 셸이 메뉴 막대에서 게임을 고르고 방을 열 때. 방을 열기 전에 갈아 끼운다.
+window.__ddongPickGame = (id) => { pickGame(world, id); spread(world); };
 world.size = shell.size ?? 1;
 world.spot = shell.spot ?? 'c';
 shell.onLayout?.((size, spot) => { world.size = size; world.spot = spot; });

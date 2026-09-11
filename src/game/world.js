@@ -98,7 +98,7 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
     mp: createSession(),
     myResult: null,
     /// ⌥M 으로 여는 게임 안 메뉴. 메뉴 막대 아이콘을 못 찾아도 여기서 다 된다.
-    menu: { open: false, index: 0, confirmQuit: false, sub: null },
+    menu: { open: false, index: 0, confirmQuit: false, path: [] },
     /// 셸이 알려 주는, 지금 물려 있는 화면들. 한 대뿐이면 비어 있는 것과 같이 친다.
     screens: [],
     /// 고르는 화면에서 짚고 있는 줄.
@@ -418,113 +418,191 @@ function layoutItems(world) {
   return rows;
 }
 
+/// 메뉴 나무.
+///
+/// 줄이 열한 개까지 늘어나면 그건 메뉴가 아니라 목록이다. 「지금 판에 쓰는 것」만 첫 화면에
+/// 세우고 나머지는 한 겹 안으로 넣는다 — 같이 하기, 화면. 게임기 메뉴가 그렇게 생겼다.
+///
+///   []                  이어서 · 다시 시작 · 편 고르기 · 같이 하기 ▸ · 화면 ▸ · 홈으로 · 숨기기 · 끝내기
+///   together            방 만들기 ▸ · 코드로 입장  (방 안이면: 코드 복사 · 닫기/나가기)
+///   together/host       무슨 게임으로 방을 열까 — 게임 목록
+///   screen              창 크기 ▸ · 창 위치 ▸ · 투명도 ▸ · 띄울 화면 ▸
+///   screen/size · spot · fade · where     값 고르기
+///   team                편 고르기
+///
+/// `into` 가 있는 줄은 한 겹 들어가는 문이고, 없는 줄은 그 자리에서 무언가를 한다.
+function rootItems(world) {
+  const home = world.state === 'pick';
+  const game = gameById(world.gameId);
+  const items = [{ id: 'resume', label: home ? '고르던 데로' : '이어서 하기' }];
+  // 「다시 시작」은 판을 하고 있을 때만. 고르는 화면과 시작 전에는 다시 시작할 판이 없다.
+  if (!home && (world.state === 'play' || (world.state === 'over' && canRestart(world)))) {
+    items.push({ id: 'again', label: '다시 시작' });
+  }
+  // 편 고르기는 설정이 아니라 **판에서 하는 일**이다. 그래서 첫 화면에 둔다.
+  if (!home && game.teamNames) {
+    items.push({ id: 'team', into: 'team', label: '편 고르기',
+                 note: game.teamNames[world.team ?? 0] });
+  }
+  items.push({
+    id: 'together', into: 'together', label: '같이 하기',
+    note: world.mp.on ? `방 ${world.mp.code ?? ''} · ${world.mp.others.size + 1}명` : '혼자 하는 중',
+  });
+  items.push({ id: 'screen', into: 'screen', label: '화면', note: screenNote(world) });
+  // **판을 접고 게임 고르는 화면으로 나간다.** 다른 게임을 하려면 여기로 나와서 고른다.
+  if (!home) items.push({ id: 'pick', label: '홈으로 나가기', note: game.name });
+  items.push({ id: 'hide', label: '화면 숨기기' });
+  items.push({ id: 'quit', label: '게임 끝내기' });
+  return items;
+}
+
+/// 화면 첫 줄 옆에 적는 한 줄. 지금 어떻게 띄워 두었는지 들어가지 않고도 보인다.
+function screenNote(world) {
+  const parts = [sizeName(world.size ?? 1)];
+  if ((world.size ?? 1) < 0.999) parts.push(spotName(world.spot ?? 'c'));
+  if ((world.fade ?? 1) < 0.99) parts.push(`${Math.round(world.fade * 100)}%`);
+  return parts.join(' · ');
+}
+
+function togetherItems(world) {
+  const mp = world.mp;
+  if (!mp.on) {
+    return [
+      // 방을 열 때 **무슨 게임인지부터 고른다.** 들어온 사람이 보게 될 판이라
+      // 열고 나서 바꾸는 것보다 열기 전에 정하는 게 맞다.
+      { id: 'host', into: 'host', label: '방 만들기' },
+      { id: 'join', label: '코드로 입장' },
+    ];
+  }
+  const rows = [{ id: 'copy', label: '코드 복사', note: mp.code ?? '' }];
+  rows.push({ id: 'leave', label: mp.role === 'host' ? '방 닫기' : '방에서 나가기' });
+  return rows;
+}
+
+function screenItems(world) {
+  const rows = [
+    { id: 'size', into: 'size', label: '창 크기', note: sizeName(world.size ?? 1) },
+  ];
+  // 화면 전체면 놓을 자리가 하나뿐이다. 고를 게 없는 줄은 안 세운다.
+  if ((world.size ?? 1) < 0.999) {
+    rows.push({ id: 'spot', into: 'spot', label: '창 위치', note: spotName(world.spot ?? 'c') });
+  }
+  rows.push({ id: 'fade', into: 'fade', label: '투명도',
+              note: world.fade >= 0.99 ? '그대로' : `${Math.round(world.fade * 100)}%` });
+  if (world.screens.length > 1) {
+    const here = world.screens.find((screen) => screen.current);
+    rows.push({ id: 'where', into: 'where', label: '띄울 화면', note: here?.name ?? '' });
+  }
+  return rows;
+}
+
 /// 메뉴에 세울 것들. 상황에 따라 달라지므로 그릴 때와 고를 때가 같은 함수를 본다.
 export function menuItems(world) {
   if (world.menu.confirmQuit) {
     return [{ id: 'quitYes', label: '네, 끝낸다' }, { id: 'quitNo', label: '아니, 계속한다' }];
   }
-  // 화면 고르기는 한 겹 안으로 들어간다. 모니터가 셋이면 첫 화면이 그것만으로 꽉 찬다.
-  // 보던 중에 모니터를 뽑아 한 대만 남으면 고를 것이 없으니 그냥 첫 화면으로 돌아간다.
-  if (world.menu.sub === 'team') {
-    const names = gameById(world.gameId).teamNames ?? [];
-    return names.map((name, side) => ({
-      id: `team:${side}`, label: `${name} 편`,
-      note: side === (world.team ?? 0) ? '지금 여기' : '이쪽으로',
-      mark: side === (world.team ?? 0),
-    }));
-  }
-  if (world.menu.sub === 'size') {
-    return SIZES.map(([value, name]) => ({
-      id: `size:${value}`,
-      label: name,
-      note: value === 1 ? '지금까지와 같다' : `${Math.round(value * 100)}%`,
-      mark: Math.abs(value - (world.size ?? 1)) < 0.02,
-    }));
-  }
-  if (world.menu.sub === 'spot') {
-    return SPOTS.map(([id, name]) => ({
-      id: `spot:${id}`,
-      label: name,
-      mark: id === (world.spot ?? 'c'),
-    }));
-  }
-  if (world.menu.sub === 'fade') {
-    return FADES.map((f) => ({
-      id: `fade:${f}`,
-      label: f === 1 ? '그대로' : `${Math.round(f * 100)}%`,
-      note: f === 1 ? '지금까지와 같다' : '바탕화면이 비친다',
-      mark: Math.abs(f - world.fade) < 0.02,
-    }));
-  }
-  if (world.menu.sub === 'screens' && world.screens.length > 1) {
-    return world.screens.map((screen) => ({
-      id: `screen:${screen.number}`,
-      label: screen.name,
-      note: `${screen.w}×${screen.h}`,
-      mark: !!screen.current,
-    }));
-  }
-  // 고르는 화면에서는 방을 열고 닫을 수 없다. **아직 무슨 게임을 할지도 안 정했다** —
-  // 그 상태로 방을 열면 들어온 사람이 빈 화면을 보게 된다. 게임을 고른 뒤에 연다.
-  if (world.state === 'pick') {
-    const picking = [{ id: 'resume', label: '고르던 데로' }];
-    picking.push({ id: 'fade', label: '투명도',
-      note: world.fade >= 0.99 ? '그대로' : `${Math.round(world.fade * 100)}%` });
-    if (world.screens.length > 1) {
-      const here = world.screens.find((screen) => screen.current);
-      picking.push({ id: 'screens', label: '띄울 화면 바꾸기', note: here?.name ?? '' });
+  switch (world.menu.path.join('/')) {
+    case 'team': {
+      const names = gameById(world.gameId).teamNames ?? [];
+      return names.map((name, side) => ({
+        id: `team:${side}`, label: `${name} 편`,
+        note: side === (world.team ?? 0) ? '지금 여기' : '이쪽으로',
+        mark: side === (world.team ?? 0),
+      }));
     }
-    picking.push(...layoutItems(world));
-    picking.push({ id: 'hide', label: '화면 숨기기' });
-    picking.push({ id: 'quit', label: '게임 끝내기' });
-    return picking;
+    case 'together': return togetherItems(world);
+    case 'together/host':
+      return games.map((game) => ({ id: `host:${game.id}`, label: game.name }));
+    case 'screen': return screenItems(world);
+    case 'screen/size':
+      return SIZES.map(([value, name]) => ({
+        id: `size:${value}`,
+        label: name,
+        note: value === 1 ? '지금까지와 같다' : `${Math.round(value * 100)}%`,
+        mark: Math.abs(value - (world.size ?? 1)) < 0.02,
+      }));
+    case 'screen/spot':
+      return SPOTS.map(([id, name]) => ({
+        id: `spot:${id}`, label: name, mark: id === (world.spot ?? 'c'),
+      }));
+    case 'screen/fade':
+      return FADES.map((f) => ({
+        id: `fade:${f}`,
+        label: f === 1 ? '그대로' : `${Math.round(f * 100)}%`,
+        note: f === 1 ? '지금까지와 같다' : '바탕화면이 비친다',
+        mark: Math.abs(f - world.fade) < 0.02,
+      }));
+    // 보던 중에 모니터를 뽑아 한 대만 남으면 고를 것이 없으니 그냥 첫 화면으로 돌아간다.
+    case 'screen/where':
+      if (world.screens.length > 1) {
+        return world.screens.map((screen) => ({
+          id: `screen:${screen.number}`,
+          label: screen.name,
+          note: `${screen.w}×${screen.h}`,
+          mark: !!screen.current,
+        }));
+      }
+      world.menu.path = ['screen'];
+      world.menu.index = 0;
+      return screenItems(world);
+    default: return rootItems(world);
   }
-
-  const items = [{ id: 'resume', label: '이어서 하기' }];
-  // 「다시 시작」은 판을 하고 있을 때만. 고르는 화면과 시작 전에는 다시 시작할 판이 없다.
-  if (world.state === 'play' || (world.state === 'over' && canRestart(world))) {
-    items.push({ id: 'again', label: '다시 시작' });
-  }
-  if (world.mp.on) {
-    items.push({ id: 'leave', label: world.mp.role === 'host' ? '방 닫기' : '방에서 나가기' });
-  } else {
-    items.push({ id: 'host', label: '방 만들기' });
-    items.push({ id: 'join', label: '코드로 입장' });
-  }
-  items.push({ id: 'pick', label: '게임 바꾸기', note: gameById(world.gameId).name });
-  const game = gameById(world.gameId);
-  if (game.teamNames) {
-    items.push({
-      id: 'team', label: '편 고르기',
-      note: game.teamNames[world.team ?? 0],
-    });
-  }
-  items.push({
-    id: 'fade', label: '투명도',
-    note: world.fade >= 0.99 ? '그대로' : `${Math.round(world.fade * 100)}%`,
-  });
-  if (world.screens.length > 1) {
-    const here = world.screens.find((screen) => screen.current);
-    items.push({ id: 'screens', label: '띄울 화면 바꾸기', note: here?.name ?? '' });
-  }
-  items.push(...layoutItems(world));
-  items.push({ id: 'hide', label: '화면 숨기기' });
-  items.push({ id: 'quit', label: '게임 끝내기' });
-  return items;
 }
 
 function openMenu(world, open) {
   world.menu.open = open;
   world.menu.index = 0;
   world.menu.confirmQuit = false;
-  world.menu.sub = null;
+  world.menu.path = [];
   // 메뉴로 들어가면 잡고 있던 방향키는 놓은 것으로 친다. 안 그러면 나올 때 혼자 달린다.
   if (open) for (const key of Object.keys(world.input)) world.input[key] = false;
 }
 
+/// 한 겹 들어갈 때 처음 짚을 줄. 지금 쓰고 있는 값에 손가락을 올려 준다.
+function firstIndex(world, at) {
+  if (at === 'team') return world.team ?? 0;
+  if (at === 'screen/size') {
+    return Math.max(0, SIZES.findIndex(([v]) => Math.abs(v - (world.size ?? 1)) < 0.02));
+  }
+  if (at === 'screen/spot') return Math.max(0, SPOTS.findIndex(([v]) => v === (world.spot ?? 'c')));
+  if (at === 'screen/fade') {
+    return Math.max(0, FADES.findIndex((f) => Math.abs(f - world.fade) < 0.02));
+  }
+  if (at === 'screen/where') {
+    return Math.max(0, world.screens.findIndex((screen) => screen.current));
+  }
+  if (at === 'together/host') return Math.max(0, games.findIndex((g) => g.id === world.gameId));
+  return 0;
+}
+
+/// 한 겹 뒤로. 끝낼까 묻는 중이면 그것부터 물리고, 안에 있으면 한 겹 나가고,
+/// 첫 화면이면 메뉴를 닫는다.
+export function menuBack(world) {
+  if (world.menu.confirmQuit) { world.menu.confirmQuit = false; world.menu.index = 0; return; }
+  if (world.menu.path.length) {
+    world.menu.path.pop();
+    world.menu.index = 0;
+    return;
+  }
+  openMenu(world, false);
+}
+
+/// 고르고도 메뉴를 열어 두는 것들. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다 —
+/// 창이 그 모니터에 뜨는 걸 보고 아니다 싶으면 바로 다른 걸 고른다.
+const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:'];
+
 function chooseMenu(world) {
   const items = menuItems(world);
   const picked = items[Math.max(0, Math.min(items.length - 1, world.menu.index))];
+  if (!picked) return;
+
+  // 한 겹 들어가는 문.
+  if (picked.into) {
+    world.menu.path.push(picked.into);
+    world.menu.index = firstIndex(world, world.menu.path.join('/'));
+    return;
+  }
+
   switch (picked.id) {
     case 'resume':
     case 'quitNo':
@@ -539,38 +617,12 @@ function chooseMenu(world) {
       world.state = 'pick';
       world.pick = Math.max(0, games.findIndex((g) => g.id === world.gameId));
       return;
-    case 'screens':
-      world.menu.sub = 'screens';
-      world.menu.index = Math.max(0, world.screens.findIndex((screen) => screen.current));
-      return;
-    case 'team':
-      // 편을 고르는 유일한 길. 네트는 못 넘으니 여기서 옮겨 준다.
-      world.menu.sub = 'team';
-      world.menu.index = world.team ?? 0;
-      return;
-    case 'fade':
-      world.menu.sub = 'fade';
-      world.menu.index = Math.max(0, FADES.findIndex((f) => Math.abs(f - world.fade) < 0.02));
-      return;
-    case 'size':
-      world.menu.sub = 'size';
-      world.menu.index = Math.max(0, SIZES.findIndex(([v]) => Math.abs(v - (world.size ?? 1)) < 0.02));
-      return;
-    case 'spot':
-      world.menu.sub = 'spot';
-      world.menu.index = Math.max(0, SPOTS.findIndex(([v]) => v === (world.spot ?? 'c')));
-      return;
     case 'again':
       openMenu(world, false);
       world.onMenu?.('again');
       return;
     default:
-      // 화면을 옮기는 동안은 메뉴를 열어 둔다. 창이 그 모니터에 뜨는 걸 눈으로 보고
-      // 아니다 싶으면 바로 다른 걸 고를 수 있어야 한다.
-      // 화면과 투명도는 고르고도 메뉴를 열어 둔다. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다.
-      if (picked.id.startsWith('screen:') || picked.id.startsWith('fade:')
-          || picked.id.startsWith('size:') || picked.id.startsWith('spot:')
-          || picked.id.startsWith('team:')) {
+      if (STAYS.some((prefix) => picked.id.startsWith(prefix))) {
         world.onMenu?.(picked.id);
         return;
       }
@@ -724,11 +776,7 @@ export function press(world, action, down) {
     if (action === 'right' || action === 'restart') chooseMenu(world);
     // ⌥← 는 한 겹 나가기다. 한 겹 안(끝낼까 묻는 중 · 화면 고르는 중)이면 첫 화면으로,
     // 첫 화면이면 메뉴를 닫는다.
-    if (action === 'left') {
-      if (world.menu.confirmQuit) { world.menu.confirmQuit = false; world.menu.index = 0; }
-      else if (world.menu.sub) { world.menu.sub = null; world.menu.index = 0; }
-      else openMenu(world, false);
-    }
+    if (action === 'left') menuBack(world);
     return;
   }
 

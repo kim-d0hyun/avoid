@@ -211,6 +211,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     }
 
     /// 게임 안 메뉴도 지금 크기·자리를 알아야 표시를 맞춘다.
+    /// 웹이 알려 준 게임 목록. 메뉴 막대에서 방을 열 때 무엇으로 열지 여기서 고른다.
+    private var games: [(id: String, name: String)] = []
+
     private func pushLayout() {
         webView?.evaluateJavaScript(
             "window.__ddongLayout && window.__ddongLayout(\(windowSize), '\(windowSpot)')")
@@ -475,6 +478,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
           setFade: (value) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'fade', value,
           }),
+          // 무슨 게임들이 있나. 메뉴 막대의 「방 만들기」가 이걸로 갈린다.
+          setGames: (list) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'games', list,
+          }),
           // 창 크기와 자리. 화면 전체가 부담스러운 사람이 쓴다.
           size: \(windowSize),
           spot: '\(windowSpot)',
@@ -624,7 +631,22 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             menu.addItem(title)
             menu.addItem(withTitle: "나가기", action: #selector(leaveRoom), keyEquivalent: "").target = self
         default:
-            menu.addItem(withTitle: "방 만들기", action: #selector(makeRoom), keyEquivalent: "").target = self
+            // **무슨 게임으로 열지부터 고른다.** 들어온 사람이 보게 될 판이라 열기 전에 정한다.
+            if games.count > 1 {
+                let pick = NSMenu()
+                for (index, game) in games.enumerated() {
+                    let item = NSMenuItem(title: game.name, action: #selector(hostGame(_:)),
+                                          keyEquivalent: "")
+                    item.target = self
+                    item.tag = index
+                    pick.addItem(item)
+                }
+                let parent = NSMenuItem(title: "방 만들기", action: nil, keyEquivalent: "")
+                parent.submenu = pick
+                menu.addItem(parent)
+            } else {
+                menu.addItem(withTitle: "방 만들기", action: #selector(makeRoom), keyEquivalent: "").target = self
+            }
             menu.addItem(withTitle: "코드로 입장…", action: #selector(askJoin), keyEquivalent: "").target = self
         }
         menu.addItem(withTitle: "이름 바꾸기…  (\(playerName))",
@@ -933,6 +955,16 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         refreshMenu()
     }
 
+    /// 게임을 골라 방을 연다. **웹이 그 게임으로 갈아 끼운 뒤에** 연다 —
+    /// 먼저 열면 그 사이에 들어온 사람이 딴 게임 화면을 보게 된다.
+    @objc private func hostGame(_ sender: NSMenuItem) {
+        guard games.indices.contains(sender.tag) else { return }
+        let id = games[sender.tag].id
+        webView.evaluateJavaScript("window.__ddongPickGame && window.__ddongPickGame('\(id)')") {
+            [weak self] _, _ in self?.makeRoom()
+        }
+    }
+
     /// 단말끼리의 통신을 막는 와이파이에서 쓰는 주소. `K3P9@192.168.0.5` 꼴.
     private func codeWithAddress() -> String? {
         guard let code = net.code, let ip = localAddress() else { return nil }
@@ -1041,6 +1073,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             case "host": makeRoom()
             case "join": askJoin()
             case "leave": leaveRoom()
+            case "copy": copyCode()
             case "hide": toggleWindow()
             case "quit": NSApp.terminate(nil)
             default: break
@@ -1049,6 +1082,15 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             if let number = body["number"] as? Int { chooseScreen(number) }
         case "fade":
             if let value = body["value"] as? Double { windowFade = value }
+        case "games":
+            if let list = body["list"] as? [[String: Any]] {
+                games = list.compactMap {
+                    guard let id = $0["id"] as? String, let name = $0["name"] as? String
+                    else { return nil }
+                    return (id: id, name: name)
+                }
+                refreshMenu()
+            }
         case "size":
             if let value = body["value"] as? Double { windowSize = value }
         case "spot":

@@ -26,98 +26,159 @@ const THREE = [
   { number: 7, name: 'LG UltraFine', w: 3840, h: 2160, current: false },
 ];
 
-say('메뉴 — 화면이 한 대면 고를 것이 없다');
-{
-  const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
-  tap(w, 'menu');
-  check('항목', labels(w), ['이어서 하기', '방 만들기', '코드로 입장', '게임 바꾸기', '투명도', '창 크기', '화면 숨기기', '게임 끝내기']);
-}
-
-say('메뉴 — 화면이 여럿이면 항목이 생긴다');
-{
-  const w = make(THREE);
-  tap(w, 'menu');
-  check('항목', labels(w), ['이어서 하기', '방 만들기', '코드로 입장', '게임 바꾸기', '투명도', '띄울 화면 바꾸기', '창 크기', '화면 숨기기', '게임 끝내기']);
-  check('지금 어디에 떠 있는지 옆에 적는다', menuItems(w)[5].note, 'Built-in Retina Display');
-}
-
-say('창 크기 — 줄이면 놓을 자리도 고르게 된다');
-{
-  const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
-  tap(w, 'menu');
-  check('화면 전체일 때는 「창 위치」가 없다', labels(w).includes('창 위치'), false);
-  check('지금 크기를 옆에 적는다', menuItems(w).find((i) => i.id === 'size').note, '화면 전체');
-
-  // 「창 크기」로 내려가 들어간다
-  while (menuItems(w)[w.menu.index].id !== 'size') tap(w, 'duck');
+const into = (w, id) => {           // 그 줄까지 내려가 한 겹 들어간다
+  let guard = 0;
+  while (menuItems(w)[w.menu.index].id !== id && guard++ < 20) tap(w, 'duck');
   tap(w, 'right');
-  check('안으로 들어왔다', w.menu.sub, 'size');
+};
+
+say('메뉴 — 첫 화면은 여섯 줄이다');
+{
+  const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
+  tap(w, 'menu');
+  check('항목', labels(w),
+        ['이어서 하기', '같이 하기', '화면', '홈으로 나가기', '화면 숨기기', '게임 끝내기']);
+  check('지금 혼자인지 옆에 적는다', menuItems(w)[1].note, '혼자 하는 중');
+  check('창을 어떻게 띄워 뒀는지도', menuItems(w)[2].note, '화면 전체');
+  check('무슨 게임 중인지도', menuItems(w)[3].note, '똥피하기');
+}
+
+say('메뉴 — 판을 하는 중이면 「다시 시작」이 붙는다');
+{
+  const w = make([]);
+  w.state = 'play';
+  tap(w, 'menu');
+  check('둘째 줄', labels(w)[1], '다시 시작');
+}
+
+say('메뉴 — 게임 도중 홈으로 나간다');
+{
+  const w = make([]);
+  w.state = 'play';
+  tap(w, 'menu');
+  while (menuItems(w)[w.menu.index].id !== 'pick') tap(w, 'duck');
+  tap(w, 'right');
+  check('게임 고르는 화면으로', w.state, 'pick');
+  check('메뉴는 닫힌다', w.menu.open, false);
+  check('고르는 줄은 하던 게임에 가 있다', w.pick, 0);
+  // 홈에서는 「홈으로 나가기」와 「다시 시작」이 없다
+  tap(w, 'menu');
+  check('홈 메뉴', labels(w), ['고르던 데로', '같이 하기', '화면', '화면 숨기기', '게임 끝내기']);
+}
+
+say('같이 하기 — 방을 열 때 무슨 게임인지부터 고른다');
+{
+  const w = make([]);
+  tap(w, 'menu');
+  into(w, 'together');
+  check('안으로 들어왔다', w.menu.path, ['together']);
+  check('고를 것', labels(w), ['방 만들기', '코드로 입장']);
+
+  into(w, 'host');
+  check('또 한 겹', w.menu.path, ['together', 'host']);
+  check('게임 목록', labels(w), ['똥피하기', '배구']);
+  check('처음 짚는 것은 하던 게임', w.menu.index, 0);
+
+  tap(w, 'duck');                                    // 배구
+  tap(w, 'right');
+  check('셸로 넘어간 것', w.picked, ['host:volley']);
+  check('메뉴는 닫힌다', w.menu.open, false);
+}
+
+say('같이 하기 — 방 안에서는 코드 복사와 닫기');
+{
+  const w = make([]);
+  w.mp.on = true; w.mp.role = 'host'; w.mp.code = 'K3P9';
+  tap(w, 'menu');
+  check('방 이름이 옆에 뜬다', menuItems(w)[1].note, '방 K3P9 · 1명');
+  into(w, 'together');
+  check('고를 것', labels(w), ['코드 복사', '방 닫기']);
+  check('코드가 옆에', menuItems(w)[0].note, 'K3P9');
+  w.mp.role = 'guest';
+  check('손님은 나가기', labels(w)[1], '방에서 나가기');
+}
+
+say('화면 — 크기·자리·투명도·띄울 화면이 한 겹 안에 모인다');
+{
+  const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
+  tap(w, 'menu');
+  into(w, 'screen');
+  check('화면 전체면 「창 위치」가 없다', labels(w), ['창 크기', '투명도']);
+
+  into(w, 'size');
+  check('두 겹 안', w.menu.path, ['screen', 'size']);
   check('고를 것들', labels(w), ['화면 전체', '3/4', '절반', '작게', '아주 작게']);
   check('지금 것에 점', menuItems(w).map((i) => !!i.mark), [true, false, false, false, false]);
 
-  tap(w, 'duck'); tap(w, 'duck');                    // 「절반」
+  tap(w, 'duck'); tap(w, 'duck');                    // 절반
   tap(w, 'right');
   check('셸로 넘어간 것', w.picked, ['size:0.55']);
-  check('고르고도 메뉴는 열려 있다', [w.menu.open, w.menu.sub], [true, 'size']);
+  check('고르고도 열려 있다', [w.menu.open, w.menu.path], [true, ['screen', 'size']]);
 
-  // 셸이 실제로 창을 줄이고 알려 준다
-  w.size = 0.55;
+  w.size = 0.55;                                     // 셸이 줄이고 알려 준다
   tap(w, 'left');
-  check('줄이고 나면 「창 위치」가 생긴다', labels(w).includes('창 위치'), true);
-  while (menuItems(w)[w.menu.index].id !== 'spot') tap(w, 'duck');
-  tap(w, 'right');
+  check('한 겹 뒤로', w.menu.path, ['screen']);
+  check('줄이고 나면 「창 위치」가 생긴다', labels(w), ['창 크기', '창 위치', '투명도']);
+  check('첫 줄 옆에 지금 상태', menuItems(w).find((i) => i.id === 'size').note, '절반');
+
+  into(w, 'spot');
   check('놓을 자리', labels(w), ['정중앙', '왼쪽 위', '오른쪽 위', '왼쪽 아래', '오른쪽 아래']);
-  tap(w, 'duck'); tap(w, 'duck');                    // 「오른쪽 위」
+  tap(w, 'duck'); tap(w, 'duck');
   tap(w, 'right');
   check('셸로 넘어간 것', w.picked, ['size:0.55', 'spot:tr']);
+
+  tap(w, 'left'); tap(w, 'left');
+  check('첫 화면까지 나왔다', w.menu.path, []);
+  tap(w, 'left');
+  check('한 번 더 누르면 닫힌다', w.menu.open, false);
 }
 
-say('창 크기 — 판을 다시 시작해도 남는다');
-{
-  const w = make([]);
-  w.size = 0.4; w.spot = 'br';
-  restart(w);
-  check('크기', w.size, 0.4);
-  check('자리', w.spot, 'br');
-}
-
-say('메뉴 — 화면 고르기로 들어가고 나오기');
+say('화면 — 모니터가 여럿이면 「띄울 화면」이 생긴다');
 {
   const w = make(THREE);
   tap(w, 'menu');
-  for (let i = 0; i < 5; i++) tap(w, 'duck');       // 「띄울 화면 바꾸기」까지 내려간다
-  check('짚은 것', menuItems(w)[w.menu.index].id, 'screens');
-  tap(w, 'right');                                   // 들어간다
-  check('안으로 들어왔다', w.menu.sub, 'screens');
+  into(w, 'screen');
+  check('네 줄', labels(w), ['창 크기', '투명도', '띄울 화면']);
+  check('지금 어디에 떠 있는지 옆에 적는다',
+        menuItems(w).find((i) => i.id === 'where').note, 'Built-in Retina Display');
+
+  into(w, 'where');
   check('목록', labels(w), ['Built-in Retina Display', 'DELL U2723QE', 'LG UltraFine']);
   check('해상도도 같이', menuItems(w).map((i) => i.note), ['1512×982', '2560×1440', '3840×2160']);
   check('지금 화면에 표시', menuItems(w).map((i) => !!i.mark), [true, false, false]);
   check('처음 짚는 것은 지금 화면', w.menu.index, 0);
 
   tap(w, 'duck');
-  tap(w, 'right');                                   // 두 번째를 고른다
+  tap(w, 'right');
   check('셸로 넘어간 것', w.picked, ['screen:2']);
-  check('고르고도 메뉴는 열려 있다', [w.menu.open, w.menu.sub], [true, 'screens']);
-
-  tap(w, 'left');                                    // 뒤로
-  check('첫 화면으로', w.menu.sub, null);
-  check('메뉴는 아직 열려 있다', w.menu.open, true);
-  tap(w, 'left');                                    // 닫기
-  check('닫혔다', w.menu.open, false);
+  check('고르고도 메뉴는 열려 있다', [w.menu.open, w.menu.path], [true, ['screen', 'where']]);
 }
 
-say('메뉴 — 고르는 중에 모니터를 뽑으면 첫 화면으로 돌아간다');
+say('화면 — 고르는 중에 모니터를 뽑으면 한 겹 나온다');
 {
   const w = make(THREE);
   tap(w, 'menu');
-  w.menu.sub = 'screens';
+  into(w, 'screen');
+  into(w, 'where');
   w.screens = [THREE[0]];
-  check('한 대만 남으면', labels(w)[0], '이어서 하기');
+  check('목록이 아니라 화면 설정으로', labels(w), ['창 크기', '투명도']);
+  check('길도 한 겹 나왔다', w.menu.path, ['screen']);
+}
+
+say('투명도 — 화면 안에서 고르고 셸로 넘어간다');
+{
+  const w = make([]);
+  tap(w, 'menu');
+  into(w, 'screen');
+  into(w, 'fade');
+  check('목록', labels(w), ['그대로', '85%', '70%', '55%', '40%']);
+  tap(w, 'duck'); tap(w, 'duck');
+  tap(w, 'right');
+  check('셸로 넘어간 것', w.picked, ['fade:0.7']);
 }
 
 say('메뉴 — 화면 목록이 판을 다시 시작해도 안 사라진다');
 {
-  const { restart } = await import(new URL('../src/game/world.js', import.meta.url));
   const w = make(THREE);
   restart(w);
   check('남아 있다', w.screens.length, 3);
@@ -281,25 +342,6 @@ say('붙잡기 — 메뉴를 열었다 닫아도 손이 안 굳는다');
   tap(w, 'menu');                                       // 메뉴 열기
   press(w, 'grab', false);                              // 메뉴 위에서 손을 뗐다
   check('놓였다', w.player.grabbing, -1);
-}
-
-say('투명도 — 메뉴에서 고르고 셸로 넘어간다');
-{
-  const w = make();
-  tap(w, 'menu');
-  for (let i = 0; i < 4; i++) tap(w, 'duck');      // 「투명도」까지
-  check('짚은 것', menuItems(w)[w.menu.index].id, 'fade');
-  check('지금 값이 옆에 적힌다', menuItems(w)[w.menu.index].note, '그대로');
-  tap(w, 'right');
-  check('안으로 들어왔다', w.menu.sub, 'fade');
-  check('목록', labels(w), ['그대로', '85%', '70%', '55%', '40%']);
-  check('지금 것에 점', menuItems(w).map((i) => !!i.mark), [true, false, false, false, false]);
-  tap(w, 'duck'); tap(w, 'duck');
-  tap(w, 'right');
-  check('셸로 넘어간 것', w.picked.at(-1), 'fade:0.7');
-  check('고르고도 열려 있다', [w.menu.open, w.menu.sub], [true, 'fade']);
-  tap(w, 'left');
-  check('뒤로 나오면 첫 화면', w.menu.sub, null);
 }
 
 say('게임 고르기 — 배구로 갈아 끼우면 살림살이도 바뀐다');

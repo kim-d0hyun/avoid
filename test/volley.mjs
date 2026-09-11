@@ -66,14 +66,14 @@ say('편 — 메뉴에서 골라 옮긴다');
   check('지금 편이 옆에 적힌다', items[at].note, '빨강');
   world.menu.index = at;
   tap(world, 'right');
-  check('안으로 들어왔다', world.menu.sub, 'team');
+  check('안으로 들어왔다', world.menu.path, ['team']);
   check('목록', w.menuItems(world).map((i) => i.label), ['빨강 편', '파랑 편']);
   check('지금 편에 점', w.menuItems(world).map((i) => !!i.mark), [true, false]);
   tap(world, 'duck');
   tap(world, 'right');
   check('편이 바뀌었다', world.team, 1);
   check('오른쪽 코트로 옮겨졌다', world.player.x > 756, true);
-  check('고르고도 메뉴는 열려 있다', [world.menu.open, world.menu.sub], [true, 'team']);
+  check('고르고도 메뉴는 열려 있다', [world.menu.open, world.menu.path], [true, ['team']]);
   check('이제 파랑에 점', w.menuItems(world).map((i) => !!i.mark), [false, true]);
 }
 

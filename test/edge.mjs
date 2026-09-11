@@ -90,10 +90,10 @@ say('⑥ 하위 메뉴를 보는 중에 목록이 줄어도 안 터진다');
   world.screens = [{ number: 1, name: 'A', w: 1, h: 1, current: true },
                    { number: 2, name: 'B', w: 1, h: 1, current: false }];
   tap(world, 'menu');
-  world.menu.sub = 'screens'; world.menu.index = 1;
+  world.menu.path = ['screen', 'where']; world.menu.index = 1;
   world.screens = [];                       // 모니터를 뽑았다
   const items = w.menuItems(world);
-  ok('목록이 첫 화면으로', items[0].id === 'resume');
+  ok('목록이 아니라 화면 설정으로', items[0].id === 'size');
   tap(world, 'right');                      // 그 상태로 확인을 눌러도
   ok('안 터진다', true);
 }
