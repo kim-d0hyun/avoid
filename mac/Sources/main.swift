@@ -111,7 +111,7 @@ final class WebAssetHandler: NSObject, WKURLSchemeHandler {
 
 // MARK: - 앱
 
-final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
+final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate {
     static var shared: App?
 
     private var window: NSWindow!
@@ -238,6 +238,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     private let optionGrace: TimeInterval = 0.25
 
     /// 게임 안 메뉴도 지금 크기·자리를 알아야 표시를 맞춘다.
+    /// 잠들지도 걷히지도 않게 잡아 두는 표. 앱이 사는 동안 들고 있는다.
+    private var activity: NSObjectProtocol?
+
     /// 웹이 알려 준 게임 목록. 메뉴 막대에서 방을 열 때 무엇으로 열지 여기서 고른다.
     private var games: [(id: String, name: String)] = []
 
@@ -274,6 +277,19 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         }
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(showFromOtherLaunch), name: showNotification, object: nil)
+
+        // **숨어 있어도 안 죽는다.**
+        //
+        // 창을 내린 앱은 macOS 가 App Nap 으로 재운다. 타이머가 초당 한 번으로 떨어져서
+        // 같이 하던 판이 멈추고, 시스템이 한가한 프로세스를 통째로 걷어 가기도 한다
+        // (sudden termination). 「한참 숨겨 뒀다 돌아왔더니 앱이 없다」가 그것이다.
+        //
+        // userInitiatedAllowingIdleSystemSleep 은 App Nap 과 자동·즉시 종료를 막으면서
+        // **맥이 잠드는 것은 그대로 둔다** — 숨겨 둔 게임이 노트북을 깨워 두면 안 된다.
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep],
+            reason: "숨어 있는 동안에도 판을 굴린다")
+        ProcessInfo.processInfo.disableSuddenTermination()
 
         fixOwnName()
         buildWindow()
@@ -465,6 +481,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         }
 
         webView = WKWebView(frame: window.contentView!.bounds, configuration: config)
+        webView.navigationDelegate = self
         webView.autoresizingMask = [.width, .height]
         // 웹뷰 자체 배경을 지워야 창의 투명이 살아난다.
         webView.setValue(false, forKey: "drawsBackground")
@@ -1117,6 +1134,26 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         }
     }
 
+    // MARK: 웹뷰가 죽었을 때
+
+    /// **웹 내용 프로세스가 걷혀 가면 다시 띄운다.**
+    ///
+    /// 창을 오래 내려 두면 macOS 가 그 웹뷰의 내용 프로세스를 회수한다. 그러면 다시 켰을 때
+    /// 아무것도 안 그려진 빈 창이 뜬다 — 사람 눈에는 「앱이 꺼졌다」다. 조용히 다시 띄우고,
+    /// 셸이 알고 있던 것들(투명도·화면·창 크기·방)을 새 화면에 다시 밀어 준다.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        debugLog("웹 내용 프로세스가 걷혔다 → 다시 띄운다")
+        webView.load(URLRequest(url: URL(string: "\(webScheme)://app/index.html")!))
+    }
+
+    /// 새로 뜰 때마다 셸이 아는 것을 다시 밀어 준다. 처음 뜰 때도 이 길을 지난다.
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        applyFade()
+        pushScreens()
+        pushLayout()
+        pushNetRole()
+    }
+
     // MARK: 저장
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -1131,6 +1168,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             case "join": askJoin()
             case "leave": leaveRoom()
             case "copy": copyCode()
+            case "name": askName()
             case "hide": toggleWindow()
             case "quit": NSApp.terminate(nil)
             default: break

@@ -158,6 +158,31 @@ say('㉕ 방장이 혼자일 때 판 끝내기');
   ok('세리머니가 돈다', world.overFor > 0);
 }
 
+say('㉘ 방 안에서 이름을 고치면');
+{
+  // 손님: 방 상태가 흔들리지 않고, 방장에게 새 이름이 간다
+  const world = make('dodge', true);
+  world.mp.role = 'guest'; world.mp.code = 'K3P9'; world.mp.myId = 5;
+  world.mp.myName = '범창'; world.mp.waiting = false; world.mp.round = 3;
+  const sent = [];
+  world.send = (m) => sent.push(m);
+  net.roleChanged(world, 'guest', 'K3P9', 5, '범창2');
+  ok('이름만 바뀐다', world.mp.myName === '범창2');
+  ok('구경으로 밀려나지 않는다', world.mp.waiting === false);
+  ok('방장에게 알린다', sent.length === 1 && sent[0].t === 'nm' && sent[0].n === '범창2');
+
+  // 방장: 손님이 고친 이름을 이름표에 반영한다
+  const host = make('dodge', true);
+  host.mp.role = 'host'; host.mp.myId = 1; host.mp.namesSent = '뭔가';
+  host.mp.others.set(7, { id: 7, name: '누군가', dead: false, waiting: false });
+  net.handleMessage(host, shell, 7, { t: 'nm', n: '도현' }, api(host));
+  ok('이름표가 바뀐다', host.mp.names.get(7) === '도현');
+  ok('머리 위 이름도 바뀐다', host.mp.others.get(7).name === '도현');
+  ok('다음 스냅샷에 다시 실린다', host.mp.namesSent === '');
+  net.handleMessage(host, shell, 7, { t: 'nm', n: '   ' }, api(host));
+  ok('빈 이름은 무시한다', host.mp.names.get(7) === '도현');
+}
+
 say('㉗ 방장이 나를 내보내면');
 {
   const world = make('volley', true);

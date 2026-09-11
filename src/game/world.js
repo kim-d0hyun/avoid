@@ -488,9 +488,13 @@ function togetherItems(world) {
       // 열고 나서 바꾸는 것보다 열기 전에 정하는 게 맞다.
       { id: 'host', into: 'host', label: '방 만들기' },
       { id: 'join', label: '코드로 입장' },
+      // 남들 머리 위에 뜨는 이름. 방에 들어가기 전에 고쳐 두는 게 맞다 —
+      // 들어간 뒤에 고치면 이미 다들 옛 이름으로 부르고 있다.
+      { id: 'name', label: '이름 바꾸기', note: world.mp.myName || '' },
     ];
   }
-  const rows = [{ id: 'copy', label: '코드 복사', note: mp.code ?? '' }];
+  const rows = [{ id: 'name', label: '이름 바꾸기', note: mp.myName || '' },
+                { id: 'copy', label: '코드 복사', note: mp.code ?? '' }];
   // **방장만 내보낼 수 있다.** 들어와 놓고 잠수하면 판이 안 열린다 —
   // 배구는 한쪽 편이 비면 안 열리고, 협동은 넷이 다 움직여야 한다.
   if (mp.role === 'host' && mp.others.size) {

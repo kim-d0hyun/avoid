@@ -34,7 +34,7 @@ world.onDeath = (record) => reportDeath(world, shell, record);
 
 // 게임 안 메뉴에서 고른 것. 방을 열고 닫는 일은 셸이 해야 해서 이름만 넘긴다.
 const SHELL_ACTIONS = { host: 'host', join: 'join', leave: 'leave', hide: 'hide',
-                        copy: 'copy', quitYes: 'quit' };
+                        copy: 'copy', name: 'name', quitYes: 'quit' };
 world.onMenu = (action) => {
   if (action === 'again') {
     world.mp.on ? startRound(world, shell, { restart }) : restart(world);

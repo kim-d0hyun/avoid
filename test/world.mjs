@@ -72,7 +72,7 @@ say('같이 하기 — 방을 열 때 무슨 게임인지부터 고른다');
   tap(w, 'menu');
   into(w, 'together');
   check('안으로 들어왔다', w.menu.path, ['together']);
-  check('고를 것', labels(w), ['방 만들기', '코드로 입장']);
+  check('고를 것', labels(w), ['방 만들기', '코드로 입장', '이름 바꾸기']);
 
   into(w, 'host');
   check('또 한 겹', w.menu.path, ['together', 'host']);
@@ -92,10 +92,23 @@ say('같이 하기 — 방 안에서는 코드 복사와 닫기');
   tap(w, 'menu');
   check('방 이름이 옆에 뜬다', menuItems(w)[1].note, '방 K3P9 · 1명');
   into(w, 'together');
-  check('고를 것', labels(w), ['코드 복사', '방 닫기']);
-  check('코드가 옆에', menuItems(w)[0].note, 'K3P9');
+  check('고를 것', labels(w), ['이름 바꾸기', '코드 복사', '방 닫기']);
+  check('코드가 옆에', menuItems(w)[1].note, 'K3P9');
   w.mp.role = 'guest';
-  check('손님은 나가기', labels(w)[1], '방에서 나가기');
+  check('손님은 나가기', labels(w)[2], '방에서 나가기');
+}
+
+say('이름 바꾸기 — 메뉴에 있다');
+{
+  const w = make([]);
+  tap(w, 'menu');
+  into(w, 'together');
+  check('혼자일 때도 고칠 수 있다', labels(w), ['방 만들기', '코드로 입장', '이름 바꾸기']);
+
+  while (menuItems(w)[w.menu.index].id !== 'name') tap(w, 'duck');
+  tap(w, 'right');
+  check('셸이 이름 묻는 창을 연다', w.picked, ['name']);
+  check('메뉴는 닫힌다', w.menu.open, false);
 }
 
 say('내보내기 — 방장만, 그 자리에서');
@@ -106,8 +119,9 @@ say('내보내기 — 방장만, 그 자리에서');
   w.mp.others.set(3, { id: 3, name: '잠수', waiting: true, dead: true });
   tap(w, 'menu');
   into(w, 'together');
-  check('방장에게는 내보내기가 있다', labels(w), ['코드 복사', '내보내기', '방 닫기']);
-  check('몇 명인지 옆에', menuItems(w)[1].note, '2명');
+  check('방장에게는 내보내기가 있다', labels(w),
+        ['이름 바꾸기', '코드 복사', '내보내기', '방 닫기']);
+  check('몇 명인지 옆에', menuItems(w)[2].note, '2명');
 
   into(w, 'kick');
   check('사람 목록', labels(w), ['범창', '잠수']);
@@ -120,7 +134,7 @@ say('내보내기 — 방장만, 그 자리에서');
 
   w.mp.others.delete(3);                             // 셸이 끊고 알려 준다
   w.mp.others.delete(2);
-  check('다 내보내면 한 겹 나온다', labels(w), ['코드 복사', '방 닫기']);
+  check('다 내보내면 한 겹 나온다', labels(w), ['이름 바꾸기', '코드 복사', '방 닫기']);
   check('길도 나왔다', w.menu.path, ['together']);
 }
 
@@ -131,7 +145,7 @@ say('내보내기 — 손님은 못 한다');
   w.mp.others.set(1, { id: 1, name: '방장', waiting: false, dead: false });
   tap(w, 'menu');
   into(w, 'together');
-  check('나가기만 있다', labels(w), ['코드 복사', '방에서 나가기']);
+  check('나가기만 있다', labels(w), ['이름 바꾸기', '코드 복사', '방에서 나가기']);
 }
 
 say('화면 — 크기·자리·투명도·띄울 화면이 한 겹 안에 모인다');

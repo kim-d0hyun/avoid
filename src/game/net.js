@@ -277,6 +277,18 @@ export function handleMessage(world, shell, from, message, api) {
     return;
   }
 
+  // 손님이 이름을 고쳤다. 방장이 이름표를 갈아 끼우고 다음 스냅샷에 실어 나눠 준다.
+  if (message.t === 'nm') {
+    if (mp.role !== 'host') return;
+    const name = typeof message.n === 'string' ? message.n.trim().slice(0, 16) : '';
+    if (!name) return;
+    mp.names.set(from, name);
+    const other = mp.others.get(from);
+    if (other) other.name = name;
+    mp.namesSent = '';
+    return;
+  }
+
   if (message.t === 'ping') {
     shell.net.send({ t: 'pong', k: message.k }, from);
     return;
@@ -543,6 +555,19 @@ export function peerChanged(world, shell, id, name, joined, api) {
 
 export function roleChanged(world, role, code, myId, myName) {
   const mp = world.mp;
+  // **이름만 바뀐 것이면 이름만 바꾼다.**
+  //
+  // 셸은 이름을 고칠 때도 이 길로 알려 온다. 여기서 방 상태를 되감으면 이름을 고쳤다는
+  // 이유로 손님이 구경으로 밀려나고(waiting) 방장의 판 번호가 0으로 돌아간다.
+  if (mp.on && role === mp.role && code === mp.code && myId === mp.myId) {
+    if (myName !== mp.myName) {
+      mp.myName = myName;
+      mp.namesSent = '';                       // 방장은 다음 스냅샷에 새 이름표를 싣는다
+      // 손님 이름은 방장만 남들에게 나눠 줄 수 있다. 바뀐 걸 알린다.
+      if (role === 'guest') world.send?.({ t: 'nm', n: myName });
+    }
+    return;
+  }
   // 방이 바뀌면 「안 들린 시간」도 새로 센다.
   mp.heard = 0;
   mp.lost = false;

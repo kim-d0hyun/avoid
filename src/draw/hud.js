@@ -75,9 +75,12 @@ function fitCenter(ctx, world, w, h) {
 }
 
 export function drawIntro(ctx, world, time) {
+  // ⌥M 은 한 줄로 족하다. 게임마다 메뉴에서 하는 일이 달라 그 일을 적어 준다 —
+  // 배구가 제 목록에 ⌥M 을 또 넣어서 같은 키가 두 줄로 서 있었다.
+  const menuDoes = gameOf(world).teamNames ? '메뉴 · 편 고르기' : '메뉴 · 게임 바꾸기';
   const rows = [...gameOf(world).keys,
                 ['⌥ H', world.optionHide === false ? '숨기기' : '숨기기 (⌥ 를 떼도 숨는다)'],
-                ['⌥ M', '메뉴 · 게임 바꾸기']];
+                ['⌥ M', menuDoes]];
   const stop = gameOf(world).blocked?.(world);
   const hint = stop ? `${stop} — ⌥M 에서 편을 고른다`
     : world.mp.on && world.mp.role !== 'host' ? '방장이 시작하기를 기다리는 중'
