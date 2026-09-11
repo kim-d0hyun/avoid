@@ -517,6 +517,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             type: 'spot', spot,
           }),
           net: {
+            // 방장이 한 사람을 내보낸다. 들어와 놓고 잠수하면 판이 안 끝난다.
+            kick: (id) => window.webkit.messageHandlers.ddong.postMessage({
+              type: 'kick', id,
+            }),
             role: 'off', code: null, id: 0, name: '\(Net.escape(playerName))', peers: [],
             // to 를 안 주면 모두에게. 손님이 부르면 어차피 받는 곳은 호스트 하나다.
             send: (message, to) => window.webkit.messageHandlers.ddong.postMessage({
@@ -1141,6 +1145,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             if let spot = body["spot"] as? String { windowSpot = spot }
         case "optionHide":
             if let on = body["on"] as? Bool { hideOnOption = on }
+        case "kick":
+            if let id = body["id"] as? Int {
+                debugLog("내보냄 \(id)")
+                net.kick(id)
+                refreshMenu()
+            }
         case "net":
             // 게임이 짠 꾸러미를 그대로 흘려보낸다. 셸은 안을 열어 보지 않는다.
             if let payload = body["payload"] as? String {

@@ -110,6 +110,8 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
     spot: 'c',
     /// ⌥ 를 떼면 바로 숨을지. 숨기는 일은 셸이 한다.
     optionHide: true,
+    /// 잠깐 떠 있다 사라지는 한 줄. 왜 갑자기 혼자가 됐는지 같은 걸 알려 준다.
+    toast: null,
     /// 편이 있는 게임에서 내가 선 편 (0/1). 판이 바뀌어도 남는다.
     team: undefined,
     input: { left: false, right: false, jump: false, duck: false },
@@ -170,11 +172,11 @@ export function restart(world) {
   // 누르고 있는 키와 기록 콜백은 그대로 넘긴다 — 방향키를 잡은 채 다시 시작하면
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
-          mp, menu, screens, gameId, pick, fade, size, spot, optionHide,
+          mp, menu, screens, gameId, pick, fade, size, spot, optionHide, toast,
           team, debug, log, send } = world;
   Object.assign(world, createWorld(best, gameId),
                 { w, h, input, onRecord, onDeath, onMenu, onGameOver,
-                  mp, menu, screens, pick, fade, size, spot, optionHide,
+                  mp, menu, screens, pick, fade, size, spot, optionHide, toast,
                   team, debug, log, send });
   world.state = 'ready';
   // 혼자 할 때도 우승 표시가 남는다 (배구). 안 지우면 세리머니가 다음 판까지 따라와서
@@ -356,7 +358,17 @@ export function kill(world) {
   }
 }
 
+/// 잠깐 떠 있다 사라지는 한 줄. 모달을 띄우는 대신 이걸로 알린다 —
+/// 게임 위에 창이 뜨면 그것부터 치워야 한다.
+export function say(world, text, seconds = 4.5) {
+  world.toast = { text, left: seconds, full: seconds };
+}
+
 export function update(world, dt) {
+  if (world.toast) {
+    world.toast.left -= dt;
+    if (world.toast.left <= 0) world.toast = null;
+  }
   const p = world.player;
 
   // 혼자 할 때 메뉴는 판을 멈춘다. 같이 할 때는 못 멈춘다 — 남의 시계까지 세울 수는 없다.
@@ -479,6 +491,11 @@ function togetherItems(world) {
     ];
   }
   const rows = [{ id: 'copy', label: '코드 복사', note: mp.code ?? '' }];
+  // **방장만 내보낼 수 있다.** 들어와 놓고 잠수하면 판이 안 열린다 —
+  // 배구는 한쪽 편이 비면 안 열리고, 협동은 넷이 다 움직여야 한다.
+  if (mp.role === 'host' && mp.others.size) {
+    rows.push({ id: 'kick', into: 'kick', label: '내보내기', note: `${mp.others.size}명` });
+  }
   rows.push({ id: 'leave', label: mp.role === 'host' ? '방 닫기' : '방에서 나가기' });
   return rows;
 }
@@ -519,6 +536,18 @@ export function menuItems(world) {
       }));
     }
     case 'together': return togetherItems(world);
+    // 내보낼 사람 고르기. 다 내보내고 나면 고를 게 없으니 한 겹 나온다.
+    case 'together/kick': {
+      const rows = [...world.mp.others.values()].map((other) => ({
+        id: `kick:${other.id}`,
+        label: other.name || '누군가',
+        note: other.waiting ? '구경 중' : other.dead ? '탈락' : '하는 중',
+      }));
+      if (rows.length) return rows;
+      world.menu.path = ['together'];
+      world.menu.index = 0;
+      return togetherItems(world);
+    }
     case 'together/host':
       return games.map((game) => ({ id: `host:${game.id}`, label: game.name }));
     case 'screen': return screenItems(world);
@@ -597,7 +626,7 @@ export function menuBack(world) {
 
 /// 고르고도 메뉴를 열어 두는 것들. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다 —
 /// 창이 그 모니터에 뜨는 걸 보고 아니다 싶으면 바로 다른 걸 고른다.
-const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:', 'peek:'];
+const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:', 'peek:', 'kick:'];
 
 function chooseMenu(world) {
   const items = menuItems(world);

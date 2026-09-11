@@ -158,6 +158,21 @@ say('㉕ 방장이 혼자일 때 판 끝내기');
   ok('세리머니가 돈다', world.overFor > 0);
 }
 
+say('㉗ 방장이 나를 내보내면');
+{
+  const world = make('volley', true);
+  world.mp.role = 'guest';
+  world.mp.code = 'K3P9';
+  let left = 0;
+  world.onMenu = (a) => { if (a === 'leave') left++; };
+  net.handleMessage(world, shell, 0, { t: 'kick' }, api(world));
+  ok('방을 나간다', left === 1);
+  ok('왜 나갔는지 뜬다', world.toast?.text?.includes('내보냈다'));
+  // 알림은 잠깐만 떠 있다
+  for (let i = 0; i < 60 * 6; i++) w.update(world, 1 / 60);
+  ok('몇 초 뒤에는 사라진다', world.toast === null);
+}
+
 say('㉖ 고르는 화면에서 메뉴를 열고 게임 바꾸기');
 {
   const world = make('dodge');

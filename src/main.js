@@ -3,7 +3,7 @@
 import { boil, shirtColor } from './draw/ink.js';
 import { drawStickman } from './draw/stickman.js';
 import { makeGround, drawClock, drawIntro, drawFreeze, drawStamp, drawRoom, drawResults, drawMenu,
-  drawVictory, drawPick } from './draw/hud.js';
+  drawVictory, drawPick, drawToast } from './draw/hud.js';
 import { createWorld, resize, update, press, restart, spread, gameOf,
   pickGame } from './game/world.js';
 import { games } from './games/index.js';
@@ -66,6 +66,11 @@ world.onMenu = (action) => {
   }
   if (action.startsWith('spot:')) {
     shell.setSpot?.(action.slice(5));
+    return;
+  }
+  // 방장이 한 사람을 내보낸다. 끊는 건 전송 계층이 한다.
+  if (action.startsWith('kick:')) {
+    shell.net.kick?.(Number(action.slice(5)));
     return;
   }
   // ⌥ 를 떼면 숨는 스위치. 켜고 끄는 것도 창 쪽 일이다.
@@ -482,6 +487,7 @@ function render(time) {
     }
   }
   if (world.frozen > 0) drawFreeze(ctx, hud);
+  if (world.toast) drawToast(ctx, hud);
   if (world.menu.open) drawMenu(ctx, hud);
 }
 

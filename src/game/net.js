@@ -10,7 +10,7 @@
 
 // world.js 와 서로를 부르는 모양이 되지만, 값을 읽는 건 모듈이 다 올라온 뒤(호출 시점)라
 // 문제가 없다. 밀쳐 내는 세기는 물리 상수라 world.js 한 곳에만 둔다.
-import { ESCAPE_SHOVE, gameOf, pickGame } from './world.js';
+import { ESCAPE_SHOVE, gameOf, pickGame, say } from './world.js';
 import { games } from '../games/index.js';
 
 const SEND_HZ = 60;
@@ -267,6 +267,13 @@ export function handleMessage(world, shell, from, message, api) {
     const other = mp.others.get(from) ?? blankOther(from, mp.names.get(from) ?? '누군가');
     applyPacket(other, message, other.rtt / 2);
     mp.others.set(from, other);
+    return;
+  }
+
+  // 방장이 내보냈다. 4초 뒤에 「조용해졌다」로 알아채기 전에 이유를 알려 주고 나간다.
+  if (message.t === 'kick') {
+    say(world, '방장이 방에서 내보냈다');
+    world.onMenu?.('leave');
     return;
   }
 

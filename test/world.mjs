@@ -98,6 +98,42 @@ say('같이 하기 — 방 안에서는 코드 복사와 닫기');
   check('손님은 나가기', labels(w)[1], '방에서 나가기');
 }
 
+say('내보내기 — 방장만, 그 자리에서');
+{
+  const w = make([]);
+  w.mp.on = true; w.mp.role = 'host'; w.mp.code = 'K3P9'; w.mp.myId = 1;
+  w.mp.others.set(2, { id: 2, name: '범창', waiting: false, dead: false });
+  w.mp.others.set(3, { id: 3, name: '잠수', waiting: true, dead: true });
+  tap(w, 'menu');
+  into(w, 'together');
+  check('방장에게는 내보내기가 있다', labels(w), ['코드 복사', '내보내기', '방 닫기']);
+  check('몇 명인지 옆에', menuItems(w)[1].note, '2명');
+
+  into(w, 'kick');
+  check('사람 목록', labels(w), ['범창', '잠수']);
+  check('뭐 하고 있는지도', menuItems(w).map((i) => i.note), ['하는 중', '구경 중']);
+
+  tap(w, 'duck');                                    // 잠수
+  tap(w, 'right');
+  check('셸로 넘어간 것', w.picked, ['kick:3']);
+  check('목록에 남아 있다 (둘째도 내보낼 수 있다)', [w.menu.open, w.menu.path], [true, ['together', 'kick']]);
+
+  w.mp.others.delete(3);                             // 셸이 끊고 알려 준다
+  w.mp.others.delete(2);
+  check('다 내보내면 한 겹 나온다', labels(w), ['코드 복사', '방 닫기']);
+  check('길도 나왔다', w.menu.path, ['together']);
+}
+
+say('내보내기 — 손님은 못 한다');
+{
+  const w = make([]);
+  w.mp.on = true; w.mp.role = 'guest'; w.mp.code = 'K3P9';
+  w.mp.others.set(1, { id: 1, name: '방장', waiting: false, dead: false });
+  tap(w, 'menu');
+  into(w, 'together');
+  check('나가기만 있다', labels(w), ['코드 복사', '방에서 나가기']);
+}
+
 say('화면 — 크기·자리·투명도·띄울 화면이 한 겹 안에 모인다');
 {
   const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);

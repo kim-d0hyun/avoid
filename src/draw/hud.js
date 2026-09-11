@@ -201,6 +201,29 @@ function doodles(ctx, cx, cy, time) {
          { width: 1.5, color: PENCIL, seed: 66, amp: 0.4, halo: false });
 }
 
+/// 잠깐 떠 있다 사라지는 한 줄.
+///
+/// 「방장이 내보냈다」 같은 걸 알려 줄 자리가 없어서 여태 말없이 혼자로 돌아갔다.
+/// 모달을 띄우면 게임 위에 창이 뜨고 그것부터 치워야 하니, 종이쪽지 한 장으로 알린다.
+/// 마지막 0.6초에 사그라든다.
+export function drawToast(ctx, world) {
+  // 그리는 함수 이름이 text 라 변수는 label 로 받는다 — 가리면 그 자리에서 터진다.
+  const { text: label, left } = world.toast;
+  ctx.font = `700 15px ${HAN}`;
+  const w = ctx.measureText(label).width + 52;
+  const x = (world.w - w) / 2;
+  const y = 26;
+  const alpha = Math.min(1, left / 0.6);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  paperScrap(ctx, x, y, w, 44, 29);
+  // 빨간 볼펜 한 줄. 이 게임에서 빨강은 「너에게 중요한 것」 한 가지 뜻이다.
+  stroke(ctx, [[x + 14, y + 11], [x + 14, y + 33]],
+         { width: 2, color: RED, seed: 31, amp: 1, alpha: 0.85, halo: false });
+  text(ctx, label, x + 28, y + 29, { font: `700 15px ${HAN}`, color: INK, halo: 0 });
+  ctx.restore();
+}
+
 /// 다시 띄웠을 때 주는 준비 시간. 숨은 사이에 죽어 있으면 억울하다.
 export function drawFreeze(ctx, world) {
   const n = Math.ceil(world.frozen);

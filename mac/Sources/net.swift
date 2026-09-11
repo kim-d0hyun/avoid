@@ -525,6 +525,24 @@ final class Net {
         for peer in peers.values where peer.ready { line(peer, json) }
     }
 
+    /// 방장이 한 사람만 내보낸다.
+    ///
+    /// **왜 끊겼는지 알려 주고 나서 끊는다.** 말없이 끊으면 그쪽은 4초 뒤에 「조용해졌다」로
+    /// 알아채고, 그때까지 허공에 대고 자리를 보낸다. 마지막 줄이 나갈 틈을 조금 주고 끊는다.
+    func kick(_ id: Int) {
+        guard uplink == nil, let peer = peers[id] else { return }
+        line(peer, "{\"t\":\"kick\"}")
+        peers.removeValue(forKey: id)
+        let connection = peer.connection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { connection.cancel() }
+        delegate?.netPeerChanged(id: id, name: peer.name, joined: false)
+    }
+
+    /// 지금 방에 있는 사람들. 메뉴에 이름을 세울 때 쓴다.
+    var roster: [(id: Int, name: String)] {
+        peers.values.filter(\.ready).map { (id: $0.id, name: $0.name) }.sorted { $0.id < $1.id }
+    }
+
     // MARK: 나가기
 
     func leave() {
