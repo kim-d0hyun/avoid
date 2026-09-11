@@ -218,6 +218,7 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   stroke(ctx, [[shldX, shldY], [neckX, neckY]], pen(6));
   circle(ctx, headX, headY, HEAD_R, { width: w, color: INK, seed: seed + 7, amp: 0.55 });
 
+  drawMark(ctx, headX, headY, opts.mark, opts.color ?? INK, seed);
   drawFace(ctx, headX, headY, p, time, seed);
   ctx.restore();
 
@@ -262,8 +263,10 @@ function tagFont(ctx, label, size) {
 }
 
 function drawTag(ctx, p, opts) {
+  // 머리에 표가 있으면 이름표를 그만큼 올린다. 안 올리면 빨간 밑줄이 삐친 머리를 덮는다.
+  const lift = opts.mark === undefined || opts.mark === null ? 12 : 21;
   if (p.waiting) {
-    const y = p.groundY - p.air - BODY_H - 12;
+    const y = p.groundY - p.air - BODY_H - lift;
     const label = `${opts.name} · 다음 판`;
     text(ctx, label, p.x, y, {
       font: tagFont(ctx, label, 11), color: opts.color ?? PENCIL, align: 'center',
@@ -271,7 +274,7 @@ function drawTag(ctx, p, opts) {
     return;
   }
   if (p.dead) return;
-  const y = p.groundY - p.air - BODY_H - 12;
+  const y = p.groundY - p.air - BODY_H - lift;
   // 이름도 옷과 같은 색으로. 화면이 어수선할 때 누가 누군지 이걸로 잇는다.
   const font = tagFont(ctx, opts.name, 12);
   const tint = opts.color ?? (opts.mine ? INK : PENCIL);
@@ -315,6 +318,42 @@ function drawFace(ctx, cx, cy, p, time, seed) {
     circle(ctx, cx + 0.7, cy + 4.4, 2.4, { width: 1.6, color: INK, fill: INK, halo: false, seed: seed + 13, amp: 0.15 });
   } else {
     stroke(ctx, [[cx - 2.4, cy + 4.4], [cx + 2.6, cy + 4.2]], face);
+  }
+}
+
+/// 머리에 붙는 표. **색만으로는 누가 누군지 모른다.**
+///
+/// 넷이 탑처럼 쌓이면 이름표는 서로 가려지고, 창을 40% 로 줄이면 졸라맨 하나가 30픽셀이다.
+/// 그 크기에서 파랑과 보라는 같은 색이고, 색약인 사람에게는 처음부터 같은 색이다.
+/// 그래서 **실루엣**을 가른다 — 획 두세 개면 멀리서도 모양으로 읽힌다.
+///
+///   0 삐친 머리   1 안경   2 단발   3 모자
+///
+/// 옷 색과 같은 규칙(번호 나머지)으로 정해서, 색과 모양이 늘 짝을 이룬다.
+function drawMark(ctx, cx, cy, mark, color, seed) {
+  if (mark === undefined || mark === null) return;
+  const pen = (i, w = 1.9) => ({ width: w, color, seed: seed + 40 + i, amp: 0.3, halo: false });
+  const r = HEAD_R;
+  switch (((mark % 4) + 4) % 4) {
+    case 0:   // 삐친 머리 한 올. 정수리에서 앞으로 크게 휘어 오른다.
+      stroke(ctx, [[cx - 2, cy - r + 1], [cx - 1, cy - r - 5], [cx + 5, cy - r - 8],
+                   [cx + 2, cy - r - 3]], pen(0, 2.1));
+      break;
+    case 1:   // 동그란 안경. 눈은 그 밑에 그대로 그려진다.
+      circle(ctx, cx - 3.2, cy - 2, 3.4, pen(1, 1.5));
+      circle(ctx, cx + 3.6, cy - 2, 3.4, pen(2, 1.5));
+      stroke(ctx, [[cx - 0.2, cy - 2.2], [cx + 0.6, cy - 2.2]], pen(3, 1.4));
+      break;
+    case 2:   // 단발. 머리를 두르고 귀밑까지 내려온다.
+      stroke(ctx, [[cx - r - 0.5, cy + 3], [cx - r - 1, cy - 3], [cx - 3, cy - r - 1.5],
+                   [cx + 3, cy - r - 1.5], [cx + r + 1, cy - 3], [cx + r + 0.5, cy + 3]], pen(4, 2.2));
+      break;
+    default:  // 모자. 정수리를 덮는 굵은 띠 하나에 챙 하나 — 획 둘로 모자가 된다.
+      //        챙은 보는 쪽으로 나온다 (뒤집힌 공간이라 +x 가 늘 앞이다).
+      stroke(ctx, [[cx - r + 1.5, cy - 3.5], [cx - r + 3, cy - r - 1], [cx + 1, cy - r - 3],
+                   [cx + r - 2, cy - r], [cx + r - 0.5, cy - 3.5]], pen(5, 5.2));
+      stroke(ctx, [[cx + 1, cy - 4.6], [cx + r + 6.5, cy - 5.4]], pen(6, 2.6));
+      break;
   }
 }
 

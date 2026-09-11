@@ -436,6 +436,9 @@ function render(time) {
     // 옷 색은 보통 번호로 정하지만, 게임이 다르게 정할 수 있다 — 배구는 편(선 자리)으로 정한다.
     const game = gameOf(world);
     const shirtOf = (id, x) => game.shirt?.(world, x, id) ?? shirtColor(id);
+    // 머리 표. 옷 색과 같은 규칙으로 정해서 색과 모양이 늘 짝을 이룬다 —
+    // 겹쳐 서거나 창을 줄이면 색은 안 보여도 모양은 보인다.
+    const markOf = (id) => (world.mp.on ? ((id % 4) + 4) % 4 : null);
     // 방장은 이름 앞에 왕관. 판을 여는 사람이 누군지 보여야 한다.
     const hostId = world.mp.role === 'host' ? world.mp.myId : world.mp.hostId;
 
@@ -443,6 +446,7 @@ function render(time) {
     for (const other of world.mp.others.values()) {
       upright(other.x, world.groundY, () => drawStickman(ctx, other, time, boilFrame,
         { name: other.name, faded: other.dead, color: shirtOf(other.id, other.x),
+          mark: markOf(other.id),
           crown: world.mp.on && other.id === hostId }));
     }
     // 혼자 할 때는 색을 안 입힌다 — 구분할 사람이 없으면 그냥 낙서가 맞다.
@@ -452,6 +456,7 @@ function render(time) {
       name: world.mp.on ? world.mp.myName : null,
       mine: true,
       crown: world.mp.on && world.mp.role === 'host',
+      mark: markOf(world.mp.myId),
       color: world.mp.on || game.shirt ? shirtOf(world.mp.myId, world.player.x) : null,
     }));
   }
