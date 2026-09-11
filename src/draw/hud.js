@@ -39,23 +39,25 @@ export function makeGround(w) {
 }
 
 export function drawClock(ctx, world) {
-  const x = 68;
+  // 화면에서 제일 큰 글씨였다. 「오래 버티기」가 이 게임의 점수라 크게 뒀는데,
+  // 남의 일하는 화면 위에 얹는 물건치고는 과했다. 한 단계 줄인다.
+  const x = 56;
   const ms = Math.round(world.elapsed * 1000);
   const clock = formatMs(ms);
   const tally = gameOf(world).tally(world);
   const best = world.best.ms ? `최고 ${formatMs(world.best.ms)}   ${tally}` : tally;
 
-  ctx.font = `500 52px ${MONO}`;
+  ctx.font = `500 40px ${MONO}`;
   const wide = ctx.measureText(clock).width;
-  ctx.font = `600 15px ${HAN}`;
-  const width = Math.max(wide, ctx.measureText(best).width) + 46;
-  paperScrap(ctx, 34, 18, width, 104, 2);
+  ctx.font = `600 13px ${HAN}`;
+  const width = Math.max(wide, ctx.measureText(best).width) + 40;
+  paperScrap(ctx, 28, 16, width, 82, 2);
 
   // 노트 여백선. 빨간 볼펜은 이 선과 기록 갱신, 두 군데에만 쓴다.
-  stroke(ctx, [[48, 30], [48, 110]], { width: 2, color: RED, seed: 1, amp: 1.2, alpha: 0.8, halo: false });
+  stroke(ctx, [[40, 26], [40, 88]], { width: 2, color: RED, seed: 1, amp: 1.2, alpha: 0.8, halo: false });
 
-  text(ctx, clock, x, 80, { font: `500 52px ${MONO}`, color: INK, halo: 0 });
-  text(ctx, best, x + 3, 106, { font: `600 15px ${HAN}`, color: PENCIL, halo: 0 });
+  text(ctx, clock, x, 62, { font: `500 40px ${MONO}`, color: INK, halo: 0 });
+  text(ctx, best, x + 3, 84, { font: `600 13px ${HAN}`, color: PENCIL, halo: 0 });
 }
 
 /// 종이 한 장을 화면 안에 넣는다.
