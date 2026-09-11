@@ -109,7 +109,13 @@ shell.setGames?.(games.map((game) => ({ id: game.id, name: game.name })));
 window.__ddongPickGame = (id) => { pickGame(world, id); spread(world); };
 world.size = shell.size ?? 1;
 world.spot = shell.spot ?? 'c';
-shell.onLayout?.((size, spot) => { world.size = size; world.spot = spot; });
+// 창 크기가 바뀌면 판을 다시 맞춘다. 창이 먼저 줄고 이 알림이 뒤에 와서, 여기서
+// 한 번 더 맞춰야 새 배율이 그림에 반영된다.
+shell.onLayout?.((size, spot) => {
+  world.size = size;
+  world.spot = spot;
+  fit();
+});
 world.screens = shell.screens ?? [];
 shell.onScreens?.((list) => { world.screens = Array.isArray(list) ? list : []; });
 
@@ -137,8 +143,12 @@ function fit() {
   canvas.style.width = `${screenW}px`;
   canvas.style.height = `${screenH}px`;
 
-  const w = shared?.w ?? screenW;
-  const h = shared?.h ?? screenH;
+  // **창을 줄여도 판은 그대로다.** 작아진 창에 같은 판을 축소해서 그린다 —
+  // 창 크기만큼 판도 좁히면 코트만 좁아지고 졸라맨·똥은 그대로 커서, 같은 게임이
+  // 아니라 「사람이 커진 게임」이 된다. 화면 전체로 볼 때와 같은 그림이어야 한다.
+  const shrink = shared ? 1 : (world.size ?? 1);
+  const w = shared?.w ?? screenW / shrink;
+  const h = shared?.h ?? screenH / shrink;
   // squash 로 가로 늘림을 물건 단위로 되돌린다 → 화면 비율이 달라도 안 찌그러진다.
   view = { dpr, sx: screenW / w, sy: screenH / h, screenW, screenH, squash: 1 };
   view.squash = view.sy / view.sx;
@@ -436,8 +446,13 @@ function render(time) {
   ctx.restore();
 
   // ── 글자판은 화면 좌표로. 판이 커지든 작아지든 글씨 크기는 그대로여야 읽힌다.
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const hud = { ...world, w: screenW, h: screenH, groundY: world.groundY * sy };
+  //
+  // 다만 **창을 줄이면 글자판도 조금은 줄인다.** 안 줄이면 605픽셀짜리 창에서 시계가
+  // 화면의 절반을 덮는다. 판만큼(0.4배) 줄이면 이번엔 못 읽는다 — 제곱근만큼만 줄이고
+  // 절반에서 멈춘다. 가상 화면을 그만큼 넓게 잡으면 글자 크기와 여백이 한꺼번에 준다.
+  const hs = Math.max(0.5, Math.min(1, Math.sqrt(sy)));
+  ctx.setTransform(dpr * hs, 0, 0, dpr * hs, 0, 0);
+  const hud = { ...world, w: screenW / hs, h: screenH / hs, groundY: world.groundY * sy / hs };
   if (world.state === 'pick') {
     drawPick(ctx, hud, time);
     if (world.menu.open) drawMenu(ctx, hud);
