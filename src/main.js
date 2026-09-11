@@ -85,6 +85,11 @@ world.onMenu = (action) => {
     shell.setBare?.(action.slice(5) === '1');
     return;
   }
+  // 스크린샷·화면 공유에 잡히기. 창의 sharingType 은 셸이 바꾼다.
+  if (action.startsWith('capture:')) {
+    shell.setCapture?.(action.slice(8) === '1');
+    return;
+  }
   if (action.startsWith('team:')) {
     const game = gameOf(world);
     game.swap?.(world, shell, Number(action.slice(5)));
@@ -138,10 +143,11 @@ world.spot = shell.spot ?? 'c';
 world.optionHide = shell.optionHide !== false;
 // 창 크기가 바뀌면 판을 다시 맞춘다. 창이 먼저 줄고 이 알림이 뒤에 와서, 여기서
 // 한 번 더 맞춰야 새 배율이 그림에 반영된다.
-shell.onLayout?.((size, spot, optionHide, bare) => {
+shell.onLayout?.((size, spot, optionHide, bare, capture) => {
   world.size = size;
   world.spot = spot;
   world.optionHide = optionHide !== false;
+  world.capture = !!capture;
   const was = world.bare;
   world.bare = !!bare;
   // ⌥P 로 바꾼 순간 무엇이 됐는지 한 줄. 위의 작은 표시가 바뀐 것만으로는 눈치채기 어렵다.
@@ -152,6 +158,7 @@ shell.onLayout?.((size, spot, optionHide, bare) => {
   fit();
 });
 world.bare = !!shell.bare;
+world.capture = !!shell.capture;
 world.screens = shell.screens ?? [];
 shell.onScreens?.((list) => { world.screens = Array.isArray(list) ? list : []; });
 

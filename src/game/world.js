@@ -110,6 +110,7 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
     spot: 'c',
     /// ⌥ 를 떼면 바로 숨을지. 숨기는 일은 셸이 한다.
     optionHide: true,
+    capture: false,           // 스크린샷·화면 공유에 잡히나. 기본은 안 잡힌다
     /// ⌥ 고정 — 방향키·Space 가 ⌥ 없이 온다. 키를 거는 일은 셸이 한다.
     bare: false,
     /// 잠깐 떠 있다 사라지는 한 줄. 왜 갑자기 혼자가 됐는지 같은 걸 알려 준다.
@@ -177,11 +178,11 @@ export function restart(world) {
   // 누르고 있는 키와 기록 콜백은 그대로 넘긴다 — 방향키를 잡은 채 다시 시작하면
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
-          mp, menu, screens, gameId, pick, fade, size, spot, optionHide, bare, toast,
+          mp, menu, screens, gameId, pick, fade, size, spot, optionHide, bare, capture, toast,
           team, debug, log, send, stage, bagResets, seen } = world;
   Object.assign(world, createWorld(best, gameId),
                 { w, h, input, onRecord, onDeath, onMenu, onGameOver,
-                  mp, menu, screens, pick, fade, size, spot, optionHide, bare, toast,
+                  mp, menu, screens, pick, fade, size, spot, optionHide, bare, capture, toast,
                   team, debug, log, send, stage, bagResets, seen });
   world.state = 'ready';
   // 혼자 할 때도 우승 표시가 남는다 (배구). 안 지우면 세리머니가 다음 판까지 따라와서
@@ -486,6 +487,7 @@ function screenNote(world) {
   const parts = [sizeName(world.size ?? 1)];
   if ((world.size ?? 1) < 0.999) parts.push(spotName(world.spot ?? 'c'));
   if ((world.fade ?? 1) < 0.99) parts.push(`${Math.round(world.fade * 100)}%`);
+  if (world.capture) parts.push('캡처 켬');
   return parts.join(' · ');
 }
 
@@ -533,6 +535,11 @@ function screenItems(world) {
   const bare = !!world.bare;
   rows.push({ id: `bare:${bare ? 0 : 1}`, label: '⌥ 고정 — 방향키만으로 (⌥P)',
               note: bare ? '켜짐' : '꺼짐', mark: bare });
+  // 스크린샷·화면 공유에 잡히나. 평소엔 안 잡힌다 — 회의 중에 띄워도 남에게 안 보이는 게 이 창의
+  // 존재 이유다. 그런데 그러면 버그를 스크린샷으로 보여 줄 수가 없다. 필요할 때만 켠다.
+  const capture = !!world.capture;
+  rows.push({ id: `capture:${capture ? 0 : 1}`, label: '스크린샷에 잡히기',
+              note: capture ? '켜짐 — 화면 공유에도 보인다' : '꺼짐', mark: capture });
   if (world.screens.length > 1) {
     const here = world.screens.find((screen) => screen.current);
     rows.push({ id: 'where', into: 'where', label: '띄울 화면', note: here?.name ?? '' });
@@ -652,7 +659,7 @@ export function menuBack(world) {
 
 /// 고르고도 메뉴를 열어 두는 것들. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다 —
 /// 창이 그 모니터에 뜨는 걸 보고 아니다 싶으면 바로 다른 걸 고른다.
-const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:', 'peek:', 'bare:', 'kick:'];
+const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:', 'peek:', 'bare:', 'capture:', 'kick:'];
 
 function chooseMenu(world) {
   const items = menuItems(world);

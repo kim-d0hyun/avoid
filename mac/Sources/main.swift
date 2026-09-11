@@ -21,6 +21,7 @@ private let sizeKey = "windowSize"
 private let spotKey = "windowSpot"
 private let optionHideKey = "hideOnOption"
 private let bareKey = "bareKeys"
+private let captureKey = "captureVisible"
 
 /// 설정이 사는 곳.
 ///
@@ -276,8 +277,22 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
 
     private func pushLayout() {
         webView?.evaluateJavaScript(
-            "window.__ddongLayout && window.__ddongLayout(\(windowSize), '\(windowSpot)', \(hideOnOption), \(bareKeys))")
+            "window.__ddongLayout && window.__ddongLayout(\(windowSize), '\(windowSpot)', \(hideOnOption), \(bareKeys), \(captureVisible))")
     }
+
+    /// **스크린샷·화면 공유에 잡히나.** 기본은 안 잡힌다 — 회의 중에 띄워도 남에게 안 보이는 게
+    /// 이 창의 존재 이유다. 그런데 그러면 버그를 스크린샷으로 보여 줄 수가 없다 (찍으면 뒤의 창만
+    /// 나온다). 켜면 잡힌다. 끄는 걸 잊지 않게 메뉴 첫 줄 옆에도 적힌다.
+    private var captureVisible: Bool {
+        get { store.bool(forKey: captureKey) || ProcessInfo.processInfo.environment["DDONG_CAPTURE"] != nil }
+        set {
+            store.set(newValue, forKey: captureKey)
+            window?.sharingType = captureVisible ? .readOnly : .none
+            pushLayout()
+            refreshMenu()
+        }
+    }
+    @objc private func toggleCapture() { captureVisible = !captureVisible }
 
     private func applyFade() {
         window?.alphaValue = windowFade
@@ -500,8 +515,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.isReleasedWhenClosed = false
         // 화면 공유·녹화에는 안 잡힌다. 회의 중에 화면을 띄워도 남에게는 안 보인다.
-        // 개발할 때만 DDONG_CAPTURE=1 로 풀어 스크린샷을 찍는다.
-        window.sharingType = ProcessInfo.processInfo.environment["DDONG_CAPTURE"] != nil ? .readOnly : .none
+        // 스크린샷을 찍어 보여 주고 싶으면 메뉴에서 「스크린샷에 잡히기」를 켠다 (개발은 DDONG_CAPTURE=1).
+        window.sharingType = captureVisible ? .readOnly : .none
 
         let config = WKWebViewConfiguration()
         let web = Bundle.main.resourceURL!.appendingPathComponent("web")
@@ -566,6 +581,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
           spot: '\(windowSpot)',
           optionHide: \(hideOnOption),
           bare: \(bareKeys),
+          capture: \(captureVisible),
+          setCapture: (on) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'capture', on,
+          }),
           setBare: (on) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'bare', on,
           }),
@@ -787,6 +806,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         peek.target = self
         peek.state = hideOnOption ? .on : .off
         menu.addItem(peek)
+
+        let capture = NSMenuItem(title: "스크린샷·화면 공유에 잡히기", action: #selector(toggleCapture),
+                                 keyEquivalent: "")
+        capture.target = self
+        capture.state = captureVisible ? .on : .off
+        menu.addItem(capture)
 
         // 창 위치. 화면 전체일 때는 놓을 자리가 하나뿐이라 안 보여 준다.
         if windowSize < 0.999 {
@@ -1281,6 +1306,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             if let on = body["on"] as? Bool { hideOnOption = on }
         case "bare":
             if let on = body["on"] as? Bool { bareKeys = on }
+        case "capture":
+            if let on = body["on"] as? Bool { captureVisible = on }
         case "kick":
             if let id = body["id"] as? Int {
                 debugLog("내보냄 \(id)")
