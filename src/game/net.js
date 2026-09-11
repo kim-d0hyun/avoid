@@ -11,8 +11,15 @@
 // world.js 와 서로를 부르는 모양이 되지만, 값을 읽는 건 모듈이 다 올라온 뒤(호출 시점)라
 // 문제가 없다. 밀쳐 내는 세기는 물리 상수라 world.js 한 곳에만 둔다.
 import { ESCAPE_SHOVE, gameOf, pickGame } from './world.js';
+import { games } from '../games/index.js';
 
 const SEND_HZ = 60;
+/// 이만큼 아무 소식이 없으면 상대가 사라진 것으로 친다.
+///
+/// 끊긴 것을 TCP 가 늘 알려 주지는 않는다. 방장 쪽 맥이 잠들거나 프로세스가 갑자기
+/// 죽으면 **연결은 열려 있는 채로 아무것도 안 온다.** 그러면 손님은 허공에 대고 60Hz 로
+/// 계속 보내면서 화면은 멈춰 있게 된다 — 실제로 그랬다. 그래서 「얼마나 안 들렸나」를 센다.
+const LOST_AFTER = 4;
 /// 예측을 이만큼 넘어가서까지 밀지는 않는다. 꾸러미가 끊기면 그 자리에 세운다.
 const MAX_LEAD = 0.18;
 /// 지연을 메우려고 미리 내다보는 한도. 망이 요동쳐도 여기서 끊어 헛것이 안 보이게 한다.
@@ -44,6 +51,13 @@ export function createSession() {
     pingTimer: 0.15,
     pingSeq: 0,
     pings: new Map(),
+    /// 마지막으로 소식을 들은 때. 끊긴 것을 알아채려고 센다.
+    heard: 0,
+    lost: false,
+    /// 방장 번호. 손님은 꾸러미에서 받고, 방장은 자기 번호다.
+    hostId: -1,
+    /// 마지막으로 보낸 이름표. 바뀔 때만 다시 싣는다.
+    namesSent: '',
   };
 }
 
@@ -55,6 +69,7 @@ function blankOther(id, name) {
     // 마지막으로 받은 상태와, 그걸 받은 뒤 흐른 시간.
     baseX: 0, baseAir: 0, vx: 0, vy: 0, age: 0, errorX: 0, rtt: 0.008,
     state: 2, waiting: true, grabbing: -1, escapes: 0, dodged: 0, seenEscapes: 0, grabAim: 0,
+    heard: 0,
     x: 0, air: 0, crouch: 0, tcrouch: 0,
     facing: 1, walk: 0, vyDraw: 0, dead: true, groundY: 0, danger: false, deadFor: 0,
   };
@@ -162,6 +177,25 @@ export function pump(world, dt, shell) {
     shell.net.send({ t: 'ping', k: key });
   }
 
+  // 소식이 끊겼나.
+  if (mp.role === 'guest') {
+    if (!mp.heard) mp.heard = now();
+    if (!mp.lost && now() - mp.heard > LOST_AFTER) {
+      // 허공에 대고 계속 보내지 않는다. 방을 놓고 혼자로 돌아간다.
+      mp.lost = true;
+      world.onMenu?.('leave');
+      return;
+    }
+  } else if (mp.role === 'host') {
+    // 조용해진 손님은 내보낸다. 안 그러면 없는 사람을 기다리느라 판이 안 끝난다.
+    for (const other of [...mp.others.values()]) {
+      if (!other.heard) { other.heard = now(); continue; }
+      if (now() - other.heard > LOST_AFTER) {
+        peerChanged(world, shell, other.id, other.name, false, { spread: () => {} });
+      }
+    }
+  }
+
   mp.sendTimer -= dt;
   if (mp.sendTimer > 0) return;
   mp.sendTimer += 1 / SEND_HZ;
@@ -191,7 +225,19 @@ export function pump(world, dt, shell) {
     vw: Math.round(world.w), vh: Math.round(world.h),
     // **무슨 게임을 하고 있나.** 방장이 정하고 방 전체가 따라간다.
     g: world.gameId,
+    // 방장이 누군지. 손님은 이걸 보고 머리 위에 왕관을 씌운다 —
+    // 판을 여는 사람이 누군지 보여야 「왜 시작이 안 되지」를 안 묻는다.
+    h: mp.myId,
   };
+  // **이름표.** 손님은 남의 이름을 알 길이 없다 — 방장만 join 꾸러미로 듣는다.
+  // 바뀔 때만 싣는다. 60Hz 로 매번 보내면 사람이 여덟이어도 쓸데없이 두껍다.
+  const roster = [[mp.myId, mp.myName], ...mp.names.entries()]
+    .map(([id, label]) => [id, label ?? '']);
+  const stamp = JSON.stringify(roster);
+  if (stamp !== mp.namesSent) {
+    snapshot.nm = roster;
+    mp.namesSent = stamp;
+  }
   // 게임이 손님에게 넘길 것. 똥은 새로 뿌린 것만, 공은 매번 자리와 속도를 통째로.
   const pack = gameOf(world).pack?.(world);
   if (pack) snapshot.x = pack;
@@ -203,6 +249,17 @@ export function pump(world, dt, shell) {
 export function handleMessage(world, shell, from, message, api) {
   const mp = world.mp;
   if (!mp.on) return;
+
+  // **무엇이 왔든 맨 먼저 「들었다」를 찍는다.**
+  //
+  // 손님이 보내는 건 거의 전부 자리 꾸러미(['p', ...])다. 이걸 아래 switch 뒤에서 찍으면
+  // 자리 꾸러미는 그 앞에서 return 해 버려 영영 안 찍힌다 — 그러면 멀쩡히 놀고 있는
+  // 손님을 조용해졌다고 내보내고, 다음 꾸러미에 이름 없는 「누군가」로 되살아난다.
+  if (mp.role === 'guest') mp.heard = now();
+  else if (mp.role === 'host') {
+    const talker = mp.others.get(from);
+    if (talker) talker.heard = now();
+  }
 
   // 손님이 보내는 자리 꾸러미. 배열로 와서 첫 칸이 종류다.
   if (Array.isArray(message) && message[0] === 'p') {
@@ -248,10 +305,30 @@ export function handleMessage(world, shell, from, message, api) {
       // 순간마다 조금씩 다르다.
       mp.hostMs = message.ms;
       mp.round = message.r;
+      if (Number.isFinite(message.h)) mp.hostId = message.h;
+      // 방장이 보내 준 이름표. 이미 만들어 둔 사람의 이름도 같이 고친다.
+      if (Array.isArray(message.nm)) {
+        for (const row of message.nm) {
+          if (!Array.isArray(row) || row.length !== 2) continue;
+          const [id, label] = row;
+          if (!Number.isFinite(id) || typeof label !== 'string') continue;
+          mp.names.set(id, label);
+          const known = mp.others.get(id);
+          if (known) known.name = label;
+        }
+      }
       // 방장이 다른 게임을 하고 있으면 따라간다. 방 전체가 같은 게임을 하는 게 규칙이다.
-      if (message.g && message.g !== world.gameId) pickGame(world, message.g);
+      // 모르는 게임 이름이 오면 무시한다. gameById 가 첫 게임으로 떨어뜨려서
+      // 방장은 배구인데 나만 똥피하기가 되는 일이 없게 한다.
+      if (typeof message.g === 'string' && message.g !== world.gameId
+          && games.some((g) => g.id === message.g)) {
+        pickGame(world, message.g);
+      }
 
-      for (const row of message.pl) {
+      // **모양을 안 믿는다.** 남이 보낸 글자다 — 줄이 잘렸거나, 다음 버전이 칸을 바꿨거나,
+      // 아무거나 올 수 있다. 여기서 터지면 그 프레임 처리가 통째로 날아간다.
+      for (const row of Array.isArray(message.pl) ? message.pl : []) {
+        if (!Array.isArray(row) || row.length < 8) continue;
         if (row[0] === mp.myId) continue; // 내 몸은 내가 안다
         const other = mp.others.get(row[0]) ?? blankOther(row[0], mp.names.get(row[0]) ?? '');
         // 여기까지 오는 데 걸린 시간 = 방장이 들고 있던 시간 + 방장에서 나까지의 편도.
@@ -270,7 +347,7 @@ export function handleMessage(world, shell, from, message, api) {
         mp.waiting = true;
         world.player.dead = true;
       }
-      if (message.x) gameOf(world).unpack?.(world, message.x);
+      if (message.x && typeof message.x === 'object') gameOf(world).unpack?.(world, message.x);
       if (message.st === 'ready' && world.state !== 'ready') world.state = 'ready';
       return;
     }
@@ -286,7 +363,7 @@ export function handleMessage(world, shell, from, message, api) {
       world.state = 'play';
       return;
     case 'over':
-      mp.results = message.results;
+      mp.results = Array.isArray(message.results) ? message.results : [];
       mp.winner = message.winner ?? null;
       world.state = 'over';
       world.overFor = 0;
@@ -459,6 +536,10 @@ export function peerChanged(world, shell, id, name, joined, api) {
 
 export function roleChanged(world, role, code, myId, myName) {
   const mp = world.mp;
+  // 방이 바뀌면 「안 들린 시간」도 새로 센다.
+  mp.heard = 0;
+  mp.lost = false;
+  mp.namesSent = '';
   mp.role = role;
   mp.code = code;
   mp.myId = myId;

@@ -204,7 +204,7 @@ final class Net {
                 DispatchQueue.main.async {
                     self?.leave()
                     self?.delegate?.netRoleChanged(role: "off", code: nil, myId: 0,
-                                                   note: "방이 닫혔다 (\(error.localizedDescription))")
+                                                   note: Net.why(error))
                 }
             default:
                 break
@@ -558,6 +558,27 @@ final class Net {
     // MARK: 문자열 잡일
 
     /// 손으로 만드는 JSON 은 여기 둘뿐이라 이스케이프도 손으로 한다.
+    /// 방이 안 열린 까닭을 사람 말로 옮긴다.
+    ///
+    /// 원문은 「The operation couldn't be completed. (Network.NWError error 48 ...)」 같은
+    /// 것이라, 그대로 띄우면 받은 사람은 뭘 해야 할지 모른다. 흔한 것 몇 가지만 골라 준다.
+    static func why(_ error: NWError) -> String {
+        if case let .posix(code) = error {
+            switch code {
+            case .EADDRINUSE:
+                return "이 맥에서 이미 방을 열어 두었다. 먼저 그 방을 닫아야 새로 연다 "
+                     + "(메뉴 막대 💩 → 방 닫기). 몰겜이 두 벌 떠 있는 것은 아닌지도 본다."
+            case .EACCES, .EPERM:
+                return "망을 쓸 권한이 없다. 시스템 설정 → 개인정보 보호 및 보안 → "
+                     + "로컬 네트워크 에서 「몰겜」을 켜야 한다."
+            case .ENETDOWN, .ENETUNREACH:
+                return "와이파이가 끊겨 있다. 붙고 나서 다시 열어라."
+            default: break
+            }
+        }
+        return "방이 닫혔다 (\(error.localizedDescription))"
+    }
+
     static func escape(_ text: String) -> String {
         text.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")

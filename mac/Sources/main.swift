@@ -938,19 +938,33 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
 // MARK: - 전송 계층에서 올라오는 것들
 
 extension App: NetDelegate {
+    /// **반드시 메인 스레드에서 한다.**
+    ///
+    /// 전송 계층은 자기 큐에서 돌고, 거기서 그대로 웹뷰를 건드리면 안 된다 —
+    /// evaluateJavaScript 는 메인 스레드 전용이라 다른 스레드에서 부르면 **아무 말 없이
+    /// 안 먹는다.** 손님 이름이 「누군가」로 남아 있던 게 이것 때문이었다.
+    /// 배열(inbound)도 여기서만 만지게 해서 두 스레드가 같이 손대는 일을 없앤다.
+    private func onMain(_ block: @escaping () -> Void) {
+        if Thread.isMainThread { block() } else { DispatchQueue.main.async(execute: block) }
+    }
+
     func netRoleChanged(role: String, code: String?, myId: Int, note: String?) {
-        pushNetRole()
-        refreshMenu()
-        guard let note else { return }
-        debugLog("알림: \(note)")
-        if !autoRoom { alert(title: "같이 하기", body: note) }
+        onMain { [self] in
+            pushNetRole()
+            refreshMenu()
+            guard let note else { return }
+            debugLog("알림: \(note)")
+            if !autoRoom { alert(title: "같이 하기", body: note) }
+        }
     }
 
     func netPeerChanged(id: Int, name: String, joined: Bool) {
-        debugLog("\(name)(\(id)) \(joined ? "들어옴" : "나감")")
-        webView.evaluateJavaScript(
-            "window.__ddongNetPeer && window.__ddongNetPeer(\(id), \(jsLiteral(name)), \(joined))")
-        refreshMenu()
+        onMain { [self] in
+            debugLog("\(name)(\(id)) \(joined ? "들어옴" : "나감")")
+            webView.evaluateJavaScript(
+                "window.__ddongNetPeer && window.__ddongNetPeer(\(id), \(jsLiteral(name)), \(joined))")
+            refreshMenu()
+        }
     }
 
     /// 바로 안 넘기고 모은다. 넘기는 일은 60Hz 짜리 poll 이 한다.
@@ -960,8 +974,12 @@ extension App: NetDelegate {
         guard let data = json.data(using: .utf8),
               (try? JSONSerialization.jsonObject(with: data)) != nil
         else { return }
-        inbound.append("[\(from),\(json)]")
-        if inbound.count > 512 { inbound.removeFirst(inbound.count - 512) }
+        // 배열은 메인 스레드에서만 만진다. 여기는 전송 계층의 큐라, 그대로 이어 붙이면
+        // 60Hz 로 읽는 poll 과 두 스레드가 같은 배열을 동시에 손대게 된다.
+        onMain { [self] in
+            inbound.append("[\(from),\(json)]")
+            if inbound.count > 512 { inbound.removeFirst(inbound.count - 512) }
+        }
     }
 
     private func flushInbound() {

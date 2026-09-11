@@ -114,6 +114,19 @@ export function teams(world) {
   return rows;
 }
 
+/// 한쪽 편이 비었나. 비었으면 그 까닭을 돌려준다.
+///
+/// **2대1도 된다.** 편이 안 맞아도 하고 싶으면 하는 것이다 — 사무실에서 셋이 모이면
+/// 그렇게 논다. 다만 **한쪽이 비면 안 된다.** 상대 없이 넘기는 건 배구가 아니고,
+/// 공이 빈 코트에 떨어지면 그냥 점수만 쌓인다.
+function emptySide(world) {
+  if (!world.mp.on) return null;              // 혼자면 연습이니 막지 않는다
+  const rows = teams(world);
+  if (!rows[0].length) return '빨강 편에 아무도 없다';
+  if (!rows[1].length) return '파랑 편에 아무도 없다';
+  return null;
+}
+
 function serve(world, toSide) {
   const b = world.bag;
   b.ball.x = toSide === 0 ? world.w * 0.25 : world.w * 0.75;
@@ -208,11 +221,16 @@ export function spike(world) {
   if (!b?.ball || world.state !== 'play' || p.dead || b.wait > 0) return false;
 
   // 손이 안 닿으면 **몸을 던진다.** 같은 키로 치기와 슬라이딩이 갈리는 기준은 거리다 —
-  // 닿으면 치고, 안 닿으면 그쪽으로 미끄러진다. 원판도 달리며 누르면 다이빙이 나간다.
+  // 닿으면 치고, 안 닿으면 미끄러진다.
+  //
+  // **어느 쪽으로 던질지는 방향키가 정한다.** 공 쪽으로만 던지게 두면, 공은 대개 네트
+  // 쪽에 있으니 늘 같은 방향으로만 몸을 날리게 된다 — 실제로 그랬다.
+  // ⌥← 나 ⌥→ 를 잡고 누르면 그쪽으로, 아무것도 안 잡았으면 공 쪽으로 간다.
   const gap = b.ball.x - p.x;
   const dyNow = b.ball.y - (p.groundY - p.air - BODY_H * 0.7);
   if (gap * gap + dyNow * dyNow > SPIKE_REACH * SPIKE_REACH && p.air <= 0) {
-    return startSlide(world, Math.sign(gap) || p.facing);
+    const lean = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
+    return startSlide(world, lean || Math.sign(gap) || p.facing);
   }
 
   const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0 };
@@ -271,7 +289,7 @@ export default {
   keys: [['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
          ['⌥ Space', '때리기 — 뛰어서 누르면 강타'],
          ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↓', '내리꽂기'],
-         ['⌥ Space (멀 때)', '슬라이딩 — 몸을 던져 받는다'],
+         ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 를 잡고 누르면 그쪽으로'],
          ['⌥ M', '편 바꾸기']],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
@@ -284,13 +302,7 @@ export default {
   /// **2대1도 된다.** 편이 안 맞아도 하고 싶으면 하는 것이다 — 사무실에서 셋이 모이면
   /// 그렇게 논다. 다만 **한쪽이 비면 안 된다.** 상대 없이 넘기는 건 배구가 아니고,
   /// 공이 빈 코트에 떨어지면 그냥 점수만 쌓인다.
-  blocked(world) {
-    if (!world.mp.on) return null;              // 혼자면 연습이니 막지 않는다
-    const rows = teams(world);
-    if (!rows[0].length) return '빨강 편에 아무도 없다';
-    if (!rows[1].length) return '파랑 편에 아무도 없다';
-    return null;
-  },
+  blocked: (world) => emptySide(world),
   /// 옷 색은 번호가 아니라 **선 자리**로 정한다. 왼쪽은 빨강, 오른쪽은 파랑.
   shirt: (world, x) => TEAM_INK[sideOfX(world, x)],
   /// ⌥Space 를 이 게임이 가져간다.
@@ -326,7 +338,7 @@ export default {
   fresh: () => ({
     ball: { x: 0, y: 0, vx: 0, vy: 0, spin: 0, spinV: 0, hit: 0, smash: 0, hitX: 0, hitY: 0 },
     tail: [], tailT: 0,
-    score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false,
+    score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false, emptyFor: 0,
     // 손님이 받은 공을 부드럽게 따라가려고 남겨 두는 것.
     age: 0, errorX: 0, errorY: 0, baseX: undefined,
   }),
@@ -370,6 +382,16 @@ export default {
 
     // 자국은 서브를 기다리는 동안에도 사그라든다. 안 그러면 그 자리에 얼어붙는다.
     ball0(b, dt);
+    // **판이 도는 중에 한쪽이 비면 거기서 끊는다.** 안 그러면 빈 코트에 공이 떨어지며
+    // 혼자 남은 편이 다섯 점을 채운다 — 이긴 것도 아니고 진 것도 아닌 판이 된다.
+    b.emptyFor = emptySide(world) ? (b.emptyFor ?? 0) + dt : 0;
+    if (b.emptyFor > 0.6) {
+      b.emptyFor = 0;
+      b.score = [0, 0];
+      world.onGameOver?.({ name: null, rows: [] });
+      return;
+    }
+
     if (b.wait > 0) { b.wait -= dt; return; }
 
     const ball = b.ball;
@@ -560,8 +582,8 @@ export default {
   unpack(world, data) {
     const b = world.bag;
     // 방장이 나눠 준 편 명단. 내 편이 여기 적힌 대로 바뀐다.
-    if (data?.tm) {
-      b.sides = new Map(data.tm);
+    if (Array.isArray(data?.tm)) {
+      b.sides = new Map(data.tm.filter((r) => Array.isArray(r) && r.length === 2));
       const mine = b.sides.get(world.mp.myId);
       if (mine !== undefined && mine !== world.team) {
         world.team = mine;
@@ -571,7 +593,9 @@ export default {
         if (mine === 1 && world.player.x < half) world.player.x = half * 1.4;
       }
     }
-    if (!data?.b) return;
+    // 여섯 칸짜리 숫자 배열이 아니면 손대지 않는다. 하나라도 이상하면 공이 NaN 이 되고,
+    // 그 NaN 이 다음 꾸러미의 오차 계산에 되먹여져 영영 안 돌아온다.
+    if (!Array.isArray(data?.b) || data.b.length < 6 || !data.b.every(Number.isFinite)) return;
     // 지금 그리고 있던 자리와 방금 온 자리의 차이를 남겨 두고 60ms 에 걸쳐 녹인다.
     // 사람한테 쓰는 것과 같은 방법이다 — 톡 끊어 옮기면 공이 순간이동한다.
     // 첫 꾸러미이거나 그리던 값이 성치 않으면 오차를 녹이지 않고 그냥 그 자리에 놓는다.
@@ -587,8 +611,8 @@ export default {
     b.errorY = first ? 0 : showY - y;
     if (Math.abs(b.errorX) > 200 || Math.abs(b.errorY) > 200) { b.errorX = 0; b.errorY = 0; }
     if (first) { b.ball.x = x; b.ball.y = y; b.tail = []; }
-    b.score = data.s ?? b.score;
-    b.wait = data.w ?? 0;
+    if (Array.isArray(data.s) && data.s.length === 2 && data.s.every(Number.isFinite)) b.score = data.s;
+    b.wait = Number.isFinite(data.w) ? data.w : 0;
     b.started = true;
   },
 

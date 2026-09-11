@@ -213,6 +213,16 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
 }
 
 /// 머리 위 이름표. 뒤집힌 공간 밖에서 그린다 — 안에서 그리면 왼쪽을 볼 때 글자가 뒤집힌다.
+/// 작은 왕관. 세 봉우리에 아래를 받치는 선 하나 — 이 크기에서는 이게 왕관으로 읽히는
+/// 최소한이다. 더 그리면 뭉개진다.
+function drawCrown(ctx, cx, cy, color) {
+  stroke(ctx, [[cx - 5, cy], [cx - 5, cy - 5], [cx - 2.5, cy - 2], [cx, cy - 6.5],
+               [cx + 2.5, cy - 2], [cx + 5, cy - 5], [cx + 5, cy]],
+         { width: 1.7, color, seed: 88, amp: 0.35, halo: false });
+  stroke(ctx, [[cx - 5.5, cy + 1.2], [cx + 5.5, cy + 1.2]],
+         { width: 1.7, color, seed: 89, amp: 0.3, halo: false });
+}
+
 /// 이름표가 사람보다 넓어지지 않게 글씨를 줄인다.
 ///
 /// 「전자결재 담당자」를 12px 로 쓰면 이름표 하나가 졸라맨 세 명 폭이 된다. 셋만 모여도
@@ -239,9 +249,12 @@ function drawTag(ctx, p, opts) {
   const y = p.groundY - p.air - BODY_H - 12;
   // 이름도 옷과 같은 색으로. 화면이 어수선할 때 누가 누군지 이걸로 잇는다.
   const font = tagFont(ctx, opts.name, 12);
-  text(ctx, opts.name, p.x, y, {
-    font, color: opts.color ?? (opts.mine ? INK : PENCIL), align: 'center',
-  });
+  const tint = opts.color ?? (opts.mine ? INK : PENCIL);
+  ctx.font = font;
+  const half = ctx.measureText(opts.name).width / 2;
+  // 방장에게는 이름 앞에 작은 왕관. 판을 여는 사람이 누군지 한눈에 보여야 한다.
+  if (opts.crown) drawCrown(ctx, p.x - half - 9, y - 4, tint);
+  text(ctx, opts.name, p.x, y, { font, color: tint, align: 'center' });
   // 내 졸라맨에만 빨간 밑줄. 여럿이 겹쳐 있을 때 어느 게 나인지 이걸로 찾는다.
   if (opts.mine) {
     ctx.font = font;

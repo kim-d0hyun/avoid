@@ -64,7 +64,8 @@ world.onGameOver = (result) => {
   if (world.mp.on) {
     if (world.mp.role !== 'host') return;   // 끝났다고 정하는 건 방장이다
     endRound(world, shell, {
-      winner: { id: -1, name: result.name },
+      // 이름이 없으면 이긴 사람 없이 끝난 것이다 (한쪽 편이 비어서 접은 판).
+      winner: result.name ? { id: -1, name: result.name } : null,
       results: result.rows ?? [],
     });
   } else {
@@ -84,6 +85,7 @@ shell.onScreens?.((list) => { world.screens = Array.isArray(list) ? list : []; }
 
 let ground = null;
 let hidden = false;
+let dumpAt = 3;
 /// 방장이 쓰는 판 크기. 방에 들어가 있으면 이걸 따라가고, 혼자면 내 화면 크기 그대로다.
 let shared = null;
 
@@ -162,7 +164,10 @@ shell.net.onRole((role, code, id, name) => {
   if (role !== 'guest' && shared) setSize(null, null);
   if (world.state === 'ready') spread(world);
 });
-shell.net.onPeer((id, name, joined) => peerChanged(world, shell, id, name, joined, { spread }));
+shell.net.onPeer((id, name, joined) => {
+  if (shell.debug) shell.log(`상대 ${joined ? '들어옴' : '나감'} id=${id} 이름=[${name}]`);
+  peerChanged(world, shell, id, name, joined, { spread });
+});
 // 셸이 한 프레임치를 모아서 이미 풀린 객체로 넘겨준다.
 shell.net.onMessage((from, message) => {
   handleMessage(world, shell, from, message, { restart, setSize });
@@ -338,6 +343,14 @@ function step(now, draw) {
   last = now;
 
   bot?.(dt);
+  if (shell.debug) {
+    dumpAt -= dt;
+    if (dumpAt <= 0 && world.mp.on) {
+      dumpAt = 3;
+      const rows = [...world.mp.others.values()].map((o) => `${o.id}:[${o.name}]${o.waiting ? '(대기)' : ''}`);
+      shell.log(`상대목록 ${rows.join(' ') || '없음'} · 이름표 ${[...world.mp.names.entries()].map(([k, v]) => `${k}:${v}`).join(' ')}`);
+    }
+  }
   update(world, dt);
   pump(world, dt, shell);
   if (draw) render(now / 1000);
@@ -371,11 +384,14 @@ function render(time) {
     // 옷 색은 보통 번호로 정하지만, 게임이 다르게 정할 수 있다 — 배구는 편(선 자리)으로 정한다.
     const game = gameOf(world);
     const shirtOf = (id, x) => game.shirt?.(world, x, id) ?? shirtColor(id);
+    // 방장은 이름 앞에 왕관. 판을 여는 사람이 누군지 보여야 한다.
+    const hostId = world.mp.role === 'host' ? world.mp.myId : world.mp.hostId;
 
     // 남들을 먼저 그리고 내가 맨 위에 선다. 겹쳤을 때 내 몸을 놓치면 안 된다.
     for (const other of world.mp.others.values()) {
       upright(other.x, world.groundY, () => drawStickman(ctx, other, time, boilFrame,
-        { name: other.name, faded: other.dead, color: shirtOf(other.id, other.x) }));
+        { name: other.name, faded: other.dead, color: shirtOf(other.id, other.x),
+          crown: world.mp.on && other.id === hostId }));
     }
     // 혼자 할 때는 색을 안 입힌다 — 구분할 사람이 없으면 그냥 낙서가 맞다.
     // 다만 편이 있는 게임은 혼자여도 입힌다. 내가 어느 편인지가 곧 규칙이다.
@@ -383,6 +399,7 @@ function render(time) {
     upright(world.player.x, world.groundY, () => drawStickman(ctx, world.player, time, boilFrame, {
       name: world.mp.on ? world.mp.myName : null,
       mine: true,
+      crown: world.mp.on && world.mp.role === 'host',
       color: world.mp.on || game.shirt ? shirtOf(world.mp.myId, world.player.x) : null,
     }));
   }

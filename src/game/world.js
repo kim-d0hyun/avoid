@@ -112,6 +112,9 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
       groundY: 0, dead: false, deadFor: 0, danger: false,
       /// 붙잡기. grabbing 은 내가 잡은 사람 번호, heldBy 는 나를 잡은 사람 번호 (-1 이면 없음).
       grabbing: -1, heldBy: -1, grabCool: 0, escapes: 0, shake: 0,
+      /// 붙잡기 키를 잡고 있나. **누르고 있는 동안 계속 노린다** — 누르는 순간에만
+      /// 잡으면, 상대가 다가오는 중에 눌러 둔 사람은 영영 못 잡는다.
+      grabHeld: false,
       /// 뿌리치며 밀려난 속도. vx 와 따로 두는 이유는 마찰과 달리기 상한에 안 먹히게 하려고다 —
       /// vx 에 얹으면 4600/s 짜리 마찰이 70밀리초 만에 먹어 치워서 아무것도 안 보인다.
       knock: 0,
@@ -300,7 +303,7 @@ function movePlayer(world, dt) {
   gameOf(world).confine?.(world, p);
 
   if (input.jump && grounded && p.crouch < 0.3 && p.heldBy < 0) {
-    p.vy = JUMP_V;
+    p.vy = JUMP_V * (gameOf(world).hop ?? 1);
     p.air = 0.01;
   }
   if (p.air > 0) {
@@ -416,6 +419,21 @@ export function menuItems(world) {
       mark: !!screen.current,
     }));
   }
+  // 고르는 화면에서는 방을 열고 닫을 수 없다. **아직 무슨 게임을 할지도 안 정했다** —
+  // 그 상태로 방을 열면 들어온 사람이 빈 화면을 보게 된다. 게임을 고른 뒤에 연다.
+  if (world.state === 'pick') {
+    const picking = [{ id: 'resume', label: '고르던 데로' }];
+    picking.push({ id: 'fade', label: '투명도',
+      note: world.fade >= 0.99 ? '그대로' : `${Math.round(world.fade * 100)}%` });
+    if (world.screens.length > 1) {
+      const here = world.screens.find((screen) => screen.current);
+      picking.push({ id: 'screens', label: '띄울 화면 바꾸기', note: here?.name ?? '' });
+    }
+    picking.push({ id: 'hide', label: '화면 숨기기' });
+    picking.push({ id: 'quit', label: '게임 끝내기' });
+    return picking;
+  }
+
   const items = [{ id: 'resume', label: '이어서 하기' }];
   // 「다시 시작」은 판을 하고 있을 때만. 고르는 화면과 시작 전에는 다시 시작할 판이 없다.
   if (world.state === 'play' || (world.state === 'over' && canRestart(world))) {
@@ -509,6 +527,7 @@ function chooseMenu(world) {
 /// 잡고 있는 동안은 **키를 누르고 있는 동안**이다 — 떼면 grabReleased 가 놓는다.
 function grabPressed(world) {
   const p = world.player;
+  p.grabHeld = true;
   if (!world.mp.on || p.dead || world.state !== 'play') return;
 
   // 잡혀 있으면 먼저 뿌리친다. 한 번이면 풀린다 — 연타로 괴롭히는 게임이 아니다.
@@ -527,8 +546,13 @@ function grabPressed(world) {
   }
   if (p.grabbing >= 0) return;                  // 이미 잡고 있다. 놓는 건 키를 뗄 때다
   if (p.grabCool > 0) return;
+  reachOut(world);
+}
 
-  // 손이 닿는 사람 중 제일 가까운 사람.
+/// 손이 닿는 사람 중 제일 가까운 사람을 잡는다. 아무도 없으면 아무 일도 안 일어난다.
+function reachOut(world) {
+  const p = world.player;
+  if (!world.mp.on || p.dead || world.state !== 'play') return;
   let target = null;
   let near = GRAB_REACH;
   for (const other of world.mp.others.values()) {
@@ -545,6 +569,7 @@ function grabPressed(world) {
 /// 스페이스바를 뗀 순간. 잡고 있던 사람을 놓는다.
 function grabReleased(world) {
   const p = world.player;
+  p.grabHeld = false;
   if (p.grabbing >= 0) release(p);
 }
 
@@ -570,6 +595,10 @@ function stepGrab(world, dt) {
   const p = world.player;
   p.grabCool = Math.max(0, p.grabCool - dt);
   p.shake = Math.max(0, p.shake - dt * 4);
+
+  // **누르고 있으면 계속 노린다.** 누르는 순간 손이 안 닿았다고 끝이면, 다가오는 사람을
+  // 보고 미리 눌러 둔 사람은 영영 못 잡는다 — 손을 뻗고 기다리는 게 자연스럽다.
+  if (p.grabHeld && p.grabbing < 0 && p.heldBy < 0 && p.grabCool <= 0) reachOut(world);
 
   if (p.grabbing >= 0) {
     const target = world.mp.others.get(p.grabbing);
