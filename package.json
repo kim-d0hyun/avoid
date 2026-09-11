@@ -1,6 +1,6 @@
 {
   "name": "molgem",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "description": "업무 화면 위에서 몰래 하는 미니게임 모음. 똥피하기와 배구. ⌥ 와 방향키로 하고 ⌥H 로 즉시 숨긴다. 같은 와이파이면 네 자리 코드로 같이 한다. (macOS)",
   "scripts": {

@@ -61,7 +61,7 @@ private enum HK {
     static let menu: UInt32 = 7     // ⌥M — 게임 안 메뉴
     static let grab: UInt32 = 8     // ⌥Space — 붙잡기
     static let grabAlt: UInt32 = 9  // ⌥Z — ⌥Space 를 입력기가 먹는 자리가 있어 뒷길을 둔다
-    static let lock: UInt32 = 10    // ⌥P — ⌥ 고정 켜고 끄기. 고정 중에도 ⌥ 와 같이 누른다
+    static let lock: UInt32 = 10    // ⌥P — ⌥ 고정 켜고 끄기. ⌥H 처럼 언제나 걸려 있다
 
     /// 게임 중에만 거는 것들. 숨기면 반드시 푼다 — ⌥←/⌥→ 는 맥에서 「단어 단위 이동」이라
     /// 계속 잡고 있으면 남의 글쓰기를 망친다. 창이 안 보이면 그 키는 원래 주인에게 돌려준다.
@@ -74,7 +74,6 @@ private enum HK {
         (menu, kVK_ANSI_M, "menu"),
         (grab, kVK_Space, "grab"),
         (grabAlt, kVK_ANSI_Z, "grab"),
-        (lock, kVK_ANSI_P, "lock"),
     ]
 
     static func action(_ id: UInt32) -> String? { play.first { $0.id == id }?.action }
@@ -133,6 +132,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
 
     private var eventHandler: EventHandlerRef?
     private var toggleHotKey: EventHotKeyRef?
+    private var lockHotKey: EventHotKeyRef?
     private var playHotKeys: [EventHotKeyRef?] = []
 
     /// 아직 게임에 안 넘긴 꾸러미. 60Hz 로 한 번에 몰아서 넘긴다 —
@@ -395,7 +395,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                 DispatchQueue.main.asyncAfter(deadline: .now() + at) { [weak self] in
                     guard let self else { return }
                     debugLog("키 \(action)\(hold > 0.1 ? " (\(hold)초)" : "")")
-                    if action == "lock" { self.toggleBare(); return }   // ⌥P 는 셸의 스위치다
+                    if action == "lock" { self.lockPressed(); return }   // ⌥P 는 셸의 스위치다
                     self.send(action, true)
                     DispatchQueue.main.asyncAfter(deadline: .now() + max(0.06, hold)) { self.send(action, false) }
                 }
@@ -858,6 +858,19 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     }
 
     @objc private func toggleOptionHide() { hideOnOption = !hideOnOption }
+    /// ⌥P. 보이는 중이면 고정을 뒤집고, **숨어 있으면 고정을 켜고 보인다.** 「⌥ 를 안 잡고 하겠다」는
+    /// 사람이 제일 먼저 누르는 키라 숨은 채로 눌러도 뜻이 통해야 한다. 고정 중에는 ⌥ 를 놓아도
+    /// 안 숨는다 — 숨기는 건 언제나 ⌥H 다.
+    private func lockPressed() {
+        if isHidden {
+            if !bareKeys { bareKeys = true }
+            debugLog("⌥P (숨은 채) → 고정 켬 · 보임")
+            setHidden(false)
+        } else {
+            toggleBare()
+        }
+    }
+
     /// ⌥P. **끄는 쪽이면 ⌥ 를 한 번 놓았다 다시 잡아야** 「⌥ 떼면 숨기기」가 다시 산다 —
     /// P 를 누른 그 손이 ⌥ 를 놓는 것은 「그만한다」가 아니다. 안 그러면 ⌥P 로 고정을 끄는 순간
     /// 게임이 숨어 버려서, 끈 게 아니라 꺼진 것처럼 보인다.
@@ -905,6 +918,13 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                                          GetApplicationEventTarget(), 0, &ref)
         debugLog("⌥H status=\(status)")
         toggleHotKey = ref
+        // ⌥P 도 언제나. 숨은 채로 눌러도 뜻이 통해야 한다 — 고정을 켜고 보인다.
+        var lockRef: EventHotKeyRef?
+        let lockId = EventHotKeyID(signature: OSType(0x44444F47), id: HK.lock)
+        let lockStatus = RegisterEventHotKey(UInt32(kVK_ANSI_P), UInt32(optionKey), lockId,
+                                             GetApplicationEventTarget(), 0, &lockRef)
+        debugLog("⌥P status=\(lockStatus)")
+        lockHotKey = lockRef
     }
 
     /// 게임용 키는 창이 보일 때만 건다. 숨기는 순간 풀어 ⌥←→ 를 원래 쓰임으로 돌려준다.
@@ -913,8 +933,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         for key in HK.play {
             var ref: EventHotKeyRef?
             let id = EventHotKeyID(signature: OSType(0x44444F47), id: key.id)
-            // ⌥ 고정이면 방향키·스페이스·Z 는 맨손으로. 글자 키(R·M·P)는 언제나 ⌥ 와 같이.
-            let bare = bareKeys && !["restart", "menu", "lock"].contains(key.action)
+            // ⌥ 고정이면 방향키·스페이스·Z 는 맨손으로. 글자 키(R·M)는 언제나 ⌥ 와 같이.
+            let bare = bareKeys && !["restart", "menu"].contains(key.action)
             let status = RegisterEventHotKey(UInt32(key.code), bare ? 0 : UInt32(optionKey), id,
                                              GetApplicationEventTarget(), 0, &ref)
             debugLog("\(bare ? "" : "⌥")\(key.action) status=\(status)")
@@ -933,12 +953,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             if pressed { toggleWindow() }
             return
         }
-        guard let action = HK.action(id), !isHidden else { return }
-        // ⌥P — ⌥ 고정. 게임에 보내는 키가 아니라 셸의 스위치다.
-        if action == "lock" {
-            if pressed { toggleBare() }
+        if id == HK.lock {
+            if pressed { lockPressed() }
             return
         }
+        guard let action = HK.action(id), !isHidden else { return }
 
         if pressed {
             guard held[action] == nil else { return } // 키 반복은 한 번만 센다

@@ -449,4 +449,20 @@ say('붙잡기 — 누르고 있으면 다가오는 사람을 잡는다');
   check('떼면 놓는다', w2.player.grabbing, -1);
 }
 
+say('안내 종이 — 한 번 놀아 본 게임은 기억한다');
+{
+  const w = createWorld({ ms: 0, dodged: 0 });
+  resize(w, 1512, 944);
+  check('처음엔 아무 게임도 안 놀아 봤다', !!w.seen?.dodge, false);
+  w.state = 'ready';
+  update(w, 1 / 60);
+  check('준비 화면만으로는 놀아 본 게 아니다', !!w.seen?.dodge, false);
+  w.state = 'play';
+  update(w, 1 / 60);
+  check('판이 돌면 놀아 본 것', w.seen?.dodge, true);
+  restart(w);
+  check('다시 시작해도 기억한다', w.seen?.dodge, true);
+  check('다른 게임은 아직', !!w.seen?.volley, false);
+}
+
 done('판 안의 규칙');

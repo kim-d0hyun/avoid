@@ -88,6 +88,17 @@ export function drawIntro(ctx, world, time) {
   const hint = stop ? `${stop} — ⌥M 에서 편을 고른다`
     : world.mp.on && world.mp.role !== 'host' ? '방장이 시작하기를 기다리는 중'
     : world.mp.on ? '⌥R 로 판 시작 (방장만)' : '아무 방향키나 누르면 시작';
+  // **한 번 놀아 본 게임이면 설명서를 다시 펴지 않는다.** 판마다 큼직한 종이가 화면 위를 덮으면
+  // 게임 중에 왜 설명서가 있냐가 된다. 시작 신호 한 줄만 남긴다 — 열 수 없는 이유도 여기 뜬다.
+  if (world.seen?.[world.gameId]) {
+    ctx.font = `700 15px ${HAN}`;
+    const cw = ctx.measureText(hint).width + 44;
+    const left = Math.round((world.w - cw) / 2);
+    paperScrap(ctx, left, 30, cw, 40, 7);
+    const pulse = 0.72 + 0.28 * Math.sin(time * 3.4);
+    text(ctx, hint, left + 22, 56, { font: `700 15px ${HAN}`, color: RED, alpha: pulse, halo: 0 });
+    return;
+  }
   // 종이는 **제일 긴 줄**에 맞춘다. 안내 문구만 재면 설명이 종이 밖으로 삐져나간다.
   ctx.font = `600 16px ${HAN}`;
   const widest = rows.reduce((most, [, label]) => Math.max(most, ctx.measureText(label).width), 0);

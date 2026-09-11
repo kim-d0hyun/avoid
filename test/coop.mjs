@@ -293,6 +293,54 @@ say('남의 머리 — 밟고 서고, 웅크린 사람은 낮다 (계단)');
   ok('머리 위에서 뛰면 세 칸을 넘는다', peak - (world.groundY - 19 * T) > 3 * T);
 }
 
+say('밟힌 사람 — 뛰지 못하고, 걸으면 위 사람이 같이 가고, 밑에서 뛰어 남을 뚫지 못한다');
+{
+  // ① 누가 내 머리 위에 서 있으면 나는 뛰지 못한다
+  const world = make('상자 계단', { mp: true });
+  setPos(world, 8, 18);
+  const myTop = (19 * T) - 50 - 3;                       // 내 머리 꼭대기 (발 19T, 키 50, 틈 3)
+  const o = other(world, 2, 8, 18);
+  o.air = o.baseAir = world.groundY - myTop;             // 그 사람 발을 내 머리에 얹는다
+  tick(world, 2, {});
+  check('머리 위에 한 명', world.player.load, 1);
+  const air0 = world.player.air;                          // 이 판의 바닥은 18줄 — air 가 0 이 아니다
+  tick(world, 1, { jump: true });
+  let top = 0;
+  for (let i = 0; i < 30; i++) { tick(world, 1, { jump: true }); top = Math.max(top, world.player.air - air0); }
+  ok('사람을 얹은 채로는 뛰지 못한다', top < 2);
+  // 내려가면 뛴다
+  world.mp.others.clear();
+  tick(world, 2, {});
+  check('머리 위에 아무도 없다', world.player.load, 0);
+  tick(world, 1, { jump: true });
+  for (let i = 0; i < 30; i++) { tick(world, 1, { jump: true }); top = Math.max(top, world.player.air - air0); }
+  ok('내려가면 뛴다', top > 40);
+
+  // ② 남의 머리 위에 서 있으면 그 사람이 걷는 만큼 같이 간다
+  const w2 = make('상자 계단', { mp: true });
+  const c = other(w2, 2, 8, 18);
+  setPos(w2, 8, 15); w2.player.grounded = false; w2.player.vy = -10;
+  tick(w2, 60, {});
+  ok('머리 위에 섰다', w2.player.grounded && Math.abs((w2.groundY - w2.player.air) - (c.groundY - c.air - 53)) < 3);
+  const x0 = w2.player.x;
+  for (let i = 0; i < 60; i++) { c.baseX += 100 / 60; c.x = c.baseX; tick(w2, 1, {}); }
+  ok('밟힌 사람이 100 걸으면 나도 100 간다', Math.abs((w2.player.x - x0) - 100) < 6);
+  ok('그동안 떨어지지 않았다', w2.player.grounded);
+
+  // ③ 위에 선 사람 밑에서 뛰면 몸에 머리를 찧고 떨어진다 — 뚫고 올라가 그 머리에 서지 않는다
+  const w3 = make('상자 계단', { mp: true });
+  setPos(w3, 8, 18);
+  other(w3, 2, 8, 15);                                   // 나보다 세 줄 위에 떠 있는 사람 (발 16T = 내 머리 위 76px)
+  tick(w3, 2, {});
+  const air3 = w3.player.air;
+  tick(w3, 1, { jump: true });
+  let peak = 0;
+  for (let i = 0; i < 90; i++) { tick(w3, 1, {}); peak = Math.max(peak, w3.player.air - air3); }
+  ok('그 사람 발까지만 오르고 멎는다 (76px 안)', peak > 60 && peak < 80);
+  check('다시 바닥에 선다', feetRow(w3), 18);
+  ok('그 사람 머리 위에 올라서지 않았다', w3.player.grounded && Math.abs(w3.player.air - air3) < 2);
+}
+
 say('손잡기 — 세 칸 아래 사람을 끌어올린다');
 {
   const world = make('탑', { mp: true, host: true });

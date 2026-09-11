@@ -178,11 +178,11 @@ export function restart(world) {
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
           mp, menu, screens, gameId, pick, fade, size, spot, optionHide, bare, toast,
-          team, debug, log, send, stage, bagResets } = world;
+          team, debug, log, send, stage, bagResets, seen } = world;
   Object.assign(world, createWorld(best, gameId),
                 { w, h, input, onRecord, onDeath, onMenu, onGameOver,
                   mp, menu, screens, pick, fade, size, spot, optionHide, bare, toast,
-                  team, debug, log, send, stage, bagResets });
+                  team, debug, log, send, stage, bagResets, seen });
   world.state = 'ready';
   // 혼자 할 때도 우승 표시가 남는다 (배구). 안 지우면 세리머니가 다음 판까지 따라와서
   // 사람들이 화면에서 사라진 채로 판이 돈다.
@@ -404,6 +404,8 @@ export function update(world, dt) {
   if (world.state === 'ready' || world.state === 'pick') { game.update(world, dt); return; }
 
   world.elapsed += dt;
+  // 이 게임을 한 번 놀아 봤다. 다음 준비 화면부터는 안내 종이를 다시 펴지 않는다.
+  (world.seen ??= {})[world.gameId] = true;
   game.update(world, dt);
 }
 

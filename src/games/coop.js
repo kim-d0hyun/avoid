@@ -168,6 +168,41 @@ function floorBelow(world, x, fyOld, fyNew, halfW = HALF - 2) {
   return best;
 }
 
+/// 내 머리 위에 선 사람 수. 발이 내 머리에 닿아 있고 가로로 겹치는 사람.
+function ridersOn(world, x, fy, h) {
+  let n = 0;
+  const top = fy - h - 3;
+  for (const o of world.mp.others.values()) {
+    if (o.dead || o.waiting) continue;
+    if (Math.abs(o.x - x) < BLOCK_W - 4 && Math.abs((o.groundY - o.air) - top) < 6) n++;
+  }
+  return n;
+}
+
+/// 내가 밟고 선 사람. 머리 꼭대기가 내 발과 맞고 가로로 겹치는 사람.
+function carrierUnder(world, x, fy) {
+  for (const o of world.mp.others.values()) {
+    if (o.dead || o.waiting) continue;
+    if (Math.abs(o.x - x) >= HALF + BLOCK_W / 2 - 4) continue;
+    const top = o.groundY - o.air - blockSize(o).h - 3;
+    if (Math.abs(top - fy) < 4) return o;
+  }
+  return null;
+}
+
+/// 위로 오르다 남의 몸에 머리를 찧나 — 내 머리 윗선이 남의 발을 지나 몸 안으로 들어가면.
+/// 사람은 서로 뚫고 지나가는 물건이 아니다. 밑에서 뛰어 위 사람을 통과해 그 머리에 올라서면
+/// 「버그」로 읽힌다.
+function headBonk(world, x, fyOld, fyNew, h) {
+  for (const o of world.mp.others.values()) {
+    if (o.dead || o.waiting) continue;
+    if (Math.abs(o.x - x) >= HALF + BLOCK_W / 2 - 6) continue;
+    const feet = o.groundY - o.air;
+    if (fyNew - h < feet && fyOld - h >= feet - 6) return true;
+  }
+  return false;
+}
+
 function bodyBlocked(world, x, fy, h) {
   const b = world.bag;
   const tx0 = Math.floor((x - HALF + 2) / T), tx1 = Math.floor((x + HALF - 2) / T);
@@ -290,8 +325,19 @@ export function move(world, dt) {
     }
   }
 
+  // 남의 머리 위에 서 있으면 **그 사람이 걷는 만큼 같이 간다.** 안 그러면 밟힌 사람이 한 걸음 떼는
+  // 순간 위 사람이 허공에 남았다가 떨어진다.
+  const carrier = grounded ? carrierUnder(world, p.x, fy) : null;
+  let ride = 0;
+  if (carrier) {
+    if (p.rideId === carrier.id) ride = carrier.x - p.rideX;
+    p.rideId = carrier.id; p.rideX = carrier.x;
+  } else {
+    p.rideId = null;
+  }
+
   // x 로 움직이고 벽·상자에 막히면 되돌린다. 상자는 **밀린다** — 밀 수 있으면.
-  let nx = p.x + (p.vx + p.knock) * dt;
+  let nx = p.x + (p.vx + p.knock) * dt + ride;
   p.pushing = false;
   if (bodyBlocked(world, nx, fy - 1, h) && grounded) {
     // 판자 두께만큼의 턱(14px 안)은 걸어서 올라선다 — 선반에 발이 걸려 서는 일이 없게.
@@ -315,8 +361,11 @@ export function move(world, dt) {
   p.x = nx;
   if (p.knock !== 0) { p.knock *= Math.exp(-dt / 0.17); if (Math.abs(p.knock) < 8) p.knock = 0; }
 
+  // 누가 내 머리 위에 서 있나 — 눌리는 그림이 되고, **뛰지 못한다.** 사람을 얹은 채 뛰면 위 사람을
+  // 뚫고 오르거나(내 화면) 위 사람이 튕겨 오른다(그 사람 화면). 사람 계단은 웅크리기·손잡기로 오르는 것이다.
+  p.load = ridersOn(world, p.x, fy, h);
   // 점프 — 땅에서만. 웅크린 채로는 안 뛴다 (굴 안에서 머리를 찧는다).
-  if (input.jump && grounded && p.crouch < 0.3 && p.stun <= 0 && !p.jumpHeld) {
+  if (input.jump && grounded && p.crouch < 0.3 && p.stun <= 0 && !p.jumpHeld && p.load === 0) {
     p.vy = JUMP_V; p.grounded = false; p.jumpHeld = true;
   }
   if (!input.jump) p.jumpHeld = false;
@@ -341,8 +390,9 @@ export function move(world, dt) {
         if (under === 'S') { vy = SPRING_V; p.grounded = false; p.landed = 0; }
       } else fy = nfy;
     } else {
-      // 위로 — 천장
-      if (bodyBlocked(world, p.x, nfy - 0.5, h) && !bodyBlocked(world, p.x, fy - 0.5, h)) { vy = 0; }
+      // 위로 — 천장. 남의 몸도 천장이다.
+      if ((bodyBlocked(world, p.x, nfy - 0.5, h) && !bodyBlocked(world, p.x, fy - 0.5, h))
+          || headBonk(world, p.x, fy, nfy, h)) { vy = 0; }
       else fy = nfy;
     }
     p.vy = vy;
@@ -845,13 +895,7 @@ export default {
     const p = world.player;
     p.pulling = Math.max(0, (p.pulling ?? 0) - dt);
     if (b.flash) { b.flash.t -= dt; if (b.flash.t <= 0) b.flash = null; }
-    // 누가 내 머리 위에 서 있나 — 눌리는 그림
-    let load = 0;
-    for (const o of world.mp.others.values()) {
-      if (o.dead) continue;
-      if (Math.abs(o.x - p.x) < BLOCK_W - 4 && Math.abs((o.groundY - o.air) - (world.groundY - p.air - blockSize(p).h - 3)) < 6) load++;
-    }
-    p.load = load;
+    // p.load (머리 위에 선 사람 수) 는 move 가 센다 — 뛸 수 있는지에 쓰인다.
 
     // 개발용 심장 소리 — 1초에 한 번. 판 · 상태 · 내 자리 · 잡은 키.
     if (world.debug) {
