@@ -243,8 +243,9 @@ say('천장 — 위로 안 벗어난다');
     }
   }
   check('화면 위로 안 나간다', top >= 0, true);
-  check('공이 통째로 보이는 자리 안쪽', top >= 30, true);
-  note(`가장 높이 올라간 자리 y=${top.toFixed(0)} (화면 높이 ${world.h}, 0 이 맨 위)`);
+  check('낮춰 둔 천장 위로는 안 간다', top >= 280, true);
+  check('그렇다고 네트 높이에서 놀지도 않는다', top < world.groundY - 300, true);
+  note(`가장 높이 올라간 자리 y=${top.toFixed(0)} (천장 300, 바닥 ${world.groundY.toFixed(0)})`);
 }
 
 
