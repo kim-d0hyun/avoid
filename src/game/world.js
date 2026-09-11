@@ -108,6 +108,8 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
     /// 창이 화면에서 차지하는 비율과, 작게 띄웠을 때 놓인 자리. 이것도 셸이 정한다.
     size: 1,
     spot: 'c',
+    /// ⌥ 를 떼면 바로 숨을지. 숨기는 일은 셸이 한다.
+    optionHide: true,
     /// 편이 있는 게임에서 내가 선 편 (0/1). 판이 바뀌어도 남는다.
     team: undefined,
     input: { left: false, right: false, jump: false, duck: false },
@@ -168,10 +170,12 @@ export function restart(world) {
   // 누르고 있는 키와 기록 콜백은 그대로 넘긴다 — 방향키를 잡은 채 다시 시작하면
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
-          mp, menu, screens, gameId, pick, fade, size, spot, team, debug, log, send } = world;
+          mp, menu, screens, gameId, pick, fade, size, spot, optionHide,
+          team, debug, log, send } = world;
   Object.assign(world, createWorld(best, gameId),
                 { w, h, input, onRecord, onDeath, onMenu, onGameOver,
-                  mp, menu, screens, pick, fade, size, spot, team, debug, log, send });
+                  mp, menu, screens, pick, fade, size, spot, optionHide,
+                  team, debug, log, send });
   world.state = 'ready';
   // 혼자 할 때도 우승 표시가 남는다 (배구). 안 지우면 세리머니가 다음 판까지 따라와서
   // 사람들이 화면에서 사라진 채로 판이 돈다.
@@ -489,6 +493,10 @@ function screenItems(world) {
   }
   rows.push({ id: 'fade', into: 'fade', label: '투명도',
               note: world.fade >= 0.99 ? '그대로' : `${Math.round(world.fade * 100)}%` });
+  // 켜고 끄는 한 줄. 한 겹 들어가 봐야 둘 중 하나라 그 자리에서 뒤집는다.
+  const peek = world.optionHide !== false;
+  rows.push({ id: `peek:${peek ? 0 : 1}`, label: '⌥ 떼면 숨기기',
+              note: peek ? '켜짐' : '꺼짐', mark: peek });
   if (world.screens.length > 1) {
     const here = world.screens.find((screen) => screen.current);
     rows.push({ id: 'where', into: 'where', label: '띄울 화면', note: here?.name ?? '' });
@@ -589,7 +597,7 @@ export function menuBack(world) {
 
 /// 고르고도 메뉴를 열어 두는 것들. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다 —
 /// 창이 그 모니터에 뜨는 걸 보고 아니다 싶으면 바로 다른 걸 고른다.
-const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:'];
+const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:', 'peek:'];
 
 function chooseMenu(world) {
   const items = menuItems(world);

@@ -19,6 +19,7 @@ private let screenKey = "screenNumber"
 private let fadeKey = "windowFade"
 private let sizeKey = "windowSize"
 private let spotKey = "windowSpot"
+private let optionHideKey = "hideOnOption"
 private let nameKey = "playerName"
 
 /// 고를 수 있는 창 크기. 화면에서 차지하는 비율이다.
@@ -210,13 +211,32 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         }
     }
 
+    /// **옵션을 떼면 바로 숨는다.**
+    ///
+    /// 이 게임은 ⌥ 를 잡고 한다. 그러니 ⌥ 를 놓는 순간이 곧 「그만한다」다 — 사람이 오면
+    /// ⌥H 를 찾아 누르는 것보다 잡고 있던 손을 펴는 게 빠르다. 다시 보려면 ⌥H.
+    private var hideOnOption: Bool {
+        get { UserDefaults.standard.object(forKey: optionHideKey) as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: optionHideKey)
+            armAt = Date()            // 켜자마자 숨지 않게 유예를 다시 준다
+            pushLayout()
+            refreshMenu()
+        }
+    }
+
+    /// 보이기 시작한 때. 이때부터 유예 시간이 지나야 「옵션 떼면 숨기기」가 걸린다 —
+    /// ⌥H 로 켜고 손을 떼는 그 0.5초에 바로 숨어 버리면 켤 수가 없다.
+    private var armAt = Date()
+    private let optionGrace: TimeInterval = 1.6
+
     /// 게임 안 메뉴도 지금 크기·자리를 알아야 표시를 맞춘다.
     /// 웹이 알려 준 게임 목록. 메뉴 막대에서 방을 열 때 무엇으로 열지 여기서 고른다.
     private var games: [(id: String, name: String)] = []
 
     private func pushLayout() {
         webView?.evaluateJavaScript(
-            "window.__ddongLayout && window.__ddongLayout(\(windowSize), '\(windowSpot)')")
+            "window.__ddongLayout && window.__ddongLayout(\(windowSize), '\(windowSpot)', \(hideOnOption))")
     }
 
     private func applyFade() {
@@ -485,7 +505,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
           // 창 크기와 자리. 화면 전체가 부담스러운 사람이 쓴다.
           size: \(windowSize),
           spot: '\(windowSpot)',
+          optionHide: \(hideOnOption),
           onLayout: (handler) => { window.__ddongLayout = handler },
+          setOptionHide: (on) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'optionHide', on,
+          }),
           setSize: (value) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'size', value,
           }),
@@ -685,6 +709,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         sizeParent.submenu = sizes
         menu.addItem(sizeParent)
 
+        let peek = NSMenuItem(title: "옵션 떼면 숨기기", action: #selector(toggleOptionHide),
+                              keyEquivalent: "")
+        peek.target = self
+        peek.state = hideOnOption ? .on : .off
+        menu.addItem(peek)
+
         // 창 위치. 화면 전체일 때는 놓을 자리가 하나뿐이라 안 보여 준다.
         if windowSize < 0.999 {
             let spots = NSMenu()
@@ -753,6 +783,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     @objc private func pickFade(_ sender: NSMenuItem) {
         windowFade = Double(sender.tag) / 100
     }
+
+    @objc private func toggleOptionHide() { hideOnOption = !hideOnOption }
 
     @objc private func pickSize(_ sender: NSMenuItem) {
         windowSize = Double(sender.tag) / 100
@@ -848,6 +880,17 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         if isHidden, net.role != "off" || shotDir != nil {
             webView.evaluateJavaScript("window.__ddongTick && window.__ddongTick()")
         }
+        // **옵션을 떼면 숨긴다.** 게임이 보이는 동안에만 본다.
+        //
+        // 상태를 물어보기만 하는 것이라 손쉬운 사용 권한이 필요 없다. 켠 직후 잠깐은
+        // 안 건다 — ⌥H 를 누르고 손을 떼는 사이에 바로 숨으면 켤 수가 없다.
+        if shouldHideOnOption(visible: !isHidden, armed: hideOnOption,
+                              shownFor: Date().timeIntervalSince(armAt),
+                              optionDown: NSEvent.modifierFlags.contains(.option),
+                              grace: optionGrace) {
+            debugLog("옵션을 뗐다 → 숨김")
+            setHidden(true)
+        }
         flushInbound()
         if autoRoom {
             counterTick += pollInterval
@@ -899,6 +942,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             moveToChosenScreen()
             window.orderFrontRegardless()
             registerPlayHotKeys()
+            armAt = Date()
         }
         webView.evaluateJavaScript("window.__ddongVisible && window.__ddongVisible(\(!hidden))")
         refreshMenu()
@@ -1095,6 +1139,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             if let value = body["value"] as? Double { windowSize = value }
         case "spot":
             if let spot = body["spot"] as? String { windowSpot = spot }
+        case "optionHide":
+            if let on = body["on"] as? Bool { hideOnOption = on }
         case "net":
             // 게임이 짠 꾸러미를 그대로 흘려보낸다. 셸은 안을 열어 보지 않는다.
             if let payload = body["payload"] as? String {

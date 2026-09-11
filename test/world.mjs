@@ -103,7 +103,7 @@ say('화면 — 크기·자리·투명도·띄울 화면이 한 겹 안에 모�
   const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
   tap(w, 'menu');
   into(w, 'screen');
-  check('화면 전체면 「창 위치」가 없다', labels(w), ['창 크기', '투명도']);
+  check('화면 전체면 「창 위치」가 없다', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기']);
 
   into(w, 'size');
   check('두 겹 안', w.menu.path, ['screen', 'size']);
@@ -118,7 +118,8 @@ say('화면 — 크기·자리·투명도·띄울 화면이 한 겹 안에 모�
   w.size = 0.55;                                     // 셸이 줄이고 알려 준다
   tap(w, 'left');
   check('한 겹 뒤로', w.menu.path, ['screen']);
-  check('줄이고 나면 「창 위치」가 생긴다', labels(w), ['창 크기', '창 위치', '투명도']);
+  check('줄이고 나면 「창 위치」가 생긴다', labels(w),
+        ['창 크기', '창 위치', '투명도', '⌥ 떼면 숨기기']);
   check('첫 줄 옆에 지금 상태', menuItems(w).find((i) => i.id === 'size').note, '절반');
 
   into(w, 'spot');
@@ -133,12 +134,31 @@ say('화면 — 크기·자리·투명도·띄울 화면이 한 겹 안에 모�
   check('한 번 더 누르면 닫힌다', w.menu.open, false);
 }
 
+say('⌥ 떼면 숨기기 — 그 자리에서 켜고 끈다');
+{
+  const w = make([]);
+  tap(w, 'menu');
+  into(w, 'screen');
+  const row = () => menuItems(w).find((i) => i.id.startsWith('peek:'));
+  check('처음엔 켜져 있다', [row().note, !!row().mark], ['켜짐', true]);
+
+  while (!menuItems(w)[w.menu.index].id.startsWith('peek:')) tap(w, 'duck');
+  tap(w, 'right');
+  check('셸로 넘어간 것', w.picked, ['peek:0']);
+  check('메뉴는 그대로 열려 있다', [w.menu.open, w.menu.path], [true, ['screen']]);
+
+  w.optionHide = false;                              // 셸이 끄고 알려 준다
+  check('꺼진 것이 보인다', [row().note, !!row().mark], ['꺼짐', false]);
+  tap(w, 'right');
+  check('다시 켜는 값이 넘어간다', w.picked, ['peek:0', 'peek:1']);
+}
+
 say('화면 — 모니터가 여럿이면 「띄울 화면」이 생긴다');
 {
   const w = make(THREE);
   tap(w, 'menu');
   into(w, 'screen');
-  check('네 줄', labels(w), ['창 크기', '투명도', '띄울 화면']);
+  check('네 줄', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기', '띄울 화면']);
   check('지금 어디에 떠 있는지 옆에 적는다',
         menuItems(w).find((i) => i.id === 'where').note, 'Built-in Retina Display');
 
@@ -161,7 +181,7 @@ say('화면 — 고르는 중에 모니터를 뽑으면 한 겹 나온다');
   into(w, 'screen');
   into(w, 'where');
   w.screens = [THREE[0]];
-  check('목록이 아니라 화면 설정으로', labels(w), ['창 크기', '투명도']);
+  check('목록이 아니라 화면 설정으로', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기']);
   check('길도 한 겹 나왔다', w.menu.path, ['screen']);
 }
 

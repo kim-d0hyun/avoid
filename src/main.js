@@ -68,6 +68,11 @@ world.onMenu = (action) => {
     shell.setSpot?.(action.slice(5));
     return;
   }
+  // ⌥ 를 떼면 숨는 스위치. 켜고 끄는 것도 창 쪽 일이다.
+  if (action.startsWith('peek:')) {
+    shell.setOptionHide?.(action.slice(5) === '1');
+    return;
+  }
   if (action.startsWith('team:')) {
     const game = gameOf(world);
     game.swap?.(world, shell, Number(action.slice(5)));
@@ -109,11 +114,13 @@ shell.setGames?.(games.map((game) => ({ id: game.id, name: game.name })));
 window.__ddongPickGame = (id) => { pickGame(world, id); spread(world); };
 world.size = shell.size ?? 1;
 world.spot = shell.spot ?? 'c';
+world.optionHide = shell.optionHide !== false;
 // 창 크기가 바뀌면 판을 다시 맞춘다. 창이 먼저 줄고 이 알림이 뒤에 와서, 여기서
 // 한 번 더 맞춰야 새 배율이 그림에 반영된다.
-shell.onLayout?.((size, spot) => {
+shell.onLayout?.((size, spot, optionHide) => {
   world.size = size;
   world.spot = spot;
+  world.optionHide = optionHide !== false;
   fit();
 });
 world.screens = shell.screens ?? [];

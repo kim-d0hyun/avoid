@@ -77,7 +77,9 @@ function fitCenter(ctx, world, w, h) {
 export function drawIntro(ctx, world, time) {
   const x = 72;
   const y = world.groundY - 196;
-  const rows = [...gameOf(world).keys, ['⌥ H', '숨기기'], ['⌥ M', '메뉴 · 게임 바꾸기']];
+  const rows = [...gameOf(world).keys,
+                ['⌥ H', world.optionHide === false ? '숨기기' : '숨기기 (⌥ 를 떼도 숨는다)'],
+                ['⌥ M', '메뉴 · 게임 바꾸기']];
   const stop = gameOf(world).blocked?.(world);
   const hint = stop ? `${stop} — ⌥M 에서 편을 고른다`
     : world.mp.on && world.mp.role !== 'host' ? '방장이 시작하기를 기다리는 중'
