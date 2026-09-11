@@ -75,8 +75,6 @@ function fitCenter(ctx, world, w, h) {
 }
 
 export function drawIntro(ctx, world, time) {
-  const x = 72;
-  const y = world.groundY - 196;
   const rows = [...gameOf(world).keys,
                 ['⌥ H', world.optionHide === false ? '숨기기' : '숨기기 (⌥ 를 떼도 숨는다)'],
                 ['⌥ M', '메뉴 · 게임 바꾸기']];
@@ -87,36 +85,41 @@ export function drawIntro(ctx, world, time) {
   // 종이는 **제일 긴 줄**에 맞춘다. 안내 문구만 재면 설명이 종이 밖으로 삐져나간다.
   ctx.font = `600 16px ${HAN}`;
   const widest = rows.reduce((most, [, label]) => Math.max(most, ctx.measureText(label).width), 0);
+  // 설명이 시작하는 자리도 재서 정한다. 88픽셀로 박아 두었더니 「⌥ Space + ← →」 같은
+  // 긴 키에 설명이 올라타 「⌥ Space +그 방향으로」로 읽혔다.
+  ctx.font = `600 17px ${KEYS}`;
+  const keyW = Math.max(86, rows.reduce(
+    (most, [key]) => Math.max(most, ctx.measureText(key).width), 0) + 18);
   ctx.font = `700 16px ${HAN}`;
-  const cw = Math.max(232, ctx.measureText(hint).width + 44, widest + 130);
+  const cw = Math.max(232, ctx.measureText(hint).width + 44, widest + keyW + 44);
   const ch = rows.length * 28 + 56;
-  const left = x - 22;
-  // **창을 작게 띄우면 이 종이가 화면을 넘어간다.** 배구는 줄이 아홉이라 300픽셀이 넘는데,
-  // 창을 40% 로 줄이면 화면 세로가 그만하다. 두 가지로 넣는다:
-  //
-  //   1) 밑으로 넘치면 위로 끌어올린다. 바닥에 세우는 게 원칙이지만 화면 밖보다는 낫다
-  //   2) 그러고도 화면의 3분의 2를 넘으면 통째로 줄인다 — 안내가 판을 덮으면 안 된다
-  //
-  // 글자만 줄이거나 줄을 빼지 않는다. 종이와 여백이 따로 놀고, 모르는 키가 생긴다.
-  const want = y - 30;
-  const top = Math.min(want, world.h - 12 - ch);
-  const bottom = top + ch;
-  const fit = Math.min(1, (world.w - left - 16) / cw, (world.h * 0.66) / ch);
+
+  // **위 한가운데.** 판이 열리기 전에 제일 먼저 읽어야 하는 종이라, 눈이 가장 먼저 가는
+  // 자리에 둔다. 왼쪽 아래에 두었을 때는 시계·점수와 따로 놀았고, 무엇보다 사람이 서 있는
+  // 자리와 겹쳐서 자기 졸라맨이 안내에 가렸다.
+  const top = 30;
+  const left = Math.round((world.w - cw) / 2);
+  const x = left + 22;          // 키 글자 왼쪽 끝
+  const y = top + 30;           // 첫 줄 밑선
+
+  // 창을 작게 띄우면 이 종이가 화면을 넘어간다. 배구는 줄이 아홉이라 300픽셀이 넘는데,
+  // 창을 40% 로 줄이면 화면 세로가 그만하다. 그럴 때는 **통째로** 줄인다 —
+  // 글자만 줄이면 종이와 여백이 따로 놀고, 줄을 빼면 모르는 키가 생긴다.
+  const fit = Math.min(1, (world.w - 24) / cw, (world.h * 0.7) / ch);
   ctx.save();
-  ctx.translate(0, top - want);
   if (fit < 1) {
-    // 왼쪽 아래를 붙잡고 줄인다. 바닥에 서 있는 종이라 밑변이 움직이면 떠 보인다.
-    ctx.translate(left, bottom);
+    // 위 가운데를 붙잡고 줄인다. 매달린 종이라 윗변이 움직이면 안 된다.
+    ctx.translate(left + cw / 2, top);
     ctx.scale(fit, fit);
-    ctx.translate(-left, -bottom);
+    ctx.translate(-(left + cw / 2), -top);
   }
 
-  paperScrap(ctx, left, y - 30, cw, ch, 7);
+  paperScrap(ctx, left, top, cw, ch, 7);
 
   rows.forEach(([key, label], i) => {
     const ly = y + i * 28;
     text(ctx, key, x, ly, { font: `600 17px ${KEYS}`, color: INK, halo: 0 });
-    text(ctx, label, x + 86, ly, { font: `600 16px ${HAN}`, color: INK, halo: 0 });
+    text(ctx, label, x + keyW, ly, { font: `600 16px ${HAN}`, color: INK, halo: 0 });
   });
 
   // 시작 안내만 깜빡인다. 화면에서 유일하게 움직이는 글자여야 눈이 간다.

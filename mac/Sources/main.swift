@@ -232,7 +232,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     /// 보이기 시작한 뒤로 ⌥ 를 한 번이라도 잡았나. **잡았다 놓아야 그만두는 것**이다 —
     /// 한 번도 안 잡았으면 아직 시작도 안 한 것이라 숨기지 않는다 (앱을 막 켠 사람).
     private var sawOption = false
-    private let optionGrace: TimeInterval = 1.6
+    /// **시간으로 봐주지 않는다.** ⌥ 를 놓으면 놓은 것이다 — 켠 지 1초든 한 시간이든 같다.
+    /// 0.25초만 두는 이유는 ⌥H 가 두 키를 같이 누르는 동작이라서다. H 를 떼고 ⌥ 를 떼는
+    /// 그 몇십 밀리초를 「놓았다」로 세면 ⌥H 를 눌러도 켜지지 않은 것처럼 보인다.
+    private let optionGrace: TimeInterval = 0.25
 
     /// 게임 안 메뉴도 지금 크기·자리를 알아야 표시를 맞춘다.
     /// 웹이 알려 준 게임 목록. 메뉴 막대에서 방을 열 때 무엇으로 열지 여기서 고른다.
