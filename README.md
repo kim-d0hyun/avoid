@@ -36,6 +36,10 @@
 **2대1도 된다.** 편이 안 맞아도 하고 싶으면 하는 것이다 — 셋이 모이면 그렇게 논다.
 다만 **한쪽이 비면 판이 안 열린다.** 상대 없이 넘기는 건 배구가 아니다.
 
+배구에서 `⌥Space` 로 몸을 던지면 **머리 위에 작은 막대**가 뜬다. 던진 순간 비었다가
+1초에 걸쳐 차고, **꽉 차서 빨갛게(파랗게) 바뀌면 또 던질 수 있다.** 쿨타임을 초로 알려
+주면 아무도 안 읽지만, 막대가 차오르는 건 공을 보면서도 곁눈으로 보인다. 내 것만 뜬다.
+
 ## 얼마나 보이게 할지
 
 `⌥M` → **투명도**. 그대로 · 85% · 70% · 55% · 40% 중에 고른다. 메뉴 막대 💩 → 투명도 도
@@ -422,11 +426,32 @@ Electron 을 쓰지 않는다. 게임은 Canvas·JS 고, 껍데기는 Swift + WK
 그래서 앱이 **1.1MB** 이고 `node_modules` 가 없다.
 
 ```sh
+npm test            # 시험 210가지를 전부 돌리고 test/결과.md 를 다시 적는다
 npm run icon        # build/icon.png 다시 생성 (의존성 없음)
-npm run build:mac   # dist/mac/똥피하기.app
-npm start           # 빌드하고 바로 실행
-npm run dmg         # dist/똥피하기.dmg
+npm run build:mac   # dist/mac/몰겜.app
+npm start           # 빌드하고 바로 실행 (내가 빌드한 것만 내린다)
+npm run dmg         # dist/몰겜.dmg
 ```
+
+### 시험
+
+의존성 없이 `node` 만으로 돈다. 캔버스는 `test/dom-stub.mjs` 가 흉내 내고, 물리와 규칙만 본다.
+
+```sh
+npm test                 # 전부
+node test/volley.mjs     # 한 자리만 눈으로
+```
+
+돌릴 때마다 **확인한 것 전부가 [`test/결과.md`](test/결과.md) 에 적힌다.** 「이 경우는 봤나?」를
+물어볼 자리가 있어야 해서 그 파일은 같이 넣는다. 손으로 고치지 않는다 — `npm test` 가 덮어쓴다.
+
+| 자리 | 무엇을 보나 |
+|---|---|
+| `test/world.mjs` | 메뉴 · 화면 고르기 · 붙잡기 · 뿌리치기 · 투명도 |
+| `test/volley.mjs` | 편 · 점수 · 벽 · 바닥 · 천장 · 슬라이딩 · 게이지 |
+| `test/net.mjs` | 뭉쳐 있을 때 손이 몇 개나 가나 |
+| `test/switch.mjs` | 똥피하기를 하다 배구방에 들어가기 |
+| `test/edge.mjs` · `test/edge2.mjs` | 있을 법한 경우의 수 26가지 |
 
 Xcode 또는 커맨드라인 도구가 필요하다. 커맨드라인 도구 쪽 툴체인이 깨져 있으면
 (`redefinition of module 'SwiftBridging'`) 빌드 스크립트가 알아서 Xcode 툴체인으로 넘어간다.

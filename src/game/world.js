@@ -68,6 +68,7 @@ const KNOCK_TAU = 0.17;     // 밀려남이 잦아드는 시간
 const SLIDE_SPEED = 880;
 const SLIDE_TIME = 0.42;
 const SLIDE_COOL = 0.55;
+export { SLIDE_TIME, SLIDE_COOL };
 
 /// 이긴 사람이 만세를 부르는 시간. 이 동안은 다음 판을 못 시작한다 —
 /// 이겼다는 걸 볼 새도 없이 다음 판이 시작되면 이길 이유가 없어진다.

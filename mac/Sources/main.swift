@@ -703,7 +703,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     private func poll() {
         // 숨어 있는 동안 게임을 굴려 주는 자리. 웹뷰의 자체 루프는 이때 거의 멈춰 있지만,
         // 네이티브에서 부르는 자바스크립트는 그대로 돈다.
-        if isHidden, net.role != "off" {
+        // 녹화 중이면 혼자여도 굴린다. 안 그러면 시연 녹화가 멈춘 화면만 찍는다.
+        if isHidden, net.role != "off" || shotDir != nil {
             webView.evaluateJavaScript("window.__ddongTick && window.__ddongTick()")
         }
         flushInbound()

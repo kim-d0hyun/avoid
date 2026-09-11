@@ -14,7 +14,7 @@
 
 import { INK, RED, PENCIL, stroke, circle, text } from '../draw/ink.js';
 import { BODY_H } from '../draw/stickman.js';
-import { startSlide } from '../game/world.js';
+import { startSlide, SLIDE_COOL } from '../game/world.js';
 
 // 편은 옷 색으로 가른다. 번호가 아니라 **보이는 것**으로 갈라야 한 눈에 읽힌다.
 //
@@ -275,6 +275,46 @@ function ball0(b, dt) {
   b.ball.smash = Math.max(0, (b.ball.smash ?? 0) - dt * 2.2);
 }
 
+/// 머리 위 게이지. **비었다가 쭉 차면 다시 던질 수 있다.**
+///
+/// 쿨타임을 숫자로 알려 주면 아무도 안 읽는다. 막대가 차오르는 건 곁눈으로도 보인다.
+/// 내 것만 그린다 — 남의 쿨타임은 오가지도 않고 알 필요도 없다.
+export function slideGauge(p) {
+  // 미끄러지는 동안은 비어 있고, 그 뒤 쿨타임 동안 찬다. 1 이면 또 던질 수 있다.
+  if (p.slide > 0) return 0;
+  if (p.slideCool > 0) return Math.max(0, 1 - p.slideCool / SLIDE_COOL);
+  return 1;
+}
+
+function drawSlideGauge(ctx, world, upright) {
+  const b = world.bag;
+  const p = world.player;
+  if (p.dead || world.mp.waiting || world.state !== 'play') return;
+  const cooling = p.slide > 0 || p.slideCool > 0;
+  if (!cooling && !(b.readyFlash > 0)) return;
+
+  const full = slideGauge(p);
+  const w = 44;
+  const h = 6;
+  const x = p.x - w / 2;
+  const y = p.groundY - p.air - BODY_H - 36;   // 이름표 위. 겹치면 둘 다 못 읽는다
+  const tint = TEAM_INK[world.team ?? 0];
+  const fading = !cooling ? Math.min(1, b.readyFlash / 0.35) : 1;
+
+  upright(p.x, y, () => {
+    // 테두리. 손으로 그은 네모라 게임 그림체와 붙는다.
+    stroke(ctx, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
+           { width: 1.6, color: PENCIL, seed: 95, amp: 0.4, close: true, sharp: true,
+             halo: false, alpha: 0.75 * fading });
+    if (full > 0.01) {
+      const fill = Math.max(2, (w - 4) * full);
+      stroke(ctx, [[x + 2, y + h / 2], [x + 2 + fill, y + h / 2]],
+             { width: h - 2.4, color: full >= 0.999 ? tint : PENCIL, seed: 96, amp: 0.25,
+               halo: false, alpha: (full >= 0.999 ? 0.95 : 0.7) * fading });
+    }
+  });
+}
+
 function point(world, toSide) {
   const b = world.bag;
   b.score[toSide]++;
@@ -289,7 +329,7 @@ export default {
   keys: [['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
          ['⌥ Space', '때리기 — 뛰어서 누르면 강타'],
          ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↓', '내리꽂기'],
-         ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 를 잡고 누르면 그쪽으로'],
+         ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 를 잡고 누르면 그쪽으로 (머리 위 막대가 차면 또)'],
          ['⌥ M', '편 바꾸기']],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
@@ -345,6 +385,12 @@ export default {
 
   update(world, dt) {
     const b = world.bag;
+    // 슬라이딩 게이지. 다 찬 뒤에도 잠깐 더 보여 준다 — 「이제 된다」를 봐야
+    // 다음 번에 언제 누를지 알 수 있다.
+    const p = world.player;
+    const cooling = p.slide > 0 || p.slideCool > 0;
+    if (cooling) b.readyFlash = 0.7;
+    else b.readyFlash = Math.max(0, (b.readyFlash ?? 0) - dt);
     if (!b.started) {
       // 판 크기를 알게 된 첫 프레임에 공을 올린다.
       if (!world.w) return;
@@ -513,6 +559,9 @@ export default {
              { width: 2, color: PENCIL, seed: 65, amp: 0.5, halo: false });
       ctx.restore();
     });
+
+    // 내 슬라이딩 게이지. 남의 것은 안 그린다 — 오가는 값도 아니고, 알 필요도 없다.
+    drawSlideGauge(ctx, world, upright);
 
     // 점수. 네트 위에 좌우로.
     const y = netTop - 34;

@@ -107,13 +107,19 @@ function pose(p, time) {
     const ph = p.walk;
     // 팔은 같은 쪽 다리와 반대 위상. 이게 어긋나면 사람이 아니라 인형처럼 걷는다.
     const armSwing = 0.30 + run * 0.40;
-    const upperL = -Math.sin(ph) * armSwing;
-    const elbow = 0.85 + run * 0.45;
+    const swing = -Math.sin(ph);            // +1 이면 앞, -1 이면 뒤
+    const upperL = swing * armSwing;
+    // **팔꿈치는 앞으로만 접힌다.** 사람 팔꿈치가 그렇게 생겼다.
+    //
+    // 앞으로 나온 팔은 깊게 접혀 손이 가슴 앞에 서고, 뒤로 간 팔은 거의 펴져 손이
+    // 엉덩이 뒤에 남는다. 접는 각을 고정해 두면 두 손이 **늘 뒤를 향하는** 그림이 나온다 —
+    // 위팔만 앞뒤로 흔들리고 아래팔이 그만큼 뒤로 꺾여서, 달리는 게 아니라 끌려가 보인다.
+    const bend = (front) => (0.62 + 0.82 * front) * (0.7 + run * 0.3);
     return {
       hipY: HIP_Y, lean: 0.09 + run * 0.16,
       bob: -Math.abs(Math.sin(ph)) * (1.4 + run * 2.0),
       legs: runLegs(ph, run),
-      arms: [[upperL, upperL - elbow], [-upperL, -upperL - elbow]],
+      arms: [[upperL, upperL + bend(swing)], [-upperL, -upperL + bend(-swing)]],
     };
   }
 
