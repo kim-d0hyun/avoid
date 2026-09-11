@@ -33,7 +33,7 @@ class Run:
         return self.box_at(x, y)
     def support(self, x, y):
         below, here = self.g.get(x, y + 1), self.g.get(x, y)
-        return self.solid(x, y + 1) or below in '=<>v-' or here in 'H|' or below in 'H|'
+        return self.solid(x, y + 1) or below in '=<>v-~' or here in 'H|' or below in 'H|'
     def free(self, x, y):
         if self.g.get(x, y) == '^' or self.g.get(x, y - 1) == '^': return False
         return not self.solid(x, y) and not self.solid(x, y - 1)
@@ -44,7 +44,7 @@ class Run:
         """바닥이 사라진 사람과 상자를 떨어뜨린다. 열쇠를 집은 뒤에 부른다."""
         for name in list(self.boxes):
             bx, by, w = self.boxes[name]
-            while not (self.solid(bx, by + 1) or self.g.get(bx, by + 1) in '=<>v-') and by < self.g.h - 2:
+            while not (self.solid(bx, by + 1) or self.g.get(bx, by + 1) in '=<>v-~') and by < self.g.h - 2:
                 by += 1
             if by != self.boxes[name][1]:
                 self.boxes[name] = (bx, by, w); self.say('', f'{name} 가 줄{by}까지 떨어진다')
@@ -107,7 +107,7 @@ class Run:
         while cx != x1:
             cx += step
             if self.solid(cx, by): raise Bad(f'{box} 밀기: {cx}칸이 막혀 있다')
-            if not (self.solid(cx, by + 1) or self.g.get(cx, by + 1) in '=<>v-'):
+            if not (self.solid(cx, by + 1) or self.g.get(cx, by + 1) in '=<>v-~'):
                 self.boxes[box] = (cx, by, w)
                 for o in who: self.p[o] = (cx - step, by)
                 self.say('+'.join(who), f'{box} 를 {cx}칸까지 밀어 구멍으로 떨어뜨린다')
@@ -145,6 +145,32 @@ class Run:
         if y - y1 > SPRING_UP or abs(x1 - x) > JUMP_ACROSS: raise Bad('스프링으로 못 닿는다')
         if not self.standable(x1, y1): raise Bad(f'스프링 착지 ({x1},{y1})에 설 수 없다')
         self.p[who] = (x1, y1); self.say(who, f'스프링으로 ({x1},{y1})까지')
+
+    def pull(self, who, by_whom):
+        """위에 선 사람이 손을 내밀어 끌어올린다. 세 칸 아래까지, 바로 옆 칸이어야 한다."""
+        x, y = self.p[who]; ux, uy = self.p[by_whom]
+        if abs(ux - x) > 1: raise Bad(f'{by_whom} 가 {who} 바로 위쫀에 없다 ({ux},{uy}) vs ({x},{y})')
+        if not (0 < y - uy <= 3): raise Bad(f'{by_whom} 가 {who} 보다 1~3칸 위에 있어야 한다 ({y-uy})')
+        if not self.standable(ux, uy): raise Bad(f'{by_whom} 가 설 자리가 아니다')
+        # 끌어올린 사람은 끌어 준 사람 옆에 선다 (같은 칸이면 그 칸)
+        land = None
+        for lx in (ux + (1 if ux >= x else -1), ux, ux - (1 if ux >= x else -1)):
+            if self.standable(lx, uy): land = lx; break
+        if land is None: raise Bad(f'{who} 가 올라설 자리가 없다 ({ux},{uy}) 근처')
+        self.p[who] = (land, uy); self.say(by_whom, f'{who} 의 손을 잡아 ({land},{uy})로 끌어올린다')
+
+    def stairs(self, who, x1, y1, on):
+        """사람 계단. on 에 적힌 사람들이 웅크린 채 층층이 걸쳐 앉아 있고, who 가 그 위를 밟고 올라가 뛴다.
+        한 명이 한 칸씩 더 준다 — 어깨(boost)와 높이는 같지만, **옆으로도** 그만큼 더 간다 (계단을 밟으며 나아가니까)."""
+        x, y = self.p[who]
+        for i, o in enumerate(on):
+            ox, oy = self.p[o]
+            if oy != y or abs(ox - x) > i + 1: raise Bad(f'계단 {o} 가 제자리에 없다 ({ox},{oy}); {who} 는 ({x},{y})')
+        n = len(on)
+        if abs(x1 - x) > JUMP_ACROSS + n: raise Bad(f'{who} 사람 계단: 옆으로 {abs(x1-x)}칸 (한도 {JUMP_ACROSS+n})')
+        if y - y1 > JUMP_UP + n: raise Bad(f'{who} 사람 계단: 위로 {y-y1}칸 (한도 {JUMP_UP+n})')
+        if not self.standable(x1, y1): raise Bad(f'{who} 사람 계단 착지 ({x1},{y1})에 설 수 없다')
+        self.p[who] = (x1, y1); self.say(who, f'{"·".join(on)} 을 계단처럼 밟고 ({x1},{y1})로 건너뛴다')
 
     def take(self, who, color):
         x, y = self.p[who]

@@ -9,6 +9,7 @@
   a  스위치(밟으면 셔터 A 가 열린 채 남는다)     p q  누름판(밟는 동안만 P Q 가 열린다)
   u U · w W  포탈 한 쌍       -  왕복 발판이 오가는 길(어디서든 탈 수 있다)   |  리프트
   { }  통이 굴러 나오는 구멍(왼쪽/오른쪽으로)     >  <  컨베이어     v  삭은 발판
+  ~  깜빡이는 발판 — 2초 켜지고 2초 꺼진다. 켜진 동안 건널 수 있는 폭이다
   1 2 3 4  시작 자리          O  출구 포탈
 """
 SCREEN_W, SCREEN_H = 36, 22
@@ -54,6 +55,8 @@ class Grid:
         return self.fill(x, y_top, x, y_bot, '|')
     def track(self, x0, x1, y):
         return self.fill(x0, y, x1, y, '-')
+    def blink(self, x0, x1, y):
+        return self.fill(x0, y, x1, y, '~')
     def spikes(self, x0, x1, y):
         return self.fill(x0, y, x1, y, '^')
     def stairs(self, x0, y_bottom, steps, dir=1, width=3):

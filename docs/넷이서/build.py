@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 import json, html
 from stages import S, WORLDS
+import icons
 from css import CSS
 from parts import EXTRA_CSS, blocky, char_cards, pose_cards, SHIRTS
+import views
 
 def rows(items, cls=('k','','n')):
     return '\n'.join('<tr>' + ''.join(f'<td class="{c}">{v}</td>' for c, v in zip(cls, it)) + '</tr>' for it in items)
@@ -53,18 +55,18 @@ SHAPES = [('one','한 화면','36 × 22. 카메라가 안 움직인다. 「상�
           ('floors','가로로 긴 3층','120 × 28. 층마다 사다리가 다른 자리. 「3층 창고」「마지막」')]
 
 PATTERNS = [
-    ('어깨 사다리','세 칸 턱은 혼자 못 넘는다. 한 명이 어깨를 내주고, 어깨 내준 사람은 남거나 다른 길로 온다.','표지판 · 빨간 열쇠 · 지키는 사람 · 두 길 · 엘리베이터 · 되돌아오기 · 동시에 · 마지막'),
-    ('열쇠 심부름','한 명이 팀의 도움으로 열쇠까지 간다. 집는 순간 그 색 블록이 사라져 나머지의 길이 열린다.','빨간 열쇠 · 두 길 · 되돌아오기 · 3층 창고 · 마지막'),
-    ('스위치 한 번','한 명이 밟으면 셔터가 열린 채 남는다. 먼 길을 간 한 명이 가까운 길을 열어 준다.','표지판'),
-    ('누름판 지키기','밟고 있는 동안만 열린다. 한 명이 남아야 한다 — 「한 명만 닿으면 끝」 판과 짝이 된다.','지키는 사람 · 엘리베이터'),
-    ('사람 대신 물건','누름판에 상자를 올려 두면 아무도 남지 않아도 된다.','3층 창고 · 마지막'),
-    ('동시에','누름판 둘을 각자 밟고 있어야 한다. 둘이 밟고 둘이 간다.','동시에'),
-    ('상자 릴레이','상자를 밀어 단을 오르고, 틈으로 떨어뜨려 아래층 발판으로 쓰고, 포탈에 넣어 저편으로 보낸다.','상자 계단 · 되돌아오기 · 탑 · 3층 창고'),
-    ('발밑이 사라진다','열쇠를 집으면 발밑 블록도 같이 사라진다. 누가 집을지, 어디 서 있을지 순서를 정해야 한다.','탑 · 마지막 (선반이 사라져 상자가 떨어진다)'),
-    ('두 길','위 복도와 아래 복도. 위의 한 명이 아래의 길을 열고, 끝에서 뛰어내려 합류한다.','두 길'),
-    ('되돌아오기','출구가 코앞인데 막혀 있다. 맵 끝까지 가서 열쇠를 집고 **다른 길**로 돌아온다.','표지판 · 되돌아오기'),
-    ('때를 맞춘다','왕복 발판·리프트·굴러오는 통. 협동이 아니라 박자가 문제인 구간을 한 판에 하나씩 둔다.','움직이는 발판 · 엘리베이터 · 지키는 사람 · 3층 창고'),
-    ('한 명만 간다','넷 중 하나만 출구에 닿으면 끝. 나머지 셋은 그 한 명을 보내는 기계다.','빨간 열쇠 · 지키는 사람 · 엘리베이터 · 동시에'),
+    ('어깨 → 손','세 칸 턱은 혼자 못 넘는다. 한 명이 어깨를 내주고, 올라간 사람이 <b>손을 내려 끌어올린다</b>(세 칸 아래까지). 이 게임의 기본 동작.','표지판 · 두 열쇠 · 탑 · 3층 창고 · 마지막'),
+    ('사람 계단','둘이 웅크려 층층이 걸쳐 앉으면 계단이 된다. 그 위를 밟고 올라가 뛴다 — 한 명당 한 칸 높이, 한 칸 거리가 더 나온다.','상자 계단'),
+    ('열쇠 심부름','한 명이 팀의 도움으로 열쇠까지 간다. 집는 순간 그 색 블록이 사라져 나머지의 길이 열린다.','두 열쇠 · 두 길 · 되돌아오기 · 3층 창고 · 마지막'),
+    ('발밑이 사라진다','열쇠가 놓인 바닥도 그 색 블록이다. 집으면 떨어진다 — 어디로 떨어질지, 누가 집을지, 어느 열쇠부터 집을지.','두 열쇠 · 두 길 · 탑 · 마지막(선반이 사라져 상자가 떨어진다)'),
+    ('스위치 한 번','먼 길을 간 한 명이 밟으면 셔터가 열린 채 남는다. 가까운 길을 나머지에게 열어 준다.','표지판'),
+    ('누름판 지키기','밟고 있는 동안만 열린다. 한 명이 남는다 — 「한 명만 닿으면 끝」 판과 짝.','지키는 사람(둘) · 엘리베이터(둘) · 동시에(둘)'),
+    ('사람 대신 물건','누름판에 상자를 올려 두면 아무도 남지 않아도 된다. 상자가 스스로 떨어져 누르기도 한다.','움직이는 발판 · 3층 창고 · 마지막'),
+    ('상자 릴레이','상자를 밀어 단을 오르고, 틈으로 떨어뜨려 아래층 발판으로 쓰고, 상자 위에 둘이 서서 어깨를 내준다.','상자 계단 · 되돌아오기 · 탑 · 3층 창고 · 마지막'),
+    ('두 길','위 복도와 아래 복도. 위의 한 명이 아래의 길을 열고, 끝에서 떨어져 합류한다.','두 길'),
+    ('되돌아오기','출구가 코앞인데 막혔다. 맵 끝까지 가서 열쇠를 집고 다른 길로 돌아온다 — 갈 때 어깨, 올 때 상자.','표지판 · 되돌아오기'),
+    ('때를 맞춘다','왕복 발판 · 리프트 · <b>깜빡이는 다리(2초 켜짐 2초 꺼짐)</b> · 굴러오는 통. 협동이 아니라 박자가 문제인 마디를 판마다 하나씩.','지키는 사람 · 엘리베이터 · 움직이는 발판 · 되돌아오기 · 3층 창고 · 동시에 · 마지막'),
+    ('한 명만 간다','넷 중 하나만 출구에 닿으면 끝. 나머지 셋은 그 한 명을 보내는 기계 — 누름판 둘, 어깨 하나, 달리기 하나.','두 열쇠 · 지키는 사람 · 엘리베이터 · 동시에'),
 ]
 
 MUSH = [
@@ -80,7 +82,7 @@ def canvas_data():
     return json.dumps([dict(art=s['art'], notes=s['notes']) for s in S], ensure_ascii=False)
 
 cards = []
-for wi, (wname, wdesc, _) in enumerate(WORLDS, 1):
+for wi, (wname, wdesc) in enumerate(WORLDS, 1):
     cards.append(f'<div class="world"><div class="num">{wi}단계</div><h3>{wname}</h3><p>{wdesc}</p></div>')
     for si, s in enumerate([s for s in S if s['world'] == wname], 1):
         idx = S.index(s)
@@ -110,6 +112,7 @@ LEGEND = [
     ('#','땅·벽','못 지나간다','#141210'), ('=','선반·발판','위에서만 딛는다','#6b665c'),
     ('H','사다리','⌥↑↓','#8a7a5a'), ('|','리프트','사다리처럼 탄다. 정해진 층 사이만','#8a7a5a'),
     ('-','왕복 발판의 길','발판이 이 길을 오간다. 어디서든 타고 내린다','#2f6fb0'),
+    ('~','깜빡이는 발판','2초 켜지고 2초 꺼진다. 켜진 동안 건널 수 있는 폭이다','#b8912a'),
     ('^','가시·연못','닿으면 죽는다 — 시작 자리에서 다시 산다','#d02f22'),
     ('x / X','상자','밀고, 떨어뜨리고, 딛는다. X 는 둘이 민다','#6f4a2c'),
     ('r y b','빨강·노랑·파랑 열쇠','집으면 그 색 블록이 전부 사라진다','#d02f22'),
@@ -126,15 +129,15 @@ LEGEND = [
 HTML = f"""<title>넷이서</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@800;900&family=IBM+Plex+Sans+KR:wght@400;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
-{CSS}{EXTRA_CSS}{MORE_CSS}
+{CSS}{EXTRA_CSS}{MORE_CSS}{views.CSS}{icons.CSS}
 <div class="page">
 
 <header class="head">
-  <div class="kicker">몰겜 · 세 번째 게임 · 기획 4판</div>
+  <div class="kicker">몰겜 · 세 번째 게임 · 기획 5판</div>
   <h1>넷이서</h1>
   <p class="lede"><b>뒷마당 · 학교 · 도시.</b> 판 열둘, 모양도 규칙도 다 다르다 — 한 화면짜리, 가로로 긴 것, 위로 긴 것, 두 복도, 3층.
      어떤 판은 <b>한 명만</b> 닿으면 끝나고 어떤 판은 <b>넷이 다</b> 모여야 끝난다.
-     피코파크와 주황버섯의 소개팅을 뜯어보고, 열두 판 풀이 396걸음을 지형에 대 봤다.</p>
+     판마다 협동 마디가 넷 이상 — 어깨와 손, 사람 계단, 누름판 지키기, 깜빡이는 다리. 열두 판 풀이 489걸음을 지형에 대 봤다.</p>
   <dl class="spec">
     <div><dt>인원</dt><dd>넷 고정</dd></div>
     <div><dt>판</dt><dd>3단계 × 4판 · 크기는 판마다</dd></div>
@@ -206,6 +209,17 @@ HTML = f"""<title>넷이서</title>
 
 <section>
   <div class="num">07</div>
+  <h2>각자 보는 화면 — 같은 순간, 네 화면</h2>
+  <p class="sub">「두 길」 판, 1번이 노란 열쇠 코앞에 선 순간. <b>지형은 하나인데 네 사람이 보는 화면은 다 다르다.</b>
+     카메라는 내 캐릭터를 따라가고 판 끝에서 멈춘다. 화면 밖 친구는 가장자리 화살표 — 옷 색 네모, 이름, 몇 층인지, 몇 칸 떨어졌는지.
+     바탕의 흐릿한 줄은 그 사람이 일하던 문서다 — 이 게임은 남의 화면 위에 투명하게 얹힌다.</p>
+  {views.html_block()}
+  <p class="note">3번은 판 왼쪽 끝에 있어 카메라가 벽에 붙는다 — 자기가 화면 한가운데에 있지 않다. 그게 맞다: 판 밖 검은 부분을 보여 주는 것보다
+     한쪽으로 치우친 게 낫다. 2번과 4번은 같은 구역에 있어 서로 화면 안에 보이지만, 2번은 2층에서 4번은 1층에서 보는 것이라 화면이 다르다.</p>
+</section>
+
+<section>
+  <div class="num">08</div>
   <h2>치수 · 조작</h2>
   <div class="scroll"><table>
     <tr><th>무엇</th><th>얼마</th><th>그래서</th></tr>
@@ -223,7 +237,15 @@ HTML = f"""<title>넷이서</title>
 </section>
 
 <section>
-  <div class="num">08</div>
+  <div class="num">09</div>
+  <h2>생김새 — 실제처럼</h2>
+  <p class="sub">전부 볼펜 테두리에 색연필로 칠한다 (지금 게임 그림체). 단계마다 땅의 가죽이 다르다 — 뒷마당은 흙과 잔디, 학교는 벽돌, 도시는 콘크리트.
+     <b>같은 일을 하는 것은 같게 그린다</b>: 미는 것은 전부 나무 상자, 여는 것은 전부 롤 셔터, 옮기는 것은 전부 세운 타원.</p>
+  {icons.block_html()}
+</section>
+
+<section>
+  <div class="num">10</div>
   <h2>지형지물</h2>
   <div class="scroll"><table>
     <tr><th>글자</th><th>무엇</th><th>규칙</th></tr>
@@ -232,7 +254,7 @@ HTML = f"""<title>넷이서</title>
 </section>
 
 <section>
-  <div class="num">09</div>
+  <div class="num">11</div>
   <h2>판 열둘</h2>
   <p class="sub">맵은 가로로 스크롤된다. 진한 것이 땅, 갈색이 상자, 빨강·노랑·파랑 네모가 색 블록(같은 색 열쇠로 없앤다), 초록이 스위치·누름판·셔터,
      파란 점선이 왕복 발판의 길, 보라 타원이 출구. 네 네모가 시작 자리. 연필색 글은 배경 소품.</p>
@@ -240,10 +262,10 @@ HTML = f"""<title>넷이서</title>
 </section>
 
 <section>
-  <div class="num">10</div>
+  <div class="num">12</div>
   <h2>깰 수 있다 — 어떻게 확인했나</h2>
   {verbs([
-    ('풀이를 걸음으로 적었다','걷기 · 뛰기 · 사다리 · 어깨 · 밀기 · 포탈 · 스위치 · 누름판 · 스프링 · 열쇠 · 출구. 열두 판 396걸음.','「이렇게 하면 깨진다」를 말로 하지 않고 순서로 적는다.'),
+    ('풀이를 걸음으로 적었다','걷기 · 뛰기 · 사다리 · 어깨 · 밀기 · 포탈 · 스위치 · 누름판 · 스프링 · 열쇠 · 출구. 열두 판 489걸음.','「이렇게 하면 깨진다」를 말로 하지 않고 순서로 적는다.'),
     ('매 걸음의 전제를 지형에 댔다','길에 벽이 없나, 구멍이 네 칸을 안 넘나, 오르는 높이가 두 칸(+어깨) 안인가, 사다리가 그 줄에 있나, 상자가 앉을 바닥이 있나, 누름판 위에 뭐가 있나, 셔터·색 블록이 지금 열려 있나.','깨지면 그 자리에서 터진다. 만들면서 여덟 군데를 잡았다 — 탑을 세워 길을 막은 것, 발밑이 사라진 뒤 못 뛰어 넘는 폭, 리프트가 벽 반대편으로 데려다 준 것.'),
     ('열쇠를 집으면 떨어뜨려 봤다','색 블록이 사라지면 그 위의 사람·상자를 바닥까지 떨어뜨리고, 가시에 닿으면 실패로 친다.','「탑」과 「마지막」의 순서 퍼즐이 이걸로 확인된다.'),
     ('안 본 것','통·전동차·왕복 발판의 박자, 시간 제한. 막지도 죽이지도 않아서 「길이 있다」와는 무관하다.','이 확인은 「길이 있다」이지 「쉽다」가 아니다. 쉬운지는 넷이 붙어 봐야 안다.'),
@@ -251,7 +273,7 @@ HTML = f"""<title>넷이서</title>
 </section>
 
 <section>
-  <div class="num">11</div>
+  <div class="num">13</div>
   <h2>만드는 순서</h2>
   <div class="steps">{''.join(f'''<div class="step"><header><h3>{t}</h3><time>{d}</time></header><ul>{"".join(f"<li>{x}</li>" for x in xs)}</ul></div>''' for t, d, xs in [
     ('1차 — 뒷마당', '4일', ['타일맵 · 크기 제각각 · 각자 카메라 · 화면 밖 화살표', '네모 캐릭터 · 사람 위에 서기 · 어깨', '상자 밀기·딛기 · 색 열쇠와 색 블록 · 스위치 · 누름판 · 셔터', '출구 규칙 둘(한 명/넷) · 죽으면 시작 자리 · 방장 ⌥R 되감기', '뒷마당 네 판이 돌아간다']),
@@ -263,7 +285,7 @@ HTML = f"""<title>넷이서</title>
 <footer>
   <div>조사한 곳 — <a href="https://en.wikipedia.org/wiki/Pico_Park">Wikipedia: Pico Park</a> · <a href="https://picoparkgame.com/en/pp1/">피코파크 공식</a> ·
        <a href="https://namu.wiki/w/%EC%A3%BC%ED%99%A9%EB%B2%84%EC%84%AF%EC%9D%98%20%EC%86%8C%EA%B0%9C%ED%8C%85">나무위키: 주황버섯의 소개팅</a> (맵 사진 1-1~1-8, 2-1~2-4)</div>
-  <div>열두 판은 조각 DSL 로 쌓았고, 풀이 396걸음을 지형에 한 걸음씩 대서 확인했다. 자료는 리포 <code>docs/넷이서/</code>.</div>
+  <div>열두 판은 조각 DSL 로 쌓았고, 풀이 489걸음을 지형에 한 걸음씩 대서 확인했다. 자료는 리포 <code>docs/넷이서/</code>.</div>
 </footer>
 </div>
 
@@ -272,7 +294,7 @@ const STAGES = {canvas_data()};
 const COL = {{'#':'#141210','=':'#6b665c','H':'#8a7a5a','|':'#8a7a5a','-':'#2f6fb0','^':'#d02f22','x':'#6f4a2c','X':'#4f3320',
   'r':'#d02f22','y':'#c9a200','b':'#2f6fb0','R':'#e0857c','Y':'#e2cf6a','B':'#8fb3dc',
   'a':'#3f8f56','p':'#3f8f56','q':'#3f8f56','A':'#7fbf95','P':'#7fbf95','Q':'#7fbf95',
-  'u':'#2f6fb0','U':'#2f6fb0','w':'#2f6fb0','W':'#2f6fb0','O':'#8a5bb5','{{':'#d97b1f','}}':'#d97b1f','S':'#2f9c9c','v':'#b8912a','>':'#2f6fb0','<':'#2f6fb0'}};
+  'u':'#2f6fb0','U':'#2f6fb0','w':'#2f6fb0','W':'#2f6fb0','O':'#8a5bb5','{{':'#d97b1f','}}':'#d97b1f','S':'#2f9c9c','v':'#b8912a','~':'#b8912a','>':'#2f6fb0','<':'#2f6fb0'}};
 const SHIRT = ['#2f6fb0','#3f8f56','#d97b1f','#8a5bb5'];
 const T = 9;
 function draw(cv, st) {{
@@ -294,6 +316,7 @@ function draw(cv, st) {{
     g.fillStyle = (ch === '#') ? (dark ? '#c9c1b2' : '#141210') : (COL[ch] || '#999');
     if (ch === '=') {{ g.fillRect(X, Y+T*0.3, T, T*0.4); continue; }}
     if (ch === 'H' || ch === '|') {{ g.fillRect(X+1, Y, 2, T); g.fillRect(X+T-3, Y, 2, T); g.fillRect(X+1, Y+T/2-1, T-2, 2); continue; }}
+    if (ch === '~') {{ g.fillRect(X+1, Y+T*0.3, T-2, T*0.4); g.fillStyle = paper; g.fillRect(X+T*0.45, Y+T*0.3, 1.2, T*0.4); continue; }}
     if (ch === '-') {{ g.setLineDash([2,2]); g.strokeStyle = COL['-']; g.beginPath(); g.moveTo(X, Y+T/2); g.lineTo(X+T, Y+T/2); g.stroke(); g.setLineDash([]); continue; }}
     if (ch === '^') {{ g.beginPath(); g.moveTo(X, Y+T); g.lineTo(X+T/2, Y+2); g.lineTo(X+T, Y+T); g.fill(); continue; }}
     if ('uUwWO'.includes(ch)) {{ g.beginPath(); g.ellipse(X+T/2, Y+T/2, T*0.42, T*0.62, 0, 0, Math.PI*2); g.fill();
@@ -309,6 +332,8 @@ function draw(cv, st) {{
   for (const [x, y, text] of st.notes) g.fillText(text, x*T, y*T + 6);
 }}
 document.querySelectorAll('canvas[data-stage]').forEach(cv => draw(cv, STAGES[+cv.dataset.stage]));
+/*VIEWS_JS*/
 </script>
 """
-open('coop-plan4.html','w').write(HTML); print('wrote', len(HTML))
+HTML = HTML.replace('/*VIEWS_JS*/', views.JS)
+open('coop-plan5.html','w').write(HTML); print('wrote', len(HTML))
