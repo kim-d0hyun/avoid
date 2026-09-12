@@ -38,14 +38,17 @@ export function blockSize(p) {
 /// opts: { name, mine, color, mark, crown, faded, host }
 export function drawBlock(ctx, p, time, seed, opts = {}) {
   if (opts.faded) setFade(0.55);
-  const feetY = p.groundY - p.air;
+  // 끌려 올라오는 중이면 시작 자리에서 지금 자리로 스르륵 (자기 화면에서만).
+  let px = p.x, pair = p.air;
+  if ((p.lift ?? 0) > 0 && p.liftFrom) { const t = 1 - p.lift / 0.32; px = p.liftFrom.x + (p.x - p.liftFrom.x) * t; pair = p.liftFrom.air + (p.air - p.liftFrom.air) * t; }
+  const feetY = p.groundY - pair;
   const { w, h } = blockSize(p);
   const tilt = (p.knock ? Math.sign(p.knock) * Math.min(0.26, Math.abs(p.knock) / 900) : 0)
              + (p.hang ? 0.08 * Math.sin(time * 6) : 0);
   const color = opts.color ?? PENCIL;
 
   ctx.save();
-  ctx.translate(p.x, feetY);
+  ctx.translate(px, feetY);
   if (tilt) ctx.rotate(tilt);
   ctx.scale(p.facing < 0 ? -1 : 1, 1);           // 뒤집힌 공간에서 +x 가 늘 「앞」
 
@@ -90,7 +93,13 @@ export function drawBlock(ctx, p, time, seed, opts = {}) {
   } else if (p.hang) {
     stroke(ctx, [[0, y0], [0, y0 - 14]], pen(7, 3));
   } else if (p.pulling) {
-    stroke(ctx, [[x0 + w, y0 + h * 0.6], [x0 + w + 8, y0 + h + 10]], pen(7, 3));
+    // 끌어올리는 손 — 옆 아래로 크게 뻗고 끝에 손(동그라미). 「내가 잡아 준다」가 보이게.
+    stroke(ctx, [[x0 + w, y0 + h * 0.5], [x0 + w + 16, y0 + h + 16]], pen(7, 3.4));
+    circle(ctx, x0 + w + 16, y0 + h + 16, 3.2, { width: 2, color: INK, halo: false, seed: seed + 9, amp: 0.2 });
+  } else if ((p.pulled ?? 0) > 0) {
+    // 잡혀 올라오는 손 — 위로 뻗는다.
+    stroke(ctx, [[0, y0], [12, y0 - 14]], pen(7, 3.4));
+    circle(ctx, 12, y0 - 14, 3, { width: 2, color: INK, halo: false, seed: seed + 10, amp: 0.2 });
   }
 
   // 얼굴 — 윗쪽 3분의 1. 눈 둘, 입 하나. 3.4초에 한 번 깜빡인다.

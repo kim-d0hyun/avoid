@@ -1000,7 +1000,7 @@ export default {
       if (dy > 8 && dy <= PULL_REACH && dx < T * 1.3 && dy + dx < bestD) { best = o; bestD = dy + dx; }
     }
     if (!best) return;
-    p.pulling = 0.35;
+    p.pulling = 0.55;
     const side = Math.sign(best.x - p.x) || p.facing || 1;
     // 올라선 사람이 설 자리 — 상대 쪽 옆, 안 되면 반대쪽 옆, 그것도 안 되면 내 자리.
     // 「선다」는 막히지 않고 **발밑에 바닥이 있다**는 뜻이다. 벼랑 끝에서 끌어올린 사람을 허공에 세우면
@@ -1017,6 +1017,8 @@ export default {
     if (!b?.rows) return;
     const p = world.player;
     p.pulling = Math.max(0, (p.pulling ?? 0) - dt);
+    p.lift = Math.max(0, (p.lift ?? 0) - dt);
+    p.pulled = Math.max(0, (p.pulled ?? 0) - dt);
     if (b.flash) { b.flash.t -= dt; if (b.flash.t <= 0) b.flash = null; }
     // p.load (머리 위에 선 사람 수) 는 move 가 센다 — 뛸 수 있는지에 쓰인다.
 
@@ -1221,7 +1223,9 @@ export default {
       if (msg.to === world.mp.myId) {
         const p = world.player;
         if (p.dead || !Number.isFinite(msg.x) || !Number.isFinite(msg.air)) return;
+        p.liftFrom = { x: p.x, air: p.air }; p.lift = 0.32;   // 스르륵 올라오는 그림 (자기 화면)
         p.x = msg.x; p.air = msg.air; p.vx = 0; p.vy = 0; p.grounded = true; p.onLadder = false;
+        p.pulled = 0.5;                                             // 잡혀 올라오는 표시
         say(world, '끌려 올라갔다', 1.2);
       } else if (host && world.mp.others.has(msg.to)) {
         world.send?.({ t: 'gm', k: 'pull', to: msg.to, x: msg.x, air: msg.air }, msg.to);
