@@ -13,6 +13,7 @@ import { check, ok, say, note, done } from './check.mjs';
 
 const stage = (name) => STAGES.findIndex((s) => s.name === name);
 const HALF_PX = 17;
+const BUMP_W = 34;   // 몸 폭 (coop.js BUMP_AT)
 
 function make(stageName = '표지판', { mp = false, host = true, debug = true } = {}) {
   const world = w.createWorld({ ms: 0, dodged: 0 }, 'coop');
@@ -23,6 +24,7 @@ function make(stageName = '표지판', { mp = false, host = true, debug = true }
   world.stage = stage(stageName);
   w.restart(world);
   world.state = 'play';
+  world.bump = false;                         // 기존 시험은 충돌 끈 채로 본다 (충돌은 아래 따로)
   return world;
 }
 const tick = (world, n = 1, input = {}) => {
@@ -664,6 +666,44 @@ say('상자 위의 사람 — 상자가 무빙워크에 실려 가면 같이 간
   tick(world, 30, {});
   ok('상자가 왼쪽으로 갔다', box.x < 48.5 * T - 40);
   ok('위에 선 사람도 같이 갔다 (상자 위에 그대로)', Math.abs((world.player.x - x0) - (box.x - 48.5 * T)) < 6 && world.player.grounded);
+}
+
+
+say('사람끼리 부딪힘 — 같은 높이면 막고, 뒤에서 밀면 앞 사람이 밀린다');
+{
+  // ① 막힘 — 앞에 선 남을 뚫고 못 지나간다 (접촉해서 멈춘다)
+  const world = make('상자 계단'); world.bump = true; world.bag.boxes = [];
+  setPos(world, 6, 18);
+  const o = other(world, 2, 8, 18);                 // 두 칸 오른쪽
+  tick(world, 90, { right: true });
+  ok('앞 사람을 뚫지 못한다', world.player.x < o.x);
+  ok('접촉해서 멈춘다 (몸 폭 안)', o.x - world.player.x < BUMP_W + 4);
+  note(`나 ${(world.player.x/T).toFixed(2)}칸, 앞 사람 ${(o.x/T).toFixed(2)}칸`);
+
+  // ② 밀기 — 뒤(1)가 오른쪽으로 밀면 앞(2)이 밀려난다. 두 세상이 서로를 보고 각자 계산한다.
+  const A = make('상자 계단'); A.bump = true; A.bag.boxes = [];
+  const B = make('상자 계단'); B.bump = true; B.bag.boxes = [];
+  A.mp.myId = 1; B.mp.myId = 2;
+  setPos(A, 6, 18); setPos(B, 8, 18);               // A 뒤, B 앞
+  const mirror = () => {
+    A.mp.others.clear(); B.mp.others.clear();
+    other(A, 2, 0, 18); const oa = A.mp.others.get(2); oa.x = oa.baseX = B.player.x; oa.air = oa.baseAir = B.player.air;
+    other(B, 1, 0, 18); const ob = B.mp.others.get(1); ob.x = ob.baseX = A.player.x; ob.air = ob.baseAir = A.player.air;
+  };
+  const bx0 = B.player.x;
+  for (let i = 0; i < 120; i++) { mirror(); Object.assign(A.input, { left:false, right:true, jump:false, duck:false }); Object.assign(B.input, { left:false, right:false, jump:false, duck:false }); w.update(A, 1/60); w.update(B, 1/60); }
+  ok('가만있던 앞 사람이 밀려 나아갔다', B.player.x > bx0 + 40);
+  ok('뒤 사람은 여전히 뒤에 있다', A.player.x < B.player.x);
+  note(`앞 사람이 ${((B.player.x - bx0)/T).toFixed(2)}칸 밀렸다`);
+
+  // ③ 머리 위/밑(계단·어깨)은 가로로 안 민다 — 세로 관계다
+  const w3 = make('상자 계단'); w3.bump = true; w3.bag.boxes = [];
+  setPos(w3, 8, 18);
+  const under = other(w3, 2, 8, 18);
+  under.air = w3.groundY - (18 * T - 53); under.baseAir = under.air;   // 그 사람 머리가 내 발
+  const x0 = w3.player.x;
+  tick(w3, 20, {});
+  ok('밟고 선 사람은 가로로 안 밀어낸다', Math.abs(w3.player.x - x0) < 6);
 }
 
 done('넷이서');

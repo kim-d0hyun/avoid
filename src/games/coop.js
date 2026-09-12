@@ -31,6 +31,8 @@ const TRACK_W = 3 * T;
 const BARREL_SPEED = 210, BARREL_EVERY = 4, BARREL_R = 19;
 const KNOCK = 380, STUN = 0.5;             // 통에 맞으면 세 칸 밀려나고 0.5초 넘어진다
 const PULL_REACH = 3 * T + 8;              // 손잡기: 세 칸 아래까지
+const BUMP_SEP = 300;                      // 사람끼리 부딪힐 때 벌어지는 힘. 걷는 속도(290)보다 조금 세서, 막되 뒤에서 밀면 조금씩 나아간다
+const BUMP_AT = BLOCK_W;                   // 두 몸 중심이 이보다 가까우면 겹친 것 (몸 폭 34)
 const PORTAL_COOL = 0.3;
 const ROT_AFTER = 0.5, ROT_GONE = 3;         // 삭은 발판: 0.5초 밟으면 부서지고 3초 뒤 돌아온다 — 한 명씩 건넌다
 const DIE_FOR = 0.8;                       // 죽고 나서 시작 자리에 다시 서기까지
@@ -416,6 +418,22 @@ export function move(world, dt) {
     }
   }
   p.x = nx;
+  // 사람끼리 부딪힘 — 같은 높이면 서로 막는다. 각자 자기 몸만 밀어내는데, 양쪽 화면이 같은 계산을
+  // 하니 뒤에서 밀면 앞 사람이 자기 화면에서 밀려나 조금씩 나아간다(피코파크의 그 밀기다).
+  // 머리 위/밑(계단·어깨)은 세로 관계라 안 민다. 벽 쪽으로도 안 밀린다 — 벽에 끼여 겹치지 않게.
+  // 봇 검증(한 명씩 움직이며 나머지는 정지 인형)에서는 끈다 — 정지 인형이 길을 막아 버린다.
+  if (world.bump !== false) for (const o of world.mp.others.values()) {
+    if (o.dead || o.waiting) continue;
+    const ofy = o.groundY - o.air;
+    if (Math.abs(ofy - fy) > BLOCK_H * 0.6) continue;          // 층이 다르거나 머리 위/밑이면 통과
+    const dx = p.x - o.x, gap = Math.abs(dx);
+    if (gap >= BUMP_AT) continue;
+    const overlap = (BUMP_AT - gap) / BUMP_AT;
+    const dir = gap < 0.5 ? (world.mp.myId < o.id ? -1 : 1) : Math.sign(dx);
+    const step = dir * BUMP_SEP * overlap * dt;
+    if (!bodyBlocked(world, p.x + step, fy - 1, h)) p.x += step;
+    if (dir === -Math.sign(p.vx || dir)) p.vx *= 0.6;          // 남을 향해 밀고 있으면 속도를 깎아 「막힌」 느낌
+  }
   if (p.knock !== 0) { p.knock *= Math.exp(-dt / 0.17); if (Math.abs(p.knock) < 8) p.knock = 0; }
 
   // 누가 내 머리 위에 서 있나 — 눌리는 그림이 되고, **뛰지 못한다.** 사람을 얹은 채 뛰면 위 사람을

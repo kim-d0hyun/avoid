@@ -1,13 +1,14 @@
 // 넷이서 인형 세상 — 방장 세상 하나에 나머지 셋을 세운다. 움직이는 한 명만 진짜 물리,
 // 나머지는 그 자리에 선 남. coop-play.mjs(실전 시험)와 coop-render.mjs(영상)가 같이 쓴다.
 
-import { w, coop, T, floorBelow, bodyBlocked, HALF, BLOCK_H, HEAD, DT, IDS, col, row,
+import { w, coop, T, G, floorBelow, bodyBlocked, HALF, BLOCK_H, HEAD, DT, IDS, col, row,
          makeWorld, puppet } from './coop-bot.mjs';
 
 export class PuppetSim {
   constructor(stageName) {
     this.frames = 0;
     this.host = makeWorld(stageName);
+    this.host.bump = false;                     // 봇은 한 명씩 — 정지 인형끼리 충돌 끈다
     const b = this.host.bag;
     this.pos = {};
     for (let i = 0; i < 4; i++) this.pos[String(i + 1)] = { x: (b.spawn[i].x + 0.5) * T, fy: (b.spawn[i].y + 1) * T, ladder: false };
@@ -85,6 +86,23 @@ export class PuppetSim {
       if (top >= q.fy - 1 && (best === null || top < best)) best = top;
     }
     return best;
+  }
+  /// 렌더용 — 정지 인형에 중력을 걸어 실제처럼 떨어뜨린다 (밑에서 받치던 사람이 빠지면 스르륵 내려온다).
+  /// 검증(coop-play)에서는 안 부른다 — settle 이 자리만 맞춘다.
+  dropPuppets(dt) {
+    for (const k of IDS) {
+      if (k === this.active || this.pos[k].ladder) continue;
+      const q = this.at(k);
+      const target = this.floorUnder(k);
+      if (target === null) continue;
+      if (q.fy < target - 0.5) {
+        const vy = (this.pos[k].vy ?? 0) + G * dt;
+        let nfy = q.fy + vy * dt;
+        if (nfy >= target) { nfy = target; this.pos[k].vy = 0; } else this.pos[k].vy = vy;
+        this.place(k, q.x, nfy);
+        this.pos[k].vy = nfy === target ? 0 : vy;
+      } else this.pos[k].vy = 0;
+    }
   }
   /// 발밑이 사라진 남을 바닥까지 떨어뜨린다. 위에 선 사람부터 본다.
   settle() {

@@ -75,6 +75,7 @@ function renderStage(stage) {
   let shot = 0, tick = 0;
   const canvasOf = ctx.canvas;
   sim.onStep = () => {
+    sim.dropPuppets(1 / 60);          // 렌더에선 인형도 떨어진다
     if (tick++ % STEP) return;
     renderFrame(ctx, sim, sim.frames / 60);
     execWrite(canvasOf, `${dir}/f${String(shot++).padStart(5, '0')}.png`);
