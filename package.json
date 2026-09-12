@@ -9,5 +9,8 @@
     "start": "./mac/build.sh && { pkill -f 'dist/mac/몰겜.app' || true; } && sleep 0.4 && open 'dist/mac/몰겜.app'",
     "build:mac": "./mac/build.sh",
     "dmg": "./mac/dmg.sh"
+  },
+  "devDependencies": {
+    "canvas": "^3.2.3"
   }
 }

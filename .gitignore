@@ -10,3 +10,4 @@ dist/
 4인-시연.gif
 4인-실제-시연.mp4
 __pycache__/
+node_modules/
