@@ -372,6 +372,10 @@ export function move(world, dt) {
       const r = trackRect(tr);
       if (Math.abs(fy - r.top) < 3 && p.x > r.x0 - HALF && p.x < r.x1 + HALF) drift += (tr.vx ?? 0) * dt;
     }
+    // 상자 위에 서 있으면 상자가 간 만큼 같이 간다 — 무빙워크에 실려 가는 상자, 남이 미는 상자.
+    for (const bx of b.boxes) {
+      if (Math.abs(bx.x - p.x) < HALF + T / 2 - 2 && Math.abs((bx.y - T) - fy) < 3) drift += bx.x - (bx.xPrev ?? bx.x);
+    }
   }
 
   // 남의 머리 위에 서 있으면 **그 사람이 걷는 만큼 같이 간다.** 안 그러면 밟힌 사람이 한 걸음 떼는
@@ -581,6 +585,7 @@ function stepObjects(world, dt) {
     }
   }
   // 상자 — 밀리고, 무빙워크에 실려 가고, 떨어지고, 포탈을 지난다
+  for (const bx of b.boxes) bx.xPrev = bx.x;
   for (const bx of b.boxes) {
     // 무빙워크 위의 상자는 혼자 간다 — 사람 걷는 속도의 절반. 밀지 않아도 누름판까지 실어다 준다.
     const belt = tile(b, Math.floor(bx.x / T), Math.floor((bx.y + 2) / T));

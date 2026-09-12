@@ -1,0 +1,792 @@
+<title>넷이서</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@800;900&family=IBM+Plex+Sans+KR:wght@400;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+
+<style>
+/* 몰겜의 색 그대로. src/draw/ink.js 에 있는 값을 옮겨 왔다 —
+   종이 · 잉크 · 연필 · 빨간 볼펜, 그리고 네 사람의 셔츠 넷. */
+:root {
+  --paper:#faf7ee; --sheet:#f4efe2; --ink:#141210; --pencil:#6b665c;
+  --pen:#d02f22; --rule:#e2d9c4; --box:#6f4a2c;
+  --p1:#2f6fb0; --p2:#3f8f56; --p3:#d97b1f; --p4:#8a5bb5;
+  --grid:rgba(20,18,16,.055);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:#131110; --sheet:#1c1917; --ink:#f2ece0; --pencil:#a29a8c;
+    --pen:#ef5a48; --rule:#332e28; --box:#b98a5c;
+    --p1:#6aa8e0; --p2:#6dc189; --p3:#e8a45c; --p4:#b58ce0;
+    --grid:rgba(242,236,224,.05);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:#131110; --sheet:#1c1917; --ink:#f2ece0; --pencil:#a29a8c;
+  --pen:#ef5a48; --rule:#332e28; --box:#b98a5c;
+  --p1:#6aa8e0; --p2:#6dc189; --p3:#e8a45c; --p4:#b58ce0;
+  --grid:rgba(242,236,224,.05);
+}
+
+body {
+  background:var(--paper); color:var(--ink);
+  font:400 16px/1.75 "IBM Plex Sans KR","Apple SD Gothic Neo",sans-serif;
+  /* 모눈종이. 기획은 모눈 위에서 한다. */
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),
+                   linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:21px 21px;
+  word-break:keep-all;
+}
+.page { max-width:1000px; margin:0 auto; padding:0 24px 96px 24px; }
+
+/* 빨간 여백선. 게임 안 시계 카드에 그어 둔 그 선이다. */
+@media (min-width:900px) {
+  .page { padding-left:96px; position:relative; }
+  .page::before {
+    content:""; position:absolute; left:56px; top:0; bottom:0; width:2px;
+    background:var(--pen); opacity:.55;
+  }
+}
+
+h1,h2,h3 { font-family:"Gothic A1","Apple SD Gothic Neo",sans-serif; text-wrap:balance; margin:0; }
+h1 { font-weight:900; font-size:clamp(40px,7vw,64px); letter-spacing:-.02em; line-height:1.05; }
+h2 { font-weight:900; font-size:clamp(22px,3vw,28px); letter-spacing:-.01em; }
+h3 { font-weight:800; font-size:18px; }
+p { margin:0; max-width:62ch; }
+a { color:var(--pen); }
+:focus-visible { outline:2px solid var(--pen); outline-offset:3px; }
+
+.head { padding:72px 0 40px 0; display:flex; flex-direction:column; gap:18px; }
+.kicker { font:600 12px/1 "IBM Plex Mono",monospace; letter-spacing:.22em;
+          text-transform:uppercase; color:var(--pen); }
+.lede { font-size:19px; color:var(--ink); max-width:56ch; }
+.spec { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+        gap:1px; background:var(--rule); border:1px solid var(--rule); margin-top:8px; }
+.spec div { background:var(--paper); padding:12px 14px; }
+.spec dt { font:600 11px/1 "IBM Plex Mono",monospace; letter-spacing:.14em;
+           color:var(--pencil); text-transform:uppercase; }
+.spec dd { margin:7px 0 0 0; font-weight:600; font-size:15px; }
+
+section { padding-top:56px; display:flex; flex-direction:column; gap:20px; }
+.num { font:500 12px/1 "IBM Plex Mono",monospace; color:var(--pencil); letter-spacing:.1em; }
+.sub { color:var(--pencil); font-size:15px; max-width:62ch; }
+
+table { border-collapse:collapse; width:100%; font-size:15px; }
+th,td { text-align:left; padding:9px 14px 9px 0; border-bottom:1px solid var(--rule);
+        vertical-align:top; }
+th { font:600 11px/1.4 "IBM Plex Mono",monospace; letter-spacing:.12em; color:var(--pencil);
+     text-transform:uppercase; padding-bottom:8px; }
+td.k { font-family:"IBM Plex Mono",monospace; white-space:nowrap; font-weight:500; }
+td.n { color:var(--pencil); }
+.scroll { overflow-x:auto; }
+
+.verbs { display:grid; gap:1px; background:var(--rule); border:1px solid var(--rule); }
+.verb { background:var(--paper); padding:16px 18px; display:grid;
+        grid-template-columns:minmax(110px,150px) minmax(0,1fr) minmax(0,1fr); gap:18px; align-items:baseline; }
+.verb b { font-family:"Gothic A1",sans-serif; font-weight:800; font-size:17px; }
+.verb .why { color:var(--pencil); font-size:14px; }
+@media (max-width:760px) { .verb { grid-template-columns:1fr; gap:6px; } }
+
+/* 스테이지 한 장 */
+.stage { border-top:2px solid var(--ink); padding-top:16px;
+         display:flex; flex-direction:column; gap:14px; }
+/* 장 제목. 판 넷을 묶는 가로줄이라 빨간 볼펜으로 한 번 긋는다. */
+.chapter { margin:44px 0 6px 0; padding-bottom:10px; font:900 20px/1 "Gothic A1",sans-serif;
+           border-bottom:2px solid var(--pen); }
+.chapter + .stage { border-top:0; padding-top:6px; }
+.stage-head { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+.stage-no { font:900 26px/1 "Gothic A1",sans-serif; color:var(--pen); font-variant-numeric:tabular-nums; }
+.stage-name { font:900 24px/1.2 "Gothic A1",sans-serif; }
+.stage-verb { font:500 12px/1 "IBM Plex Mono",monospace; color:var(--pencil);
+              border:1px solid var(--rule); padding:5px 8px; letter-spacing:.06em; }
+.stage-line { color:var(--pencil); margin-top:-6px; }
+.ruler { font:500 11px/1.4 "IBM Plex Mono",monospace; letter-spacing:.45em;
+         color:var(--pencil); white-space:pre; }
+
+.map { background:var(--sheet); border:1px solid var(--rule); padding:12px 16px 14px 16px;
+       overflow-x:auto; }
+.map .inner { display:inline-block; min-width:100%; }
+/* 칸이 네모로 보여야 맵이 맵으로 읽힌다. 자간을 벌려 글자 한 칸의 가로를 줄 높이에 맞춘다. */
+.map pre { margin:0; font:500 13px/1.02 "IBM Plex Mono",monospace; letter-spacing:.45em; }
+.map i { color:var(--pencil); opacity:.3; font-style:normal; }
+.map b { font-weight:700; }
+.g{color:var(--ink)} .sp{color:var(--pen)} .pl{color:var(--pencil)}
+.hk{color:var(--pencil)} .key{color:var(--pen)} .dr{color:var(--pen)}
+.sw{color:var(--p2)} .sh{color:var(--p4)} .bx{color:var(--box)} .bx2{color:var(--box)}
+.cv{color:var(--p1)}
+.p1{color:var(--p1)} .p2{color:var(--p2)} .p3{color:var(--p3)} .p4{color:var(--p4)}
+
+.solve { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+@media (max-width:760px) { .solve { grid-template-columns:1fr; gap:14px; } }
+.solve h4 { margin:0 0 4px 0; font:600 11px/1 "IBM Plex Mono",monospace;
+            letter-spacing:.14em; text-transform:uppercase; color:var(--pencil); }
+.solve .fail { border-left:2px solid var(--pen); padding-left:14px; }
+.solve p { font-size:15px; }
+
+.whos { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:1px;
+        background:var(--rule); border:1px solid var(--rule); }
+.who { background:var(--paper); margin:0; padding:18px; display:flex; gap:16px; align-items:flex-start; }
+.who svg { flex:none; }
+.who figcaption { display:flex; flex-direction:column; gap:6px; font-size:14px; }
+.who figcaption b { font-family:"Gothic A1",sans-serif; font-weight:800; font-size:15px; }
+.who figcaption span { color:var(--pencil); }
+.who code, code { font:500 12px "IBM Plex Mono",monospace; color:var(--pencil); }
+
+.steps { display:grid; gap:1px; background:var(--rule); border:1px solid var(--rule); }
+.step { background:var(--paper); padding:18px; }
+.step header { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+.step h3 { font-size:17px; }
+.step time { font:500 12px "IBM Plex Mono",monospace; color:var(--pencil); }
+.step ul { margin:12px 0 0 0; padding-left:18px; color:var(--ink); font-size:15px; }
+.step li { margin-bottom:5px; }
+
+.note { border-left:2px solid var(--pen); padding-left:16px; color:var(--ink); }
+footer { margin-top:72px; padding-top:24px; border-top:1px solid var(--rule);
+         color:var(--pencil); font-size:14px; display:flex; flex-direction:column; gap:8px; }
+footer a { color:var(--pencil); }
+</style>
+
+<style>
+.mapwrap { background:var(--sheet); border:1px solid var(--rule); overflow:auto; max-height:560px; }
+.mapwrap canvas { display:block; margin:0 auto; }
+.legendrow { display:flex; flex-wrap:wrap; gap:14px 22px; font-size:13px; color:var(--pencil); }
+.legendrow span::before { content:""; display:inline-block; width:12px; height:12px; margin-right:6px;
+  vertical-align:-2px; border:1px solid var(--ink); background:var(--c); }
+.steps-list { font-size:14px; line-height:1.6; columns:2; column-gap:28px; }
+@media (max-width:760px) { .steps-list { columns:1; } }
+.steps-list li { break-inside:avoid; margin-bottom:2px; }
+.steps-list b { font-family:"IBM Plex Mono",monospace; font-weight:600; font-size:12px; padding:1px 5px;
+                border:1px solid var(--rule); margin-right:6px; }
+.world { margin-top:56px; padding:22px 0 8px 0; border-top:3px solid var(--ink); }
+.world h3 { font:900 26px/1.1 "Gothic A1",sans-serif; }
+.world p { color:var(--pencil); margin-top:8px; }
+.chars { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1px;
+         background:var(--rule); border:1px solid var(--rule); }
+.char { background:var(--paper); padding:18px; display:flex; flex-direction:column; gap:10px; }
+.char svg { width:100%; height:auto; }
+.char b { font-family:"Gothic A1",sans-serif; font-weight:800; }
+.char span { color:var(--pencil); font-size:13px; }
+.poses { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:1px;
+         background:var(--rule); border:1px solid var(--rule); }
+.pose { background:var(--paper); padding:14px; text-align:center; font-size:13px; color:var(--pencil); }
+.pose svg { width:80px; height:auto; display:block; margin:0 auto 6px auto; }
+details { border:1px solid var(--rule); padding:12px 16px; }
+summary { cursor:pointer; font-weight:600; }
+</style>
+
+<style>
+.badge { font:600 11px/1 "IBM Plex Mono",monospace; letter-spacing:.06em; padding:5px 8px; border:1px solid var(--rule); }
+.badge.one { color:var(--pen); border-color:var(--pen); }
+.badge.all { color:var(--ink); }
+.pattern { display:grid; grid-template-columns: 34px 1fr; gap:14px; align-items:start; padding:16px 18px; background:var(--paper); }
+.pattern .no { font:900 20px/1 "Gothic A1",sans-serif; color:var(--pen); }
+.pattern b { font-family:"Gothic A1",sans-serif; font-weight:800; font-size:16px; display:block; margin-bottom:4px; }
+.pattern p { font-size:14px; }
+.pattern .use { color:var(--pencil); font-size:12.5px; margin-top:6px; font-family:"IBM Plex Mono",monospace; }
+.patterns { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:1px; background:var(--rule); border:1px solid var(--rule); }
+.shapes { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:1px; background:var(--rule); border:1px solid var(--rule); }
+.shape { background:var(--paper); padding:14px; font-size:13px; color:var(--pencil); }
+.shape svg { display:block; width:100%; height:auto; margin-bottom:8px; }
+.shape b { color:var(--ink); display:block; font-family:"Gothic A1",sans-serif; font-weight:800; font-size:14px; }
+.mush { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:1px; background:var(--rule); border:1px solid var(--rule); }
+.mush div { background:var(--paper); padding:14px 16px; font-size:14px; }
+.mush b { display:block; font-family:"Gothic A1",sans-serif; font-weight:800; margin-bottom:4px; }
+.mush span { color:var(--pencil); font-size:13px; }
+</style>
+
+<style>
+.views { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:18px; }
+.view { display:flex; flex-direction:column; gap:8px; }
+.view canvas { width:100%; height:auto; display:block; border:1px solid var(--rule); }
+.view figcaption { font-size:13.5px; line-height:1.55; }
+.view figcaption b { font-family:"Gothic A1",sans-serif; font-weight:800; }
+</style>
+
+<style>
+.icons { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1px; background:var(--rule); border:1px solid var(--rule); }
+.icon { background:var(--paper); padding:14px 14px 16px 14px; display:flex; flex-direction:column; gap:6px; }
+.icon svg { width:100%; height:auto; background:var(--sheet); border:1px solid var(--rule); }
+.icon b { font-family:"Gothic A1",sans-serif; font-weight:800; font-size:14px; }
+.icon span { color:var(--pencil); font-size:12.5px; line-height:1.5; }
+</style>
+
+<div class="page">
+
+<header class="head">
+  <div class="kicker">몰겜 · 세 번째 게임 · 기획 6판 — 검토판</div>
+  <h1>넷이서</h1>
+  <p class="lede"><b>뒷마당 · 학교 · 도시 · 지하철.</b> 판 열넷, 모양도 규칙도 다 다르다 — 한 화면짜리, 가로로 긴 것, 위로 긴 것, 두 복도, 3층, 무빙워크 통로.
+     어떤 판은 <b>한 명만</b> 닿으면 끝나고 어떤 판은 <b>넷이 다</b> 모여야 끝난다.
+     판마다 협동 마디가 넷 이상 — 어깨와 손, 사람 계단, 누름판 지키기, 깜빡이는 다리, 한 명씩 건너는 삭은 발판, 포탈로 보내는 상자.
+     열네 판 풀이 639걸음을 지형에 대 봤고, <b>같은 풀이를 실제 엔진에서 넷이 키를 눌러 전부 깼다</b> (아래 12).</p>
+  <dl class="spec">
+    <div><dt>인원</dt><dd>넷 고정</dd></div>
+    <div><dt>판</dt><dd>4단계 · 열네 판 · 크기는 판마다</dd></div>
+    <div><dt>끝나는 조건</dt><dd>판마다 「한 명」 / 「넷」</dd></div>
+    <div><dt>죽으면</dt><dd>시작 자리에서 다시 · 방장이 ⌥R 로 판을 되감을 수 있다</dd></div>
+    <div><dt>6판에서</dt><dd>지하철 두 판 · 삭은 발판 · 상자가 무빙워크를 탄다 · 엔진 버그 아홉 · 판 여섯 고침</dd></div>
+  </dl>
+</header>
+
+<section>
+  <div class="num">01</div>
+  <h2>주황버섯의 소개팅에서 가져온 것</h2>
+  <p class="sub">워크래프트 3 유즈맵. 두 사람이 주황버섯을 소개팅 장소까지 데려다 준다. 13개 월드, 월드마다 컨티뉴 20개.
+     맵 열둘(1-1~1-8, 2-1~2-4)을 사진으로 뜯어봤다.</p>
+  <div class="mush"><div><b>색 열쇠 → 색 블록</b>열쇠를 집으면 같은 색 블록이 전부 사라진다. 문도 자물쇠도 없다 — 블록이 곧 문이다.<br><span>1-3 · 1-6 · 1-8 · 2-2 · 2-3 에서 그대로 보인다. 발밑 블록이 사라지는 순서 퍼즐(1-6, 1-8)을 「탑」과 「마지막」에 넣었다.</span></div><div><b>표지판</b>땅에 화살표가 그려져 있다 — 「→」「↑」「←」. 설명 없이 길을 가리킨다.<br><span>1-1. 우리 「표지판」 판이 그 판이다: 오른쪽 아래로 가서 위로 돌아온다.</span></div><div><b>출구가 시작 옆</b>포탈이 시작 자리 바로 옆인데 블록에 막혀 있다. 맵을 한 바퀴 돌아 열쇠를 집고 돌아온다.<br><span>2-4. 「되돌아오기」.</span></div><div><b>두 레인</b>위 복도와 아래 복도가 나란하고, 위에서 집은 열쇠가 아래 길을 연다.<br><span>2-2. 「두 길」.</span></div><div><b>왕복 발판 · 비행기</b>정해진 길을 오가는 발판. 빨간 화살표로 길이 그려져 있다.<br><span>2-4 의 비행기, 2-1 의 문어 블록. 「움직이는 발판」은 길을 점선으로 그린다.</span></div><div><b>컨티뉴와 방장</b>월드마다 다시 시작 횟수가 정해져 있고, 재시작·강퇴·스킵은 방장 명령이다.<br><span>우리는 횟수로 막지 않고 **세기만 한다**. 리셋은 방장 ⌥R.</span></div></div>
+  <p class="note">피코파크에서는 「무거운 것은 둘이 민다」「사람 위에 선다」「한 명이 죽으면 전원」을, 주황버섯에서는
+     「색 열쇠」「표지판」「되돌아오는 루프」「두 레인」「방장이 되감는다」를 가져왔다. 둘을 섞은 게 이 판이다.</p>
+</section>
+
+<section>
+  <div class="num">02</div>
+  <h2>협동하는 법 열네 가지</h2>
+  <p class="sub">장치보다 <b>사람이 갈리는 방식</b>이 협동이다. 판마다 이 중 두셋을 섞는다. 오른쪽 작은 글씨가 그 방식을 쓰는 판.</p>
+  <div class="patterns"><div class="pattern"><span class="no">01</span><div><b>어깨 → 손</b><p>세 칸 턱은 혼자 못 넘는다. 한 명이 어깨를 내주고, 올라간 사람이 <b>손을 내려 끌어올린다</b>(세 칸 아래까지). 이 게임의 기본 동작.</p><div class="use">표지판 · 두 열쇠 · 탑 · 3층 창고 · 마지막</div></div></div><div class="pattern"><span class="no">02</span><div><b>사람 계단</b><p>둘이 층층이 걸쳐 <b>서면</b> 계단이 된다 (선 머리는 한 칸 남짓, 웅크린 머리는 그 반 — 웅크리면 네 칸이 안 나온다). 그 위를 밟고 올라가 뛴다.</p><div class="use">상자 계단</div></div></div><div class="pattern"><span class="no">03</span><div><b>열쇠 심부름</b><p>한 명이 팀의 도움으로 열쇠까지 간다. 집는 순간 그 색 블록이 사라져 나머지의 길이 열린다.</p><div class="use">두 열쇠 · 두 길 · 되돌아오기 · 3층 창고 · 마지막</div></div></div><div class="pattern"><span class="no">04</span><div><b>발밑이 사라진다</b><p>열쇠가 놓인 바닥도 그 색 블록이다. 집으면 떨어진다 — 어디로 떨어질지, 누가 집을지, 어느 열쇠부터 집을지. <b>열쇠는 닿으면 집는다</b> — 지나가려면 뛰어 넘는다.</p><div class="use">두 열쇠 · 두 길 · 탑 · 옥상(선반이 사라져 상자가 떨어진다) · 종점</div></div></div><div class="pattern"><span class="no">05</span><div><b>스위치 한 번</b><p>먼 길을 간 한 명이 밟으면 셔터가 열린 채 남는다. 가까운 길을 나머지에게 열어 준다.</p><div class="use">표지판</div></div></div><div class="pattern"><span class="no">06</span><div><b>누름판 지키기</b><p>밟고 있는 동안만 열린다. 한 명이 남는다 — 「한 명만 닿으면 끝」 판과 짝.</p><div class="use">지키는 사람(둘) · 엘리베이터(둘) · 동시에(둘)</div></div></div><div class="pattern"><span class="no">07</span><div><b>사람 대신 물건</b><p>누름판에 상자를 올려 두면 아무도 남지 않아도 된다. 상자가 스스로 떨어져 누르기도 한다.</p><div class="use">움직이는 발판 · 3층 창고 · 옥상 · 무빙워크 · 종점</div></div></div><div class="pattern"><span class="no">08</span><div><b>상자 릴레이</b><p>상자를 밀어 단을 오르고, 틈으로 떨어뜨려 아래층 발판으로 쓰고, 상자 위에 둘이 서서 어깨를 내준다.</p><div class="use">상자 계단 · 되돌아오기 · 탑 · 3층 창고 · 옥상</div></div></div><div class="pattern"><span class="no">09</span><div><b>두 길</b><p>위 복도와 아래 복도. 위의 한 명이 아래의 길을 열고, 끝에서 떨어져 합류한다.</p><div class="use">두 길</div></div></div><div class="pattern"><span class="no">10</span><div><b>되돌아오기</b><p>출구가 코앞인데 막혔다. 맵 끝까지 가서 열쇠를 집고 다른 길로 돌아온다 — 갈 때 어깨, 올 때 상자.</p><div class="use">표지판 · 되돌아오기</div></div></div><div class="pattern"><span class="no">11</span><div><b>때를 맞춘다</b><p>왕복 발판 · 리프트 · <b>깜빡이는 다리(2초 켜짐 2초 꺼짐)</b> · 굴러오는 통. 협동이 아니라 박자가 문제인 마디를 판마다 하나씩.</p><div class="use">지키는 사람 · 엘리베이터 · 움직이는 발판 · 되돌아오기 · 3층 창고 · 동시에 · 옥상 · 종점</div></div></div><div class="pattern"><span class="no">12</span><div><b>한 명만 간다</b><p>넷 중 하나만 출구에 닿으면 끝. 나머지 셋은 그 한 명을 보내는 기계 — 누름판 둘, 어깨 하나, 달리기 하나.</p><div class="use">두 열쇠 · 지키는 사람 · 엘리베이터 · 동시에</div></div></div><div class="pattern"><span class="no">13</span><div><b>한 명씩</b><p><b>삭은 발판</b>은 0.5초 밟으면 부서지고 3초 뒤 돌아온다. 넷이 줄지어 건너면 넷째가 빠진다 — 간격과 순서가 협동이다.</p><div class="use">무빙워크 · 종점</div></div></div><div class="pattern"><span class="no">14</span><div><b>상자를 보낸다</b><p>상자는 <b>무빙워크에 실려 가고 포탈을 지난다.</b> 사람이 못 가는 데로 상자를 보내 누름판을 누른다 — 3층에서 밀어 넣은 상자가 1층 끝에 떨어진다.</p><div class="use">무빙워크 · 종점</div></div></div></div>
+</section>
+
+<section>
+  <div class="num">03</div>
+  <h2>판 모양 다섯 가지</h2>
+  <p class="sub">빨간 점선이 화면 한 칸(36 × 22). 판이 화면보다 크면 카메라가 <b>내 캐릭터</b>를 따라간다 — 나는 2층, 친구는 1층이면 다른 화면을 본다.</p>
+  <div class="shapes"><div class="shape"><svg viewBox="0 0 160 80"><rect x="10" y="10" width="60" height="40" fill="none" stroke="var(--pen)" stroke-width="1.4" stroke-dasharray="3 3"/><rect x="10" y="10" width="60" height="40" fill="none" stroke="var(--ink)" stroke-width="2"/></svg><b>한 화면</b>36 × 22. 카메라가 안 움직인다. 「상자 계단」「두 열쇠」</div><div class="shape"><svg viewBox="0 0 160 80"><rect x="5" y="20" width="60" height="40" fill="none" stroke="var(--pen)" stroke-width="1.4" stroke-dasharray="3 3"/><rect x="5" y="20" width="150" height="30" fill="none" stroke="var(--ink)" stroke-width="2"/></svg><b>가로로 긴 한 층</b>108 × 22. 오른쪽으로 가면 흐른다. 「표지판」「지키는 사람」「움직이는 발판」「동시에」「무빙워크」</div><div class="shape"><svg viewBox="0 0 160 80"><rect x="5" y="15" width="60" height="40" fill="none" stroke="var(--pen)" stroke-width="1.4" stroke-dasharray="3 3"/><rect x="5" y="15" width="150" height="40" fill="none" stroke="var(--ink)" stroke-width="2"/><line x1="5" y1="35.0" x2="155" y2="35.0" stroke="var(--pencil)" stroke-width="1.2"/></svg><b>위·아래 두 층</b>108 × 22. 두 복도가 나란히. 「두 길」「되돌아오기」</div><div class="shape"><svg viewBox="0 0 160 80"><rect x="60" y="38" width="60" height="40" fill="none" stroke="var(--pen)" stroke-width="1.4" stroke-dasharray="3 3"/><rect x="60" y="2" width="40" height="76" fill="none" stroke="var(--ink)" stroke-width="2"/><line x1="60" y1="17.2" x2="100" y2="17.2" stroke="var(--pencil)" stroke-width="1.2"/><line x1="60" y1="32.4" x2="100" y2="32.4" stroke="var(--pencil)" stroke-width="1.2"/><line x1="60" y1="47.6" x2="100" y2="47.6" stroke="var(--pencil)" stroke-width="1.2"/><line x1="60" y1="62.8" x2="100" y2="62.8" stroke="var(--pencil)" stroke-width="1.2"/></svg><b>위로 긴 판</b>36 × 44 · 36 × 60. 사다리·리프트로 오른다. 「엘리베이터」「탑」</div><div class="shape"><svg viewBox="0 0 160 80"><rect x="5" y="25" width="60" height="40" fill="none" stroke="var(--pen)" stroke-width="1.4" stroke-dasharray="3 3"/><rect x="5" y="5" width="150" height="60" fill="none" stroke="var(--ink)" stroke-width="2"/><line x1="5" y1="25.0" x2="155" y2="25.0" stroke="var(--pencil)" stroke-width="1.2"/><line x1="5" y1="45.0" x2="155" y2="45.0" stroke="var(--pencil)" stroke-width="1.2"/></svg><b>가로로 긴 3층</b>120 × 28. 층마다 사다리가 다른 자리. 「3층 창고」「옥상」「종점」</div></div>
+</section>
+
+<section>
+  <div class="num">04</div>
+  <h2>끝나는 조건 · 죽음 · 되감기</h2>
+  <div class="verb"><b>넷이 다 모여야 끝</b><span>출구 포탈에 넷이 들어와 있으면 켜지고 아무나 ⌥↑. 흩어져 있으면 「2명 더」가 포탈 위에 뜬다. 포탈 앞에서 동료 머리 위에 서 있어도 「안」이다.</span><span class="why">기본. 열네 판 중 열.</span></div>
+<div class="verb"><b>한 명만 닿으면 끝</b><span>넷 중 하나가 포탈에 닿는 순간 끝. 나머지 셋은 그 한 명을 보내는 기계다 — 누름판을 밟고, 어깨를 내주고.</span><span class="why">네 판. 누름판 지키기와 짝이 된다 — 지키는 사람이 못 와도 된다.</span></div>
+<div class="verb"><b>죽으면 시작 자리에서</b><span>가시·연못에 닿으면 그 사람만 시작 자리에서 다시 산다. 판은 그대로 돈다.</span><span class="why">팀이 이미 협동으로 건너간 자리면 혼자서는 못 따라간다 — 그래서 아래가 있다.</span></div>
+<div class="verb"><b>방장이 되감는다</b><span>⌥R (방장만). 상자·블록·셔터·사람 전부 처음 자리로. 「되감기 3」처럼 횟수를 세어 단계 끝에 보여 준다.</span><span class="why">주황버섯의 컨티뉴를 가져왔지만 막지는 않는다 — 점심시간에 하는 게임이 「컨티뉴 소진」으로 끝나면 안 된다.</span></div>
+<div class="verb"><b>통·전동차는 죽이지 않는다</b><span>세 칸 밀려나고 0.5초 넘어진다. 밀려나서 가시에 닿는 것만 죽음이다.</span><span class="why">죽는 이유가 둘뿐이면 실수를 남 탓하지 않는다.</span></div>
+<div class="verb"><b>시간 제한은 단계 끝 판만</b><span>도시 「옥상」 120초, 지하철 「종점」 150초. 다 되면 방장이 되감은 것과 같다.</span><span class="why">시간은 가장 싼 손잡이라 아껴 쓴다.</span></div>
+</section>
+
+<section>
+  <div class="num">05</div>
+  <h2>네모 캐릭터</h2>
+  <p class="sub">살짝 둥근 직사각형 34 × 50px. 잉크 테두리에 색연필 빗금. 눈 둘, 입 하나, 짧은 다리 둘. 팔은 <b>뭔가를 잡을 때만</b>. 윗면이 평평해서 밟고 서기가 자연스럽다.</p>
+  <div class="chars"><figure class="char"><svg viewBox="0 0 130 100" aria-hidden="true"><text x="50" y="16" text-anchor="middle" font-family="IBM Plex Sans KR, sans-serif" font-size="11" font-weight="600" fill="#2f6fb0">파랑</text><line x1="34" y1="20" x2="66" y2="20" stroke="#d02f22" stroke-width="2"/><rect x="33.0" y="40" width="34" height="50" rx="8" ry="8" fill="#2f6fb0" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="37.0" y1="86" x2="43.0" y2="44" stroke="#2f6fb0" stroke-width="2" opacity=".7"/><line x1="44.0" y1="86" x2="50.0" y2="44" stroke="#2f6fb0" stroke-width="2" opacity=".7"/><line x1="51.0" y1="86" x2="57.0" y2="44" stroke="#2f6fb0" stroke-width="2" opacity=".7"/><line x1="58.0" y1="86" x2="64.0" y2="44" stroke="#2f6fb0" stroke-width="2" opacity=".7"/><path d="M47 41 C49 31 59 26 54 35" fill="none" stroke="#2f6fb0" stroke-width="3.6" stroke-linecap="round"/><line x1="43" y1="52.0" x2="43" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="52.0" x2="57" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 67.0 Q51 69.0 56 66.0" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="41" y1="90" x2="41" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="59" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/></svg><b style="color:#2f6fb0">1번 · 삐친 머리</b><span>정수리에서 앞으로 휘는 한 올. 획 하나.</span></figure><figure class="char"><svg viewBox="0 0 130 100" aria-hidden="true"><text x="50" y="16" text-anchor="middle" font-family="IBM Plex Sans KR, sans-serif" font-size="11" font-weight="600" fill="#3f8f56">초록</text><rect x="33.0" y="40" width="34" height="50" rx="8" ry="8" fill="#3f8f56" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="37.0" y1="86" x2="43.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="44.0" y1="86" x2="50.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="51.0" y1="86" x2="57.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="58.0" y1="86" x2="64.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><circle cx="43" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><circle cx="57" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><line x1="43" y1="52.0" x2="43" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="52.0" x2="57" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 67.0 Q51 69.0 56 66.0" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="41" y1="90" x2="41" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="59" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/></svg><b style="color:#3f8f56">2번 · 안경</b><span>동그란 안경 둘. 눈이 그 안에 있다.</span></figure><figure class="char"><svg viewBox="0 0 130 100" aria-hidden="true"><text x="50" y="16" text-anchor="middle" font-family="IBM Plex Sans KR, sans-serif" font-size="11" font-weight="600" fill="#d97b1f">주황</text><rect x="33.0" y="40" width="34" height="50" rx="8" ry="8" fill="#d97b1f" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="37.0" y1="86" x2="43.0" y2="44" stroke="#d97b1f" stroke-width="2" opacity=".7"/><line x1="44.0" y1="86" x2="50.0" y2="44" stroke="#d97b1f" stroke-width="2" opacity=".7"/><line x1="51.0" y1="86" x2="57.0" y2="44" stroke="#d97b1f" stroke-width="2" opacity=".7"/><line x1="58.0" y1="86" x2="64.0" y2="44" stroke="#d97b1f" stroke-width="2" opacity=".7"/><path d="M31.0 56 L31.0 43 Q50 34 69.0 43 L69.0 56" fill="none" stroke="#d97b1f" stroke-width="3.8" stroke-linecap="round"/><line x1="43" y1="52.0" x2="43" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="52.0" x2="57" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 67.0 Q51 69.0 56 66.0" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="41" y1="90" x2="41" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="59" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/></svg><b style="color:#d97b1f">3번 · 단발</b><span>머리를 두르고 볼까지 내려오는 단발.</span></figure><figure class="char"><svg viewBox="0 0 130 100" aria-hidden="true"><text x="50" y="16" text-anchor="middle" font-family="IBM Plex Sans KR, sans-serif" font-size="11" font-weight="600" fill="#8a5bb5">보라</text><rect x="33.0" y="40" width="34" height="50" rx="8" ry="8" fill="#8a5bb5" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="37.0" y1="86" x2="43.0" y2="44" stroke="#8a5bb5" stroke-width="2" opacity=".7"/><line x1="44.0" y1="86" x2="50.0" y2="44" stroke="#8a5bb5" stroke-width="2" opacity=".7"/><line x1="51.0" y1="86" x2="57.0" y2="44" stroke="#8a5bb5" stroke-width="2" opacity=".7"/><line x1="58.0" y1="86" x2="64.0" y2="44" stroke="#8a5bb5" stroke-width="2" opacity=".7"/><path d="M36.0 42 Q50 32 64.0 42" fill="none" stroke="#8a5bb5" stroke-width="9" stroke-linecap="round"/><line x1="52" y1="39" x2="79.0" y2="37" stroke="#8a5bb5" stroke-width="4.5" stroke-linecap="round"/><line x1="43" y1="52.0" x2="43" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="52.0" x2="57" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 67.0 Q51 69.0 56 66.0" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="41" y1="90" x2="41" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="59" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/></svg><b style="color:#8a5bb5">4번 · 모자</b><span>정수리를 덮는 굵은 띠에 챙 하나.</span></figure></div>
+  <div class="poses"><div class="pose"><svg viewBox="0 0 130 100" aria-hidden="true"><rect x="33.0" y="40" width="34" height="50" rx="8" ry="8" fill="#3f8f56" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="37.0" y1="86" x2="43.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="44.0" y1="86" x2="50.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="51.0" y1="86" x2="57.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="58.0" y1="86" x2="64.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><circle cx="43" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><circle cx="57" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><line x1="43" y1="52.0" x2="43" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="52.0" x2="57" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 67.0 Q51 69.0 56 66.0" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="41" y1="90" x2="41" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="59" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/></svg>서 있다</div><div class="pose"><svg viewBox="0 0 130 100" aria-hidden="true"><rect x="33.0" y="40" width="34" height="50" rx="8" ry="8" fill="#3f8f56" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="37.0" y1="86" x2="43.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="44.0" y1="86" x2="50.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="51.0" y1="86" x2="57.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="58.0" y1="86" x2="64.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><circle cx="43" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><circle cx="57" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><line x1="43" y1="52.0" x2="43" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="52.0" x2="57" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 67.0 Q51 69.0 56 66.0" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="41" y1="90" x2="36" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="63" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/></svg>걷는다 — 다리만 번갈아</div><div class="pose"><svg viewBox="0 0 130 100" aria-hidden="true"><rect x="36.0" y="32" width="28" height="58" rx="8" ry="8" fill="#3f8f56" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="40.0" y1="86" x2="46.0" y2="36" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="47.0" y1="86" x2="53.0" y2="36" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="54.0" y1="86" x2="60.0" y2="36" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="61.0" y1="86" x2="67.0" y2="36" stroke="#3f8f56" stroke-width="2" opacity=".7"/><circle cx="43" cy="49.56" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><circle cx="57" cy="49.56" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><line x1="43" y1="46.56" x2="43" y2="52.56" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="46.56" x2="57" y2="52.56" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 61.56 Q51 63.56 56 60.56" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="42" y1="90" x2="46" y2="95" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="58" y1="90" x2="54" y2="95" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/></svg>뛴다 — 길어진다</div><div class="pose"><svg viewBox="0 0 130 100" aria-hidden="true"><rect x="30.0" y="62" width="40" height="28" rx="8" ry="8" fill="#3f8f56" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="34.0" y1="86" x2="40.0" y2="66" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="41.0" y1="86" x2="47.0" y2="66" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="48.0" y1="86" x2="54.0" y2="66" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="55.0" y1="86" x2="61.0" y2="66" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="62.0" y1="86" x2="68.0" y2="66" stroke="#3f8f56" stroke-width="2" opacity=".7"/><circle cx="43" cy="69.96000000000001" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><circle cx="57" cy="69.96000000000001" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><line x1="43" y1="66.96000000000001" x2="43" y2="72.96000000000001" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="66.96000000000001" x2="57" y2="72.96000000000001" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 81.96000000000001 Q51 83.96000000000001 56 80.96000000000001" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="41" y1="90" x2="41" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="59" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/></svg>웅크린다 — 넓어진다</div><div class="pose"><svg viewBox="0 0 130 100" aria-hidden="true"><rect x="33.0" y="40" width="34" height="50" rx="8" ry="8" fill="#3f8f56" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="37.0" y1="86" x2="43.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="44.0" y1="86" x2="50.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="51.0" y1="86" x2="57.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="58.0" y1="86" x2="64.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><circle cx="43" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><circle cx="57" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><line x1="43" y1="52.0" x2="43" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="52.0" x2="57" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 67.0 Q51 69.0 56 66.0" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="41" y1="90" x2="41" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="59" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="67.0" y1="62" x2="81.0" y2="60" stroke="var(--ink)" stroke-width="3.2" stroke-linecap="round"/><line x1="67.0" y1="74" x2="81.0" y2="74" stroke="var(--ink)" stroke-width="3.2" stroke-linecap="round"/><rect x="81.0" y="52" width="38" height="38" fill="none" stroke="var(--ink)" stroke-width="3"/><path d="M81.0 71 H119.0 M100.0 52 V90" stroke="var(--pencil)" stroke-width="2"/></svg>민다 — 팔이 나온다</div><div class="pose"><svg viewBox="0 0 130 100" aria-hidden="true"><rect x="33.0" y="40" width="34" height="50" rx="8" ry="8" fill="#3f8f56" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="37.0" y1="86" x2="43.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="44.0" y1="86" x2="50.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="51.0" y1="86" x2="57.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="58.0" y1="86" x2="64.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><circle cx="43" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><circle cx="57" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><line x1="43" y1="52.0" x2="43" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><line x1="57" y1="52.0" x2="57" y2="58.0" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><path d="M45 67.0 Q51 69.0 56 66.0" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="round"/><line x1="41" y1="90" x2="41" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="59" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="50" y1="40" x2="50" y2="24" stroke="var(--ink)" stroke-width="3.2" stroke-linecap="round"/><circle cx="50" cy="20" r="5" fill="none" stroke="var(--pencil)" stroke-width="2.4"/></svg>매달린다</div><div class="pose"><svg viewBox="0 0 130 100" aria-hidden="true"><rect x="33.0" y="40" width="34" height="50" rx="8" ry="8" fill="#3f8f56" fill-opacity=".55" stroke="var(--ink)" stroke-width="3.2"/><line x1="37.0" y1="86" x2="43.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="44.0" y1="86" x2="50.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="51.0" y1="86" x2="57.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><line x1="58.0" y1="86" x2="64.0" y2="44" stroke="#3f8f56" stroke-width="2" opacity=".7"/><circle cx="43" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><circle cx="57" cy="55.0" r="6.5" fill="none" stroke="#3f8f56" stroke-width="2.6"/><path d="M39 52.0 L47 60.0 M47 52.0 L39 60.0" stroke="var(--ink)" stroke-width="2.6"/><path d="M53 52.0 L61 60.0 M61 52.0 L53 60.0" stroke="var(--ink)" stroke-width="2.6"/><line x1="41" y1="90" x2="41" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/><line x1="59" y1="90" x2="59" y2="98" stroke="var(--ink)" stroke-width="3.4" stroke-linecap="round"/></svg>죽었다 — ✕ ✕</div></div>
+  <div class="verb"><b>찌그러지고 늘어난다</b><span>웅크리면 넓고 낮게, 뛰면 좁고 길게. 착지하면 0.1초 눌렸다 돌아온다.</span><span class="why">관절이 없는 대신 이게 아주 잘 읽힌다.</span></div>
+<div class="verb"><b>누가 위에 서면 눌린다</b><span>머리 위에 한 명이면 10%, 둘이면 20%.</span><span class="why">밟는 쪽 화면에서도 밟히는 쪽 화면에서도 「무게」가 보인다.</span></div>
+<div class="verb"><b>넷은 똑같이 걷고 뛴다</b><span>다른 것은 옷 색과 머리 표뿐 — 삐친 머리 · 안경 · 단발 · 모자.</span><span class="why">능력이 다르면 잘하는 사람이 다 해 버린다.</span></div>
+<div class="verb"><b>내 것은 밑줄, 방장은 왕관</b><span>지금 게임 그대로.</span><span class="why">바뀌지 않는 것은 바꾸지 않는다.</span></div>
+</section>
+
+<section>
+  <div class="num">06</div>
+  <h2>시야 — 각자 자기 카메라</h2>
+  <div class="verb"><b>내 캐릭터가 한가운데</b><span>가로 ±4칸 · 세로 ±3칸 죽은 구역 안에서는 안 움직이고, 벗어난 만큼만 0.12초에 걸쳐 따라붙는다. 판 끝에서는 벽에 붙어 멈춘다.</span><span class="why">한 화면짜리 판에서는 카메라가 아예 안 움직인다.</span></div>
+<div class="verb"><b>화면 밖 친구는 화살표</b><span>화면 가장자리에 옷 색 화살표 + 머리 표 + 「2층 ↑」. 넷이 다 보이면 사라진다.</span><span class="why">다른 층 친구가 어디 있는지 알아야 「내려와」를 말할 수 있다.</span></div>
+<div class="verb"><b>넷이 같은 판을 본다</b><span>지형·상자·블록·셔터·통은 하나. 카메라만 다르다.</span><span class="why">상자·통·셔터는 방장이 굴리고 카메라는 각자 계산한다.</span></div>
+</section>
+
+<section>
+  <div class="num">07</div>
+  <h2>각자 보는 화면 — 같은 순간, 네 화면</h2>
+  <p class="sub">「두 길」 판, 1번이 노란 열쇠 코앞에 선 순간. <b>지형은 하나인데 네 사람이 보는 화면은 다 다르다.</b>
+     카메라는 내 캐릭터를 따라가고 판 끝에서 멈춘다. 화면 밖 친구는 가장자리 화살표 — 옷 색 네모, 이름, 몇 층인지, 몇 칸 떨어졌는지.
+     바탕의 흐릿한 줄은 그 사람이 일하던 문서다 — 이 게임은 남의 화면 위에 투명하게 얹힌다.</p>
+  <div class="views">
+<figure class="view">
+  <canvas data-view="1" width="10" height="10"></canvas>
+  <figcaption><b>1번 · 파랑 · 방장</b> — 2층 복도. 파란 열쇠는 이미 집었고 노란 열쇠 네 칸 앞 — 저 바닥은 노랗다, 집으면 떨어진다. 나머지 셋은 화면 밖: 왼쪽 가장자리에 화살표 셋, 이름 · 몇 층 · 몇 칸.</figcaption>
+</figure>
+<figure class="view">
+  <canvas data-view="2" width="10" height="10"></canvas>
+  <figcaption><b>2번 · 초록</b> — 어깨를 내주고 남은 자리, 세 칸 벽 바로 앞. 오른쪽으로 1번이 보이고 아래 복도의 4번도 화면 안. 3번만 왼쪽 밖.</figcaption>
+</figure>
+<figure class="view">
+  <canvas data-view="3" width="10" height="10"></canvas>
+  <figcaption><b>3번 · 주황</b> — 시작 자리에서 기다리는 중. 판 왼쪽 끝이라 카메라가 벽에 붙어 내가 화면 가운데에 있지 않다 — 그게 맞다. 4번은 오른쪽에, 1·2번은 위 오른쪽 화살표.</figcaption>
+</figure>
+<figure class="view">
+  <canvas data-view="4" width="10" height="10"></canvas>
+  <figcaption><b>4번 · 보라</b> — 1층 복도를 걸어 노란 블록 앞. 블록이 사라지길 기다린다. 2층의 2번이 위에 보이고, 1번은 오른쪽 위 화살표, 3번은 왼쪽 화살표.</figcaption>
+</figure></div>
+  <p class="note">3번은 판 왼쪽 끝에 있어 카메라가 벽에 붙는다 — 자기가 화면 한가운데에 있지 않다. 그게 맞다: 판 밖 검은 부분을 보여 주는 것보다
+     한쪽으로 치우친 게 낫다. 2번과 4번은 같은 구역에 있어 서로 화면 안에 보이지만, 2번은 2층에서 4번은 1층에서 보는 것이라 화면이 다르다.</p>
+</section>
+
+<section>
+  <div class="num">08</div>
+  <h2>치수 · 조작</h2>
+  <div class="scroll"><table>
+    <tr><th>무엇</th><th>얼마</th><th>그래서</th></tr>
+    <tr><td class="k">한 칸</td><td class="">42px</td><td class="n">화면 36 × 22 칸</td></tr>
+<tr><td class="k">사람</td><td class="">0.8 × 1.2칸 · 판정 1 × 2</td><td class="n">네모</td></tr>
+<tr><td class="k">점프</td><td class="">두 칸 위 · 네 칸 옆</td><td class="n">세 칸 턱부터 어깨나 상자</td></tr>
+<tr><td class="k">어깨</td><td class="">선 머리 한 명당 +53px (한 칸 남짓)</td><td class="n">셋이 쌓이면 다섯 칸 — 「두 열쇠」의 기둥. 웅크린 머리는 31px — 계단은 서서</td></tr>
+<tr><td class="k">웅크리기</td><td class="">0.7칸</td><td class="n">한 칸 굴</td></tr>
+<tr><td class="k">걷기 · 밀기</td><td class="">초당 7 · 2.2칸</td><td class="n">X 는 둘이 붙어야 2.2. 무빙워크는 초당 6칸, 그 위 상자는 3칸</td></tr>
+<tr><td class="k">스프링</td><td class="">다섯 칸 위 · 옆 네 칸</td><td class="n">「움직이는 발판」의 트램펄린</td></tr>
+<tr><td class="k">왕복 발판</td><td class="">초당 3칸 · 길 끝에서 되돌아온다</td><td class="n">넷이 타면 초당 2칸</td></tr>
+<tr><td class="k">통</td><td class="">초당 5칸 · 두 번 떨어지면 부서진다</td><td class="n">맞으면 세 칸 밀려나고 0.5초 넘어진다</td></tr>
+<tr><td class="k">포탈</td><td class="">바로 · 0.3초 뒤 재진입</td><td class="n">상자도 지난다</td></tr>
+  </table></div>
+  <div class="scroll"><table>
+    <tr><th>키</th><th>하는 일</th><th>비고</th></tr>
+    <tr><td class="k">⌥ ← →</td><td class="">걷기</td><td class="n">사다리 위에서는 안 먹는다</td></tr>
+<tr><td class="k">⌥ ↑</td><td class="">점프 · 사다리 오르기 · <b>출구 포탈</b></td><td class="n">포탈 위면 다음 판</td></tr>
+<tr><td class="k">⌥ ↓</td><td class="">웅크리기 · <b>사다리 꼭대기에서 내려가기</b></td><td class="n">발밑 칸이 사다리면 웅크리는 게 아니라 잡고 내려간다</td></tr>
+<tr><td class="k">⌥ Space 길게</td><td class="">잡기 — 상자 · 사람</td><td class="n">떼면 놓는다</td></tr>
+<tr><td class="k">⌥ R</td><td class=""><b>이 판 되감기 (방장만)</b></td><td class="n">상자·블록·사람 전부 처음 자리로. 횟수를 센다</td></tr>
+<tr><td class="k">⌥ M</td><td class="">메뉴</td><td class="n">같이 하기 · 화면 · 홈으로</td></tr>
+<tr><td class="k">⌥ H</td><td class="">숨기기</td><td class="n">⌥ 를 떼기만 해도 숨는다</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <div class="num">09</div>
+  <h2>생김새 — 실제처럼</h2>
+  <p class="sub">전부 볼펜 테두리에 색연필로 칠한다 (지금 게임 그림체). 단계마다 땅의 가죽이 다르다 — 뒷마당은 흙과 잔디, 학교는 벽돌, 도시는 콘크리트.
+     <b>같은 일을 하는 것은 같게 그린다</b>: 미는 것은 전부 나무 상자, 여는 것은 전부 롤 셔터, 옮기는 것은 전부 세운 타원.</p>
+  <div class="icons"><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="8" y="30" width="104" height="52" fill="#c9a86a" fill-opacity=".45" stroke="var(--ink)" stroke-width="3"/><line x1="8" y1="30" x2="8" y2="30" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="15" y1="30" x2="8" y2="37" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="22" y1="30" x2="8" y2="44" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="29" y1="30" x2="8" y2="51" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="36" y1="30" x2="8" y2="58" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="43" y1="30" x2="8" y2="65" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="50" y1="30" x2="8" y2="72" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="57" y1="30" x2="8" y2="79" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="64" y1="30" x2="12" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="71" y1="30" x2="19" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="78" y1="30" x2="26" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="85" y1="30" x2="33" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="92" y1="30" x2="40" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="99" y1="30" x2="47" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="106" y1="30" x2="54" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="112" y1="31" x2="61" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="112" y1="38" x2="68" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="112" y1="45" x2="75" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="112" y1="52" x2="82" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="112" y1="59" x2="89" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="112" y1="66" x2="96" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="112" y1="73" x2="103" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><line x1="112" y1="80" x2="110" y2="82" stroke="#8a6a3a" stroke-width="1.6" opacity="0.55"/><path d="M10 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M19 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M28 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M37 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M46 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M55 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M64 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M73 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M82 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M91 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M100 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><path d="M109 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/><circle cx="40" cy="60" r="3" fill="var(--ink)" opacity=".5"/><circle cx="82" cy="70" r="2.4" fill="var(--ink)" opacity=".5"/></svg><b>땅 · 벽 — 뒷마당</b><span>흙에 잔디 한 줄. 색연필 빗금으로 채운다. 벽도 같은 무늬 — 땅이 서 있는 것이다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="8" y="30" width="104" height="52" fill="#b8912a" fill-opacity=".35" stroke="var(--ink)" stroke-width="3"/><line x1="8" y1="42" x2="112" y2="42" stroke="var(--ink)" stroke-width="1.4"/><line x1="8" y1="54" x2="112" y2="54" stroke="var(--ink)" stroke-width="1.4"/><line x1="8" y1="66" x2="112" y2="66" stroke="var(--ink)" stroke-width="1.4"/><line x1="8" y1="78" x2="112" y2="78" stroke="var(--ink)" stroke-width="1.4"/><line x1="8" y1="30" x2="8" y2="42" stroke="var(--ink)" stroke-width="1.4"/><line x1="32" y1="30" x2="32" y2="42" stroke="var(--ink)" stroke-width="1.4"/><line x1="56" y1="30" x2="56" y2="42" stroke="var(--ink)" stroke-width="1.4"/><line x1="80" y1="30" x2="80" y2="42" stroke="var(--ink)" stroke-width="1.4"/><line x1="104" y1="30" x2="104" y2="42" stroke="var(--ink)" stroke-width="1.4"/><line x1="20" y1="42" x2="20" y2="54" stroke="var(--ink)" stroke-width="1.4"/><line x1="44" y1="42" x2="44" y2="54" stroke="var(--ink)" stroke-width="1.4"/><line x1="68" y1="42" x2="68" y2="54" stroke="var(--ink)" stroke-width="1.4"/><line x1="92" y1="42" x2="92" y2="54" stroke="var(--ink)" stroke-width="1.4"/><line x1="116" y1="42" x2="116" y2="54" stroke="var(--ink)" stroke-width="1.4"/><line x1="8" y1="54" x2="8" y2="66" stroke="var(--ink)" stroke-width="1.4"/><line x1="32" y1="54" x2="32" y2="66" stroke="var(--ink)" stroke-width="1.4"/><line x1="56" y1="54" x2="56" y2="66" stroke="var(--ink)" stroke-width="1.4"/><line x1="80" y1="54" x2="80" y2="66" stroke="var(--ink)" stroke-width="1.4"/><line x1="104" y1="54" x2="104" y2="66" stroke="var(--ink)" stroke-width="1.4"/><line x1="20" y1="66" x2="20" y2="78" stroke="var(--ink)" stroke-width="1.4"/><line x1="44" y1="66" x2="44" y2="78" stroke="var(--ink)" stroke-width="1.4"/><line x1="68" y1="66" x2="68" y2="78" stroke="var(--ink)" stroke-width="1.4"/><line x1="92" y1="66" x2="92" y2="78" stroke="var(--ink)" stroke-width="1.4"/><line x1="116" y1="66" x2="116" y2="78" stroke="var(--ink)" stroke-width="1.4"/><line x1="8" y1="78" x2="8" y2="90" stroke="var(--ink)" stroke-width="1.4"/><line x1="32" y1="78" x2="32" y2="90" stroke="var(--ink)" stroke-width="1.4"/><line x1="56" y1="78" x2="56" y2="90" stroke="var(--ink)" stroke-width="1.4"/><line x1="80" y1="78" x2="80" y2="90" stroke="var(--ink)" stroke-width="1.4"/><line x1="104" y1="78" x2="104" y2="90" stroke="var(--ink)" stroke-width="1.4"/></svg><b>땅 · 벽 — 학교</b><span>벽돌 줄무늬. 줄이 한 칸씩 엇갈린다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="8" y="30" width="104" height="52" fill="#6b665c" fill-opacity=".25" stroke="var(--ink)" stroke-width="3"/><line x1="8" y1="30" x2="8" y2="30" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="17" y1="30" x2="8" y2="39" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="26" y1="30" x2="8" y2="48" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="35" y1="30" x2="8" y2="57" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="44" y1="30" x2="8" y2="66" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="53" y1="30" x2="8" y2="75" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="62" y1="30" x2="10" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="71" y1="30" x2="19" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="80" y1="30" x2="28" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="89" y1="30" x2="37" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="98" y1="30" x2="46" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="107" y1="30" x2="55" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="112" y1="34" x2="64" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="112" y1="43" x2="73" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="112" y1="52" x2="82" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="112" y1="61" x2="91" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="112" y1="70" x2="100" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><line x1="112" y1="79" x2="109" y2="82" stroke="#6b665c" stroke-width="1.6" opacity="0.5"/><circle cx="16" cy="38" r="1.8" fill="var(--ink)"/><circle cx="16" cy="74" r="1.8" fill="var(--ink)"/><circle cx="104" cy="38" r="1.8" fill="var(--ink)"/><circle cx="104" cy="74" r="1.8" fill="var(--ink)"/><line x1="8" y1="56" x2="112" y2="56" stroke="var(--ink)" stroke-width="2" stroke-dasharray="6 4"/></svg><b>땅 · 벽 — 도시</b><span>콘크리트. 성긴 빗금과 리벳 넷, 가운데 점선 이음매.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="8" y="30" width="104" height="52" fill="#55606c" fill-opacity=".35" stroke="var(--ink)" stroke-width="3"/><rect x="8" y="30" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="34" y="30" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="60" y="30" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="86" y="30" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="8" y="43" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="34" y="43" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="60" y="43" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="86" y="43" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="8" y="56" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="34" y="56" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="60" y="56" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="86" y="56" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="8" y="69" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="34" y="69" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="60" y="69" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><rect x="86" y="69" width="24" height="12" fill="none" stroke="var(--ink)" stroke-width="1.2" opacity=".7"/><line x1="8" y1="30" x2="112" y2="30" stroke="#2f9c9c" stroke-width="3"/></svg><b>땅 · 벽 — 지하철</b><span>회청색 타일에 청록 안전선 한 줄. 승강장 바닥이다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="10" y="40" width="100" height="14" fill="#9c8f74" fill-opacity=".5" stroke="var(--ink)" stroke-width="3"/><path d="M34 40 L40 47 L36 54 M72 54 L74 46" fill="none" stroke="var(--ink)" stroke-width="2.4"/><rect x="10" y="66" width="100" height="14" fill="none" stroke="var(--pencil)" stroke-width="1.4" stroke-dasharray="4 5"/><text x="60" y="30" text-anchor="middle" font-size="10" font-family="IBM Plex Mono" fill="var(--pencil)">0.5초 → 부서짐 → 3초 뒤</text></svg><b>삭은 발판</b><span>회색 판자에 금. 0.5초 밟으면 부서지고 3초 뒤 돌아온다. 밟다 만 것은 비면 아물어 간다 — 한 명씩 건넌다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="10" y="40" width="100" height="24" fill="#2f6fb0" fill-opacity=".3" stroke="var(--ink)" stroke-width="3"/><path d="M18 46 l6 6 l-6 6" fill="none" stroke="#2f6fb0" stroke-width="2"/><path d="M34 46 l6 6 l-6 6" fill="none" stroke="#2f6fb0" stroke-width="2"/><path d="M50 46 l6 6 l-6 6" fill="none" stroke="#2f6fb0" stroke-width="2"/><path d="M66 46 l6 6 l-6 6" fill="none" stroke="#2f6fb0" stroke-width="2"/><path d="M82 46 l6 6 l-6 6" fill="none" stroke="#2f6fb0" stroke-width="2"/><path d="M98 46 l6 6 l-6 6" fill="none" stroke="#2f6fb0" stroke-width="2"/><rect x="40" y="10" width="26" height="26" fill="#6f4a2c" fill-opacity=".45" stroke="var(--ink)" stroke-width="2.6"/><path d="M66 23 l12 0" stroke="var(--pencil)" stroke-width="1.8" stroke-dasharray="3 3"/></svg><b>무빙워크</b><span>파란 띠에 흐르는 화살표. 서 있으면 실려 가고, 상자도 실려 간다(사람의 반 속도). 역방향은 걸어서는 거의 못 간다 — 뛴다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="10" y="40" width="100" height="12" fill="#c9a86a" fill-opacity=".5" stroke="var(--ink)" stroke-width="3"/><line x1="14" y1="46" x2="106" y2="46" stroke="#8a6a3a" stroke-width="1.4"/><circle cx="20" cy="46" r="1.6" fill="var(--ink)"/><circle cx="100" cy="46" r="1.6" fill="var(--ink)"/><path d="M60 62 l-6 8 m6 -8 l6 8" stroke="var(--pencil)" stroke-width="1.6" fill="none"/></svg><b>선반 · 발판</b><span>나무 판자 한 장에 못 둘. 밑에서 뛰면 통과한다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><line x1="44" y1="6" x2="44" y2="86" stroke="var(--ink)" stroke-width="3.2"/><line x1="76" y1="6" x2="76" y2="86" stroke="var(--ink)" stroke-width="3.2"/><line x1="44" y1="16" x2="76" y2="16" stroke="var(--ink)" stroke-width="2.6"/><line x1="44" y1="30" x2="76" y2="30" stroke="var(--ink)" stroke-width="2.6"/><line x1="44" y1="44" x2="76" y2="44" stroke="var(--ink)" stroke-width="2.6"/><line x1="44" y1="58" x2="76" y2="58" stroke="var(--ink)" stroke-width="2.6"/><line x1="44" y1="72" x2="76" y2="72" stroke="var(--ink)" stroke-width="2.6"/><line x1="46" y1="8" x2="46" y2="8" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/><line x1="57" y1="8" x2="46" y2="19" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/><line x1="68" y1="8" x2="46" y2="30" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/><line x1="74" y1="13" x2="46" y2="41" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/><line x1="74" y1="24" x2="46" y2="52" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/><line x1="74" y1="35" x2="46" y2="63" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/><line x1="74" y1="46" x2="46" y2="74" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/><line x1="74" y1="57" x2="47" y2="84" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/><line x1="74" y1="68" x2="58" y2="84" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/><line x1="74" y1="79" x2="69" y2="84" stroke="#8a6a3a" stroke-width="1.6" opacity="0.35"/></svg><b>사다리</b><span>세로줄 둘에 가로대. 사다리 앞에서 ⌥↑.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><line x1="60" y1="4" x2="60" y2="86" stroke="var(--ink)" stroke-width="2" stroke-dasharray="4 4"/><rect x="30" y="38" width="60" height="16" fill="#6b665c" fill-opacity=".35" stroke="var(--ink)" stroke-width="3"/><path d="M36 38 l24 -20 l24 20" fill="none" stroke="var(--ink)" stroke-width="2"/><path d="M60 8 l-4 6 m4 -6 l4 6 M60 86 l-4 -6 m4 6 l4 -6" stroke="#d02f22" stroke-width="2" fill="none"/></svg><b>리프트</b><span>철판 발판 위에 삼각 걸이. 오가는 길은 점선, 끝은 빨간 화살표.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><line x1="8" y1="46" x2="112" y2="46" stroke="#2f6fb0" stroke-width="2" stroke-dasharray="5 4"/><rect x="44" y="38" width="32" height="12" fill="#c9a86a" fill-opacity=".5" stroke="var(--ink)" stroke-width="3"/><path d="M12 46 l6 -4 m-6 4 l6 4 M108 46 l-6 -4 m6 4 l-6 4" stroke="#2f6fb0" stroke-width="2" fill="none"/></svg><b>왕복 발판</b><span>판자가 점선 길을 오간다. 어디서든 타고 내린다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="12" y="40" width="20" height="10" fill="#b8912a" fill-opacity="0.55" stroke="var(--ink)" stroke-width="2.6" stroke-dasharray=""/><rect x="38" y="40" width="20" height="10" fill="#b8912a" fill-opacity="0.12" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3"/><rect x="64" y="40" width="20" height="10" fill="#b8912a" fill-opacity="0.55" stroke="var(--ink)" stroke-width="2.6" stroke-dasharray=""/><rect x="90" y="40" width="20" height="10" fill="#b8912a" fill-opacity="0.12" stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3"/></svg><b>깜빡이는 발판</b><span>켜진 칸은 진하게, 꺼진 칸은 점선 윤곽만. 꺼지기 0.5초 전부터 떨린다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="30" y="62" width="60" height="12" fill="#6b665c" fill-opacity=".3" stroke="var(--ink)" stroke-width="3"/><rect x="44" y="46" width="32" height="18" rx="4" fill="#d02f22" fill-opacity=".8" stroke="var(--ink)" stroke-width="3"/><circle cx="60" cy="40" r="3" fill="#3f8f56" stroke="var(--ink)" stroke-width="1.5"/><path d="M60 26 v8" stroke="var(--pencil)" stroke-width="1.5"/></svg><b>스위치</b><span>받침 위 빨간 버튼. 밟으면 내려간 채로 남고 초록 불이 켜진다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="20" y="60" width="80" height="8" fill="#3f8f56" fill-opacity=".45" stroke="var(--ink)" stroke-width="3"/><rect x="20" y="68" width="80" height="6" fill="none" stroke="var(--ink)" stroke-width="2"/><circle cx="28" cy="64" r="1.6" fill="var(--ink)"/><circle cx="60" cy="64" r="1.6" fill="var(--ink)"/><circle cx="92" cy="64" r="1.6" fill="var(--ink)"/><path d="M100 64 q14 0 14 -14 v-30" fill="none" stroke="var(--pencil)" stroke-width="1.6" stroke-dasharray="4 3"/></svg><b>누름판</b><span>넓은 초록 철판. 밟으면 3분의 1 내려간다. 점선이 셔터까지 이어져 무엇을 여는지 보인다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="40" y="18" width="40" height="58" fill="#6b665c" fill-opacity=".3" stroke="var(--ink)" stroke-width="3"/><line x1="40" y1="24" x2="80" y2="24" stroke="var(--ink)" stroke-width="1.6"/><line x1="40" y1="30" x2="80" y2="30" stroke="var(--ink)" stroke-width="1.6"/><line x1="40" y1="36" x2="80" y2="36" stroke="var(--ink)" stroke-width="1.6"/><line x1="40" y1="42" x2="80" y2="42" stroke="var(--ink)" stroke-width="1.6"/><line x1="40" y1="48" x2="80" y2="48" stroke="var(--ink)" stroke-width="1.6"/><line x1="40" y1="54" x2="80" y2="54" stroke="var(--ink)" stroke-width="1.6"/><line x1="40" y1="60" x2="80" y2="60" stroke="var(--ink)" stroke-width="1.6"/><line x1="40" y1="66" x2="80" y2="66" stroke="var(--ink)" stroke-width="1.6"/><line x1="40" y1="72" x2="80" y2="72" stroke="var(--ink)" stroke-width="1.6"/><rect x="34" y="10" width="52" height="10" rx="3" fill="var(--ink)"/><path d="M92 40 v-14 m0 14 l-4 -5 m4 5 l4 -5" stroke="#d02f22" stroke-width="2" fill="none"/></svg><b>셔터</b><span>가로 살 롤 셔터. 열리면 위 통으로 말려 올라간다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><ellipse cx="60" cy="44" rx="18" ry="30" fill="#2f6fb0" fill-opacity="0.25" stroke="var(--ink)" stroke-width="3"/><path d="M60 26 c14 6 14 26 0 32 c-10 4 -14 -8 -6 -12 c6 -3 10 4 6 8" fill="none" stroke="#2f6fb0" stroke-width="2" opacity=".8"/><ellipse cx="60" cy="76" rx="24" ry="4" fill="none" stroke="var(--pencil)" stroke-width="1.5"/></svg><b>포탈 한 쌍</b><span>세운 타원 고리 안에 소용돌이. 쌍마다 색이 같다. 바닥에 그림자 타원.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><ellipse cx="60" cy="44" rx="18" ry="30" fill="#8a5bb5" fill-opacity="0.85" stroke="var(--ink)" stroke-width="3"/><path d="M60 72 v-40 m-8 8 l8 -8 l8 8" fill="none" stroke="var(--paper)" stroke-width="3.5"/><ellipse cx="60" cy="76" rx="24" ry="4" fill="none" stroke="var(--pencil)" stroke-width="1.5"/></svg><b>출구 포탈</b><span>보라, 위쪽 화살표. 조건이 차면 안이 밝아진다 — 「2명 더」가 위에 뜬다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><circle cx="40" cy="44" r="13" fill="none" stroke="#d02f22" stroke-width="4"/><circle cx="40" cy="44" r="5" fill="none" stroke="#d02f22" stroke-width="2.5"/><line x1="53" y1="44" x2="92" y2="44" stroke="#d02f22" stroke-width="4" stroke-linecap="round"/><line x1="82" y1="44" x2="82" y2="54" stroke="#d02f22" stroke-width="4" stroke-linecap="round"/><line x1="90" y1="44" x2="90" y2="52" stroke="#d02f22" stroke-width="4" stroke-linecap="round"/><ellipse cx="62" cy="72" rx="26" ry="3" fill="none" stroke="var(--pencil)" stroke-width="1.4"/></svg><b>열쇠 — 빨강</b><span>둥근 머리에 톱니 둘. 살짝 떠서 오르내린다. 집으면 그 색 블록이 깨지듯 사라진다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="30" y="20" width="60" height="60" rx="4" fill="#d97b1f" fill-opacity=".35" stroke="#d97b1f" stroke-width="4"/><rect x="30" y="20" width="60" height="60" rx="4" fill="none" stroke="var(--ink)" stroke-width="1.6"/><line x1="40" y1="70" x2="80" y2="30" stroke="var(--paper)" stroke-width="5" opacity=".7"/></svg><b>색 블록</b><span>반투명 유리 블록에 그 색 테두리, 안에 ✕. 사라질 때 조각이 튄다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="26" y="20" width="68" height="60" fill="#6f4a2c" fill-opacity=".45" stroke="var(--ink)" stroke-width="3.2"/><line x1="26" y1="42" x2="94" y2="42" stroke="#4f3320" stroke-width="1.4"/><line x1="26" y1="58" x2="94" y2="58" stroke="#4f3320" stroke-width="1.4"/><line x1="30" y1="76" x2="90" y2="24" stroke="#4f3320" stroke-width="2"/><circle cx="32" cy="26" r="1.5" fill="var(--ink)"/><circle cx="32" cy="74" r="1.5" fill="var(--ink)"/><circle cx="88" cy="26" r="1.5" fill="var(--ink)"/><circle cx="88" cy="74" r="1.5" fill="var(--ink)"/><circle cx="60" cy="26" r="3" fill="var(--ink)"/></svg><b>상자</b><span>나무 상자. 판자 줄 둘에 대각선 띠, 못 넷. 뚜껑 점 하나 = 한 명이 민다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="26" y="20" width="68" height="60" fill="#6f4a2c" fill-opacity=".45" stroke="var(--ink)" stroke-width="3.2"/><line x1="26" y1="42" x2="94" y2="42" stroke="#4f3320" stroke-width="1.4"/><line x1="26" y1="58" x2="94" y2="58" stroke="#4f3320" stroke-width="1.4"/><line x1="30" y1="76" x2="90" y2="24" stroke="#4f3320" stroke-width="2"/><circle cx="32" cy="26" r="1.5" fill="var(--ink)"/><circle cx="32" cy="74" r="1.5" fill="var(--ink)"/><circle cx="88" cy="26" r="1.5" fill="var(--ink)"/><circle cx="88" cy="74" r="1.5" fill="var(--ink)"/><rect x="26" y="34" width="68" height="6" fill="var(--ink)"/><rect x="26" y="66" width="68" height="6" fill="var(--ink)"/><circle cx="52" cy="26" r="3" fill="var(--ink)"/><circle cx="68" cy="26" r="3" fill="var(--ink)"/></svg><b>무거운 상자</b><span>같은 상자에 철띠 둘, 뚜껑 점 둘 = 둘이 민다. 모양은 같고 띠와 점만 다르다.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="8" y="24" width="30" height="50" fill="var(--ink)" fill-opacity=".85"/><circle cx="70" cy="60" r="14" fill="#6f4a2c" fill-opacity=".5" stroke="var(--ink)" stroke-width="3"/><line x1="56" y1="60" x2="84" y2="60" stroke="var(--ink)" stroke-width="1.6"/><line x1="70" y1="46" x2="70" y2="74" stroke="var(--ink)" stroke-width="1.6"/><path d="M92 60 h14 m-4 -4 l4 4 l-4 4" stroke="#d02f22" stroke-width="2" fill="none"/></svg><b>굴러 나오는 구멍 · 통</b><span>검은 구멍에서 통이 나온다. 뒷마당은 나무 통, 학교는 여행 가방, 도시는 파이프.</span></figure><figure class="icon"><svg viewBox="0 0 120 90" aria-hidden="true"><rect x="26" y="60" width="68" height="10" rx="3" fill="#2f9c9c" fill-opacity=".4" stroke="var(--ink)" stroke-width="3"/><path d="M30 60 q5 -8 10 0" fill="none" stroke="var(--ink)" stroke-width="2"/><path d="M42 60 q5 -8 10 0" fill="none" stroke="var(--ink)" stroke-width="2"/><path d="M54 60 q5 -8 10 0" fill="none" stroke="var(--ink)" stroke-width="2"/><path d="M66 60 q5 -8 10 0" fill="none" stroke="var(--ink)" stroke-width="2"/><path d="M78 60 q5 -8 10 0" fill="none" stroke="var(--ink)" stroke-width="2"/><line x1="34" y1="70" x2="34" y2="80" stroke="var(--ink)" stroke-width="2.4"/><line x1="86" y1="70" x2="86" y2="80" stroke="var(--ink)" stroke-width="2.4"/><path d="M60 48 v-30 m-6 8 l6 -8 l6 8" fill="none" stroke="#d02f22" stroke-width="2"/></svg><b>스프링 · 트램펄린</b><span>용수철 다섯 개 위에 매트. 밟으면 다섯 칸.</span></figure></div>
+</section>
+
+<section>
+  <div class="num">10</div>
+  <h2>지형지물</h2>
+  <div class="scroll"><table>
+    <tr><th>글자</th><th>무엇</th><th>규칙</th></tr>
+    <tr><td class="k"><b style="color:#141210">#</b></td><td class="">땅·벽</td><td class="n">못 지나간다</td></tr>
+<tr><td class="k"><b style="color:#6b665c">=</b></td><td class="">선반·발판</td><td class="n">위에서만 딛는다</td></tr>
+<tr><td class="k"><b style="color:#8a7a5a">H</b></td><td class="">사다리</td><td class="n">⌥↑↓</td></tr>
+<tr><td class="k"><b style="color:#8a7a5a">|</b></td><td class="">리프트</td><td class="n">사다리처럼 탄다. 정해진 층 사이만</td></tr>
+<tr><td class="k"><b style="color:#2f6fb0">-</b></td><td class="">왕복 발판의 길</td><td class="n">발판이 이 길을 오간다. 어디서든 타고 내린다</td></tr>
+<tr><td class="k"><b style="color:#b8912a">~</b></td><td class="">깜빡이는 발판</td><td class="n">2초 켜지고 2초 꺼진다. 켜진 동안 건널 수 있는 폭이다</td></tr>
+<tr><td class="k"><b style="color:#d02f22">^</b></td><td class="">가시·연못</td><td class="n">닿으면 죽는다 — 시작 자리에서 다시 산다</td></tr>
+<tr><td class="k"><b style="color:#6f4a2c">x / X</b></td><td class="">상자</td><td class="n">밀고, 떨어뜨리고, 딛는다. X 는 둘이 민다</td></tr>
+<tr><td class="k"><b style="color:#d02f22">r y b</b></td><td class="">빨강·노랑·파랑 열쇠</td><td class="n">집으면 그 색 블록이 전부 사라진다</td></tr>
+<tr><td class="k"><b style="color:#d97b1f">R Y B</b></td><td class="">색 블록</td><td class="n">같은 색 열쇠로 없앤다. 그 위에 있던 것은 떨어진다</td></tr>
+<tr><td class="k"><b style="color:#3f8f56">a / A</b></td><td class="">스위치와 셔터</td><td class="n">한 번 밟으면 열린 채 남는다</td></tr>
+<tr><td class="k"><b style="color:#3f8f56">p q / P Q</b></td><td class="">누름판과 셔터</td><td class="n">눌린 동안만 열린다. 상자를 올려 둬도 눌린다</td></tr>
+<tr><td class="k"><b style="color:#2f6fb0">u U · w W</b></td><td class="">포탈 한 쌍</td><td class="n">들어가면 저편에서 나온다. 상자도 지난다</td></tr>
+<tr><td class="k"><b style="color:#d97b1f">{ }</b></td><td class="">통이 굴러 나오는 구멍</td><td class="n">그쪽으로 굴러 나온다. 맞으면 밀려난다</td></tr>
+<tr><td class="k"><b style="color:#2f9c9c">S</b></td><td class="">스프링·트램펄린</td><td class="n">다섯 칸 튀어 오른다. <b>내려앉을 때</b> 튄다 — 걸어 들어가면 안 튄다</td></tr>
+<tr><td class="k"><b style="color:#9c8f74">v</b></td><td class="">삭은 발판</td><td class="n">0.5초 밟으면 부서지고 3초 뒤 돌아온다. 밟다 만 것은 비면 아물어 간다 — 한 명씩</td></tr>
+<tr><td class="k"><b style="color:#2f6fb0">> <</b></td><td class="">무빙워크</td><td class="n">서 있으면 실려 간다. 상자도 실려 간다 (사람의 반). 역방향은 걸어서는 거의 못 간다 — 뛴다</td></tr>
+<tr><td class="k"><b style="color:#8a5bb5">O</b></td><td class="">출구 포탈</td><td class="n">⌥↑. 판마다 「한 명」 또는 「넷」</td></tr>
+<tr><td class="k"><b style="color:#2f6fb0">1 2 3 4</b></td><td class="">시작 자리</td><td class="n">죽으면 여기서 다시 산다</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <div class="num">11</div>
+  <h2>판 열넷</h2>
+  <p class="sub">맵은 가로로 스크롤된다. 진한 것이 땅, 갈색이 상자, 빨강·노랑·파랑 네모가 색 블록(같은 색 열쇠로 없앤다), 초록이 스위치·누름판·셔터,
+     파란 점선이 왕복 발판의 길, 보라 타원이 출구. 네 네모가 시작 자리. 연필색 글은 배경 소품.</p>
+  <div class="world"><div class="num">1단계</div><h3>뒷마당</h3><p>버섯 집 앞 텃밭과 골목. 표지판이 길을 가리킨다. 어깨·상자·사람 계단·손잡기·열쇠·누름판을 배운다.</p></div>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">1-1</span>
+    <span class="stage-name">표지판</span>
+    <span class="stage-verb">가로로 긴 한 층 · 108×22</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>셋이 긴 길을 가고, 어깨 둘, 스위치 하나로 나머지의 길을 연다.</b> 버섯 집 앞. 표지판이 「→ 계단으로」「← 위로 돌아오기」를 가리킨다. 오른쪽 계단으로 올라 떠 있는 발판을 타고 왼쪽으로 되돌아오면 벼랑 위 포탈 — 발판 중간에 세 칸 벽이 하나, 벼랑도 세 칸. 땅에는 오른쪽 끝에서 통이 굴러온다.</p>
+  <div class="mapwrap"><canvas data-stage="0" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>셋이 간다. 발판 위 벽에서 한 명이 둘을 차례로 올려 주고 자기는 남는다.</li><li>벼랑에서 다시 한 명이 어깨를 내준다. 올라간 사람이 스위치 → 벼랑 밑 셔터가 열린 채 남는다.</li><li>남은 셋(어깨 둘 + 기다리던 하나)은 땅으로 뛰어내려 셔터를 지나 사다리로 오른다 — 통을 피하면서.</li><li>넷이 벼랑 위 포탈에 다 모여야 끝. 역할이 셋: 가는 사람, 올려 주는 사람, 기다리는 사람.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>65걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 59칸까지 걷는다</li><li><b>2</b>→ 59칸까지 걷는다</li><li><b>3</b>→ 59칸까지 걷는다</li><li><b>1</b>(60,17)로 올라 뛴다</li><li><b>1</b>→ 63칸까지 걷는다</li><li><b>1</b>(64,16)로 올라 뛴다</li><li><b>1</b>→ 67칸까지 걷는다</li><li><b>1</b>(68,15)로 올라 뛴다</li><li><b>1</b>→ 71칸까지 걷는다</li><li><b>1</b>(72,14)로 올라 뛴다</li><li><b>1</b>→ 75칸까지 걷는다</li><li><b>1</b>(76,13)로 올라 뛴다</li><li><b>1</b>→ 79칸까지 걷는다</li><li><b>1</b>(80,12)로 올라 뛴다</li><li><b>2</b>(60,17)로 올라 뛴다</li><li><b>2</b>→ 63칸까지 걷는다</li><li><b>2</b>(64,16)로 올라 뛴다</li><li><b>2</b>→ 67칸까지 걷는다</li><li><b>2</b>(68,15)로 올라 뛴다</li><li><b>2</b>→ 71칸까지 걷는다</li><li><b>2</b>(72,14)로 올라 뛴다</li><li><b>2</b>→ 75칸까지 걷는다</li><li><b>2</b>(76,13)로 올라 뛴다</li><li><b>2</b>→ 79칸까지 걷는다</li><li><b>2</b>(80,12)로 올라 뛴다</li><li><b>3</b>(60,17)로 올라 뛴다</li><li><b>3</b>→ 63칸까지 걷는다</li><li><b>3</b>(64,16)로 올라 뛴다</li><li><b>3</b>→ 67칸까지 걷는다</li><li><b>3</b>(68,15)로 올라 뛴다</li><li><b>3</b>→ 71칸까지 걷는다</li><li><b>3</b>(72,14)로 올라 뛴다</li><li><b>3</b>→ 75칸까지 걷는다</li><li><b>3</b>(76,13)로 올라 뛴다</li><li><b>3</b>→ 79칸까지 걷는다</li><li><b>3</b>(80,12)로 올라 뛴다</li><li><b>1</b>(79,10)로 올라 뛴다</li><li><b>1</b>← 49칸까지 걷는다</li><li><b>2</b>(79,10)로 올라 뛴다</li><li><b>2</b>← 49칸까지 걷는다</li><li><b>3</b>(79,10)로 올라 뛴다</li><li><b>3</b>← 49칸까지 걷는다</li><li><b>1</b>(48,7)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>(47,10)로 내려 뛴다</li><li><b>2</b>(48,7)로 올라 뛴다 — 어깨 1명</li><li><b>2</b>(47,10)로 내려 뛴다</li><li><b>1</b>← 14칸까지 걷는다</li><li><b>2</b>← 15칸까지 걷는다</li><li><b>1</b>(12,7)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>← 9칸까지 걷는다</li><li><b>1</b>스위치를 밟는다 → 셔터 A 가 열린 채 남는다</li><li><b>1</b>← 5칸까지 걷는다</li><li><b>2</b>(13,18)로 내려 뛴다</li><li><b>2</b>← 12칸까지 걷는다</li><li><b>2</b>사다리로 줄7까지</li><li><b>2</b>← 6칸까지 걷는다</li><li><b>3</b>→ 55칸까지 걷는다</li><li><b>3</b>(56,18)로 내려 뛴다</li><li><b>3</b>← 12칸까지 걷는다</li><li><b>3</b>사다리로 줄7까지</li><li><b>3</b>← 4칸까지 걷는다</li><li><b>4</b>← 12칸까지 걷는다</li><li><b>4</b>사다리로 줄7까지</li><li><b>4</b>← 3칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">1-2</span>
+    <span class="stage-name">상자 계단</span>
+    <span class="stage-verb">한 화면 · 36×22</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>상자로 한 단, 사람 계단으로 한 단, 남은 둘은 손잡아 끌어올린다.</b> 집 뒤 텃밭에서 언덕으로. 첫 단은 세 칸, 둘째 단은 네 칸. 상자 둘. 언덕 위에서 통이 굴러 내려와 단을 타고 떨어진다.</p>
+  <div class="mapwrap"><canvas data-stage="1" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>첫 단은 상자를 밀어 딛는다.</li><li>둘째 단은 네 칸 — 둘이 웅크려 층층이 걸쳐 앉으면 계단이 된다. 그 위를 밟고 올라가 뛴다. 둘이 건넌다.</li><li>계단 노릇 한 둘은 상자 위에 서서 위에서 내민 손을 잡고 올라온다. 세 칸 아래까지 닿는다.</li><li>통이 굴러 내려오는 박자를 보고 움직인다. 넷이 다 모여야 끝.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>33걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 11칸까지 걷는다</li><li><b>1</b>x1 를 15칸까지 민다</li><li><b>1</b>← 14칸까지 걷는다</li><li><b>1</b>(15,17)로 올라 뛴다</li><li><b>1</b>(16,15)로 올라 뛴다</li><li><b>2</b>→ 14칸까지 걷는다</li><li><b>2</b>(15,17)로 올라 뛴다</li><li><b>2</b>(16,15)로 올라 뛴다</li><li><b>3</b>→ 14칸까지 걷는다</li><li><b>3</b>(15,17)로 올라 뛴다</li><li><b>3</b>(16,15)로 올라 뛴다</li><li><b>4</b>→ 14칸까지 걷는다</li><li><b>4</b>(15,17)로 올라 뛴다</li><li><b>4</b>(16,15)로 올라 뛴다</li><li><b>1</b>→ 19칸까지 걷는다</li><li><b>1</b>x0 를 25칸까지 민다</li><li><b>2</b>→ 23칸까지 걷는다</li><li><b>3</b>→ 24칸까지 걷는다</li><li><b>1</b>← 22칸까지 걷는다</li><li><b>1</b>2·3 을 계단처럼 밟고 (26,11)로 건너뛴다</li><li><b>4</b>→ 22칸까지 걷는다</li><li><b>4</b>2·3 을 계단처럼 밟고 (26,11)로 건너뛴다</li><li><b>3</b>← 24칸까지 걷는다</li><li><b>3</b>(25,14)로 올라 뛴다</li><li><b>1</b>3 의 손을 잡아 (27,11)로 끌어올린다</li><li><b>2</b>→ 24칸까지 걷는다</li><li><b>2</b>(25,14)로 올라 뛴다</li><li><b>1</b>2 의 손을 잡아 (27,11)로 끌어올린다</li><li><b>1</b>→ 31칸까지 걷는다</li><li><b>2</b>→ 30칸까지 걷는다</li><li><b>3</b>→ 32칸까지 걷는다</li><li><b>4</b>→ 29칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">1-3</span>
+    <span class="stage-name">두 열쇠</span>
+    <span class="stage-verb">한 화면 · 위아래 두 층 · 36×22</span>
+    <span class="badge one">한 명만 닿으면 끝</span>
+  </div>
+  <p class="stage-line"><b>셋이 쌓아 올려 보낸 한 명이 열쇠를 집고 떨어진다. 둘째 열쇠는 어깨 하나.</b> 집 안. 복도 끝 출구가 빨간 블록과 파란 블록에 겹으로 막혔다. 빨간 열쇠는 다락 끝 — 그 바닥도 빨간 블록이라 집으면 아래로 떨어진다. 파란 열쇠는 세 칸 선반 위.</p>
+  <div class="mapwrap"><canvas data-stage="2" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>셋이 쌓여 다섯 칸 기둥으로 한 명을 올린다. 다락 끝 빨간 열쇠를 집는 순간 바닥이 사라져 복도로 떨어진다 — 출구 바로 앞에.</li><li>그런데 출구는 파란 블록에도 막혀 있다. 아래 셋 중 하나가 어깨를 내주고 하나가 선반 위 파란 열쇠를 집는다.</li><li>떨어진 사람이 출구에 닿으면 끝 — 한 명만 닿으면 되는 판.</li><li>순서가 틀리면 (파란 열쇠를 먼저 집으면) 아무 일도 안 생긴다. 빨간 블록은 그대로다.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>16걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>← 5칸까지 걷는다</li><li><b>2</b>← 5칸까지 걷는다</li><li><b>3</b>← 6칸까지 걷는다</li><li><b>4</b>← 5칸까지 걷는다</li><li><b>4</b>(4,13)로 올라 뛴다 — 어깨 3명</li><li><b>4</b>(6,11)로 올라 뛴다</li><li><b>4</b>→ 30칸까지 걷는다</li><li><b>4</b>빨간 열쇠를 집는다 → 빨간 블록이 전부 사라진다</li><li><b>4</b>발판이 사라져 줄18로 떨어진다</li><li><b>1</b>→ 15칸까지 걷는다</li><li><b>2</b>→ 15칸까지 걷는다</li><li><b>2</b>(16,15)로 올라 뛴다 — 어깨 1명</li><li><b>2</b>→ 17칸까지 걷는다</li><li><b>2</b>파란 열쇠를 집는다 → 파란 블록이 전부 사라진다</li><li><b>4</b>→ 34칸까지 걷는다</li><li><b>4</b>출구 포탈에서 ⌥↑ — 한 명이 닿았으니 끝</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">1-4</span>
+    <span class="stage-name">지키는 사람</span>
+    <span class="stage-verb">가로로 긴 한 층 · 108×22</span>
+    <span class="badge one">한 명만 닿으면 끝</span>
+  </div>
+  <p class="stage-line"><b>누름판 둘을 둘이 지키고, 하나가 올려 주고, 하나가 달린다.</b> 골목. 첫 누름판을 밟고 있는 동안만 첫 셔터가 열리고, 담벼락은 세 칸, 그 뒤 징검다리는 2초마다 깜빡이고, 둘째 누름판이 둘째 셔터를 연다. 골목 끝에서 통이 굴러온다.</p>
+  <div class="mapwrap"><canvas data-stage="3" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>4번이 첫 누름판. 1번이 담벼락에서 2번과 3번을 올려 주고 자기는 남는다.</li><li>2번과 3번은 깜빡이는 징검다리를 켜진 2초 안에 건넌다 — 여덟 칸이라 뛰어서 딱 맞는다.</li><li>2번이 둘째 누름판을 밟고, 3번이 통을 넘어 포탈에 닿으면 끝.</li><li>네 사람의 역할이 다 다르다. 누가 뭘 할지 먼저 정하는 팀이 이긴다.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>13걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>4</b>→ 20칸까지 걷는다</li><li><b>·</b>누름판 p 가 눌려 셔터 P 가 열려 있다 (4 가 밟고 있다)</li><li><b>1</b>→ 59칸까지 걷는다</li><li><b>2</b>→ 59칸까지 걷는다</li><li><b>3</b>→ 59칸까지 걷는다</li><li><b>2</b>(60,15)로 올라 뛴다 — 어깨 1명</li><li><b>2</b>(62,18)로 내려 뛴다</li><li><b>3</b>(60,15)로 올라 뛴다 — 어깨 1명</li><li><b>3</b>(62,18)로 내려 뛴다</li><li><b>2</b>→ 85칸까지 걷는다</li><li><b>·</b>누름판 q 가 눌려 셔터 Q 가 열려 있다 (2 가 밟고 있다)</li><li><b>3</b>→ 100칸까지 걷는다</li><li><b>3</b>출구 포탈에서 ⌥↑ — 한 명이 닿았으니 끝</li></ol></details></div>
+  </div>
+</article><div class="world"><div class="num">2단계</div><h3>학교</h3><p>복도 둘이 나란한 본관, 리프트, 운동장 연못의 왕복 발판. 길이 갈리고 되돌아온다.</p></div>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">2-1</span>
+    <span class="stage-name">두 길</span>
+    <span class="stage-verb">가로로 긴 두 층 · 108×22</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>위층 한 명이 열쇠 둘을 순서대로 집어 아래층 길을 열고, 둘째 열쇠에서 떨어져 합류한다.</b> 복도 둘이 위아래로. 1층은 노란 블록 둘과 파란 블록 하나에 막혔다. 2층 끝에 파란 열쇠, 중간에 노란 열쇠 — 노란 열쇠가 놓인 바닥은 노란 블록이다. 1층 끝에서 여행 가방이 굴러온다.</p>
+  <div class="mapwrap"><canvas data-stage="4" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>둘이 2층으로. 세 칸 벽에서 한 명이 어깨를 내준다.</li><li>넘어간 사람은 **파란 열쇠부터** — 노란 열쇠를 먼저 집으면 바닥이 사라져 떨어지고 파란 열쇠에 못 간다.</li><li>노란 열쇠를 집으면 1층 노란 블록이 사라지고 자기는 1층으로 떨어진다. 곧장 교문으로.</li><li>어깨 내준 사람은 사다리로 내려온다. 1층 셋은 가방을 넘으며 교문으로. 넷이 다 모여야 끝.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>22걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 12칸까지 걷는다</li><li><b>1</b>사다리로 줄10까지</li><li><b>2</b>→ 12칸까지 걷는다</li><li><b>2</b>사다리로 줄10까지</li><li><b>1</b>→ 49칸까지 걷는다</li><li><b>2</b>→ 49칸까지 걷는다</li><li><b>1</b>(50,7)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>(52,10)로 내려 뛴다</li><li><b>1</b>→ 67칸까지 걷는다</li><li><b>1</b>71칸으로 뛰어 넘는다 — 열쇠를 안 집고</li><li><b>1</b>→ 88칸까지 걷는다</li><li><b>1</b>파란 열쇠를 집는다 → 파란 블록이 전부 사라진다</li><li><b>1</b>← 70칸까지 걷는다</li><li><b>1</b>노란 열쇠를 집는다 → 노란 블록이 전부 사라진다</li><li><b>1</b>발판이 사라져 줄18로 떨어진다</li><li><b>1</b>→ 100칸까지 걷는다</li><li><b>2</b>← 12칸까지 걷는다</li><li><b>2</b>리프트로 줄18까지</li><li><b>2</b>→ 99칸까지 걷는다</li><li><b>3</b>→ 101칸까지 걷는다</li><li><b>4</b>→ 98칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">2-2</span>
+    <span class="stage-name">엘리베이터</span>
+    <span class="stage-verb">위로 긴 판 · 4층 · 36×44</span>
+    <span class="badge one">한 명만 닿으면 끝</span>
+  </div>
+  <p class="stage-line"><b>리프트로 나뉜 둘이 누름판 둘을 밟고, 하나는 올려 주고, 하나가 달린다.</b> 본관. 리프트는 3층까지만. 4층 누름판과 2층 누름판이 로비 셔터 둘을 하나씩 연다. 3층 세 칸 벽은 어깨. 로비 끝 배수로 위 징검다리는 깜빡인다.</p>
+  <div class="mapwrap"><canvas data-stage="5" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>셋이 리프트를 탄다. 한 명은 2층에서 내려 누름판. 둘은 3층 — 어깨로 하나를 넘겨 4층 누름판.</li><li>로비에 남은 한 명이 열린 셔터 둘을 지나 깜빡이는 징검다리를 건너 포탈에 닿으면 끝.</li><li>한 명만 닿으면 끝. 누름판 둘과 어깨는 그 자리에서 이긴다.</li><li>리프트는 사다리처럼 ⌥↑↓. 2층에서 내리려면 지나칠 때 ⌥←.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>18걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 10칸까지 걷는다</li><li><b>1</b>리프트로 줄19까지</li><li><b>2</b>→ 10칸까지 걷는다</li><li><b>2</b>리프트로 줄19까지</li><li><b>3</b>→ 10칸까지 걷는다</li><li><b>3</b>리프트로 줄29까지</li><li><b>1</b>→ 19칸까지 걷는다</li><li><b>2</b>→ 19칸까지 걷는다</li><li><b>1</b>(20,16)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>(22,19)로 내려 뛴다</li><li><b>1</b>→ 32칸까지 걷는다</li><li><b>1</b>사다리로 줄11까지</li><li><b>1</b>← 28칸까지 걷는다</li><li><b>·</b>누름판 p 가 눌려 셔터 P 가 열려 있다 (1 가 밟고 있다)</li><li><b>3</b>→ 16칸까지 걷는다</li><li><b>·</b>누름판 q 가 눌려 셔터 Q 가 열려 있다 (3 가 밟고 있다)</li><li><b>4</b>→ 33칸까지 걷는다</li><li><b>4</b>출구 포탈에서 ⌥↑ — 한 명이 닿았으니 끝</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">2-3</span>
+    <span class="stage-name">움직이는 발판</span>
+    <span class="stage-verb">가로로 긴 한 층 · 연못 둘 · 108×22</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>때를 맞춰 발판을 타고, 상자 하나는 누름판에 하나는 단에.</b> 운동장. 연못 위 왕복 발판 둘 — 하나는 낮게, 하나는 높게. 사이의 트램펄린으로 높은 발판에 오른다. 발판 위로 가방이 굴러 떨어진다. 끝에는 상자 둘: 하나는 누름판에 올려 셔터를, 하나는 단을 넘는 발판으로.</p>
+  <div class="mapwrap"><canvas data-stage="6" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>왕복 발판은 어디서든 타고 내린다 — 때만 맞추면. 넷이 타면 느려지니 둘씩.</li><li>가방이 단 위에서 발판 쪽으로 굴러 떨어진다. 발판 위에서 맞으면 연못이다.</li><li>상자 둘을 헷갈리면 안 된다. 왼쪽 것은 누름판에, 오른쪽 것은 단 앞에.</li><li>넷이 다 모여야 끝.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>74걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 19칸까지 걷는다</li><li><b>1</b>(20,16)로 올라 뛴다</li><li><b>1</b>→ 40칸까지 걷는다</li><li><b>1</b>(41,18)로 내려 뛴다</li><li><b>1</b>→ 57칸까지 걷는다</li><li><b>1</b>스프링으로 (60,13)까지</li><li><b>1</b>→ 80칸까지 걷는다</li><li><b>1</b>(81,15)로 내려 뛴다</li><li><b>1</b>→ 90칸까지 걷는다</li><li><b>1</b>(91,18)로 내려 뛴다</li><li><b>2</b>→ 19칸까지 걷는다</li><li><b>2</b>(20,16)로 올라 뛴다</li><li><b>2</b>→ 40칸까지 걷는다</li><li><b>2</b>(41,18)로 내려 뛴다</li><li><b>2</b>→ 57칸까지 걷는다</li><li><b>2</b>스프링으로 (60,13)까지</li><li><b>2</b>→ 80칸까지 걷는다</li><li><b>2</b>(81,15)로 내려 뛴다</li><li><b>2</b>→ 90칸까지 걷는다</li><li><b>2</b>(91,18)로 내려 뛴다</li><li><b>3</b>→ 19칸까지 걷는다</li><li><b>3</b>(20,16)로 올라 뛴다</li><li><b>3</b>→ 40칸까지 걷는다</li><li><b>3</b>(41,18)로 내려 뛴다</li><li><b>3</b>→ 57칸까지 걷는다</li><li><b>3</b>스프링으로 (60,13)까지</li><li><b>3</b>→ 80칸까지 걷는다</li><li><b>3</b>(81,15)로 내려 뛴다</li><li><b>3</b>→ 90칸까지 걷는다</li><li><b>3</b>(91,18)로 내려 뛴다</li><li><b>4</b>→ 19칸까지 걷는다</li><li><b>4</b>(20,16)로 올라 뛴다</li><li><b>4</b>→ 40칸까지 걷는다</li><li><b>4</b>(41,18)로 내려 뛴다</li><li><b>4</b>→ 57칸까지 걷는다</li><li><b>4</b>스프링으로 (60,13)까지</li><li><b>4</b>→ 80칸까지 걷는다</li><li><b>4</b>(81,15)로 내려 뛴다</li><li><b>4</b>→ 90칸까지 걷는다</li><li><b>4</b>(91,18)로 내려 뛴다</li><li><b>1</b>→ 93칸까지 걷는다</li><li><b>1</b>x0 를 96칸까지 민다</li><li><b>·</b>누름판 p 가 눌려 셔터 P 가 열려 있다 (상자)</li><li><b>1</b>96칸의 것을 뛰어넘는다</li><li><b>1</b>→ 99칸까지 걷는다</li><li><b>1</b>x1 를 101칸까지 민다</li><li><b>1</b>← 100칸까지 걷는다</li><li><b>1</b>(101,17)로 올라 뛴다</li><li><b>1</b>(102,15)로 올라 뛴다</li><li><b>1</b>→ 104칸까지 걷는다</li><li><b>1</b>(105,18)로 내려 뛴다</li><li><b>1</b>→ 106칸까지 걷는다</li><li><b>2</b>96칸의 것을 뛰어넘는다</li><li><b>2</b>→ 100칸까지 걷는다</li><li><b>2</b>(101,17)로 올라 뛴다</li><li><b>2</b>(102,15)로 올라 뛴다</li><li><b>2</b>→ 104칸까지 걷는다</li><li><b>2</b>(105,18)로 내려 뛴다</li><li><b>2</b>← 105칸까지 걷는다</li><li><b>3</b>96칸의 것을 뛰어넘는다</li><li><b>3</b>→ 100칸까지 걷는다</li><li><b>3</b>(101,17)로 올라 뛴다</li><li><b>3</b>(102,15)로 올라 뛴다</li><li><b>3</b>→ 104칸까지 걷는다</li><li><b>3</b>(105,18)로 내려 뛴다</li><li><b>3</b>→ 106칸까지 걷는다</li><li><b>4</b>96칸의 것을 뛰어넘는다</li><li><b>4</b>→ 100칸까지 걷는다</li><li><b>4</b>(101,17)로 올라 뛴다</li><li><b>4</b>(102,15)로 올라 뛴다</li><li><b>4</b>→ 104칸까지 걷는다</li><li><b>4</b>(105,18)로 내려 뛴다</li><li><b>4</b>← 105칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">2-4</span>
+    <span class="stage-name">되돌아오기</span>
+    <span class="stage-verb">가로로 긴 두 층 · 왕복 · 108×22</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>맵 끝까지 가서 열쇠를 집고 다른 길로 돌아온다 — 갈 때 어깨, 올 때 상자.</b> 학교 뒷문. 포탈은 시작 자리 코앞인데 파란 블록에 막혔고, 파란 열쇠는 맵 끝 배수로. 2층으로 끝까지 가서 내려오면 깜빡이는 다리와 가방, 열쇠를 집고 다시 2층으로 — 갈 때 어깨로 넘은 벽을 올 때는 상자로 넘는다.</p>
+  <div class="mapwrap"><canvas data-stage="7" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>둘이 2층으로. 벽에서 한 명이 어깨를 내주고 한 명이 끝까지.</li><li>끝 사다리로 내려가면 가방이 굴러오고 깜빡이는 다리를 건너야 배수로다. 파란 열쇠를 집으면 시작 옆 블록이 사라진다.</li><li>돌아오는 길: 다시 2층, 상자를 벽까지 밀고 딛고 넘어 왼쪽 사다리로.</li><li>넷이 다 모여야 끝. 열쇠 든 사람이 제일 오래 걷는다 — 나머지는 통을 피하며 기다린다.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>33걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 6칸까지 걷는다</li><li><b>1</b>사다리로 줄11까지</li><li><b>2</b>→ 6칸까지 걷는다</li><li><b>2</b>사다리로 줄11까지</li><li><b>1</b>→ 39칸까지 걷는다</li><li><b>2</b>→ 39칸까지 걷는다</li><li><b>1</b>(40,8)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>(42,11)로 내려 뛴다</li><li><b>1</b>95칸의 것을 뛰어넘는다</li><li><b>1</b>→ 98칸까지 걷는다</li><li><b>1</b>리프트로 줄18까지</li><li><b>1</b>← 64칸까지 걷는다</li><li><b>1</b>(63,19)로 내려 뛴다</li><li><b>1</b>← 61칸까지 걷는다</li><li><b>1</b>파란 열쇠를 집는다 → 파란 블록이 전부 사라진다</li><li><b>1</b>(64,18)로 올라 뛴다</li><li><b>1</b>→ 98칸까지 걷는다</li><li><b>1</b>사다리로 줄11까지</li><li><b>1</b>← 96칸까지 걷는다</li><li><b>1</b>x0 를 41칸까지 민다</li><li><b>1</b>← 42칸까지 걷는다</li><li><b>1</b>(41,10)로 올라 뛴다</li><li><b>1</b>(40,8)로 올라 뛴다</li><li><b>1</b>(39,11)로 내려 뛴다</li><li><b>1</b>← 6칸까지 걷는다</li><li><b>1</b>리프트로 줄18까지</li><li><b>1</b>→ 14칸까지 걷는다</li><li><b>2</b>← 6칸까지 걷는다</li><li><b>2</b>리프트로 줄18까지</li><li><b>2</b>→ 13칸까지 걷는다</li><li><b>3</b>→ 15칸까지 걷는다</li><li><b>4</b>→ 12칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article><div class="world"><div class="num">3단계</div><h3>도시</h3><p>오피스 탑, 물류 창고, 급수탑 공터, 주차장에서 옥상까지. 배운 것 전부, 더 세게.</p></div>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">3-1</span>
+    <span class="stage-name">탑</span>
+    <span class="stage-verb">위로 긴 판 · 5층 · 36×60</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>층마다 어깨와 손잡기. 열쇠를 집으면 발밑이 사라진다.</b> 오피스 건물. 사다리가 층마다 반대편이라 지그재그. 3층 칸막이와 옥상 물탱크는 세 칸 — 한 명이 올려 주고, 올라간 사람이 손을 내려 끌어올린다. 4층 바닥 한 구간이 노란 블록이고 그 위에 노란 열쇠. 옥상 사다리 앞도 노란 블록.</p>
+  <div class="mapwrap"><canvas data-stage="8" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>1층 사다리는 세 칸 단 위 — 상자를 밀어다 딛는다.</li><li>세 칸 벽은 둘씩 넘는다: 하나가 어깨를 내주고, 올라간 하나가 손을 내려 끌어올린다. 「어깨 → 손」이 이 게임의 기본 동작이다.</li><li>노란 열쇠를 집으면 옥상 앞 블록이 사라지지만 발밑도 사라진다. 셋을 먼저 사다리 쪽에 세워 두고 하나가 집는다. 떨어진 사람은 다시 올라온다.</li><li>옥상 물탱크도 세 칸 — 둘씩 어깨와 손. 넷이 다 모여야 끝.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>94걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 17칸까지 걷는다</li><li><b>1</b>x0 를 27칸까지 민다</li><li><b>1</b>← 26칸까지 걷는다</li><li><b>1</b>(27,55)로 올라 뛴다</li><li><b>1</b>(28,53)로 올라 뛴다</li><li><b>1</b>→ 30칸까지 걷는다</li><li><b>1</b>사다리로 줄46까지</li><li><b>1</b>← 5칸까지 걷는다</li><li><b>1</b>사다리로 줄36까지</li><li><b>1</b>→ 15칸까지 걷는다</li><li><b>2</b>→ 26칸까지 걷는다</li><li><b>2</b>(27,55)로 올라 뛴다</li><li><b>2</b>(28,53)로 올라 뛴다</li><li><b>2</b>→ 30칸까지 걷는다</li><li><b>2</b>사다리로 줄46까지</li><li><b>2</b>← 5칸까지 걷는다</li><li><b>2</b>사다리로 줄36까지</li><li><b>2</b>→ 15칸까지 걷는다</li><li><b>3</b>→ 26칸까지 걷는다</li><li><b>3</b>(27,55)로 올라 뛴다</li><li><b>3</b>(28,53)로 올라 뛴다</li><li><b>3</b>→ 30칸까지 걷는다</li><li><b>3</b>사다리로 줄46까지</li><li><b>3</b>← 5칸까지 걷는다</li><li><b>3</b>사다리로 줄36까지</li><li><b>3</b>→ 15칸까지 걷는다</li><li><b>4</b>→ 26칸까지 걷는다</li><li><b>4</b>(27,55)로 올라 뛴다</li><li><b>4</b>(28,53)로 올라 뛴다</li><li><b>4</b>→ 30칸까지 걷는다</li><li><b>4</b>사다리로 줄46까지</li><li><b>4</b>← 5칸까지 걷는다</li><li><b>4</b>사다리로 줄36까지</li><li><b>4</b>→ 15칸까지 걷는다</li><li><b>2</b>→ 17칸까지 걷는다</li><li><b>1</b>→ 16칸까지 걷는다</li><li><b>1</b>(18,33)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>2 의 손을 잡아 (18,33)로 끌어올린다</li><li><b>1</b>(19,36)로 내려 뛴다</li><li><b>2</b>(20,36)로 내려 뛴다</li><li><b>1</b>→ 22칸까지 걷는다</li><li><b>2</b>→ 23칸까지 걷는다</li><li><b>4</b>→ 17칸까지 걷는다</li><li><b>3</b>→ 16칸까지 걷는다</li><li><b>3</b>(18,33)로 올라 뛴다 — 어깨 1명</li><li><b>3</b>4 의 손을 잡아 (18,33)로 끌어올린다</li><li><b>3</b>(19,36)로 내려 뛴다</li><li><b>4</b>(20,36)로 내려 뛴다</li><li><b>1</b>→ 30칸까지 걷는다</li><li><b>1</b>사다리로 줄26까지</li><li><b>1</b>← 24칸까지 걷는다</li><li><b>1</b>20칸으로 뛰어 넘는다 — 열쇠를 안 집고</li><li><b>1</b>← 9칸까지 걷는다</li><li><b>2</b>→ 30칸까지 걷는다</li><li><b>2</b>사다리로 줄26까지</li><li><b>2</b>← 24칸까지 걷는다</li><li><b>2</b>20칸으로 뛰어 넘는다 — 열쇠를 안 집고</li><li><b>2</b>← 9칸까지 걷는다</li><li><b>3</b>→ 30칸까지 걷는다</li><li><b>3</b>사다리로 줄26까지</li><li><b>3</b>← 24칸까지 걷는다</li><li><b>3</b>20칸으로 뛰어 넘는다 — 열쇠를 안 집고</li><li><b>3</b>← 9칸까지 걷는다</li><li><b>4</b>→ 30칸까지 걷는다</li><li><b>4</b>사다리로 줄26까지</li><li><b>4</b>← 24칸까지 걷는다</li><li><b>4</b>20칸으로 뛰어 넘는다 — 열쇠를 안 집고</li><li><b>4</b>← 9칸까지 걷는다</li><li><b>1</b>→ 21칸까지 걷는다</li><li><b>1</b>노란 열쇠를 집는다 → 노란 블록이 전부 사라진다</li><li><b>1</b>발판이 사라져 줄36로 떨어진다</li><li><b>1</b>→ 30칸까지 걷는다</li><li><b>1</b>사다리로 줄26까지</li><li><b>1</b>← 5칸까지 걷는다</li><li><b>1</b>사다리로 줄16까지</li><li><b>2</b>← 5칸까지 걷는다</li><li><b>2</b>사다리로 줄16까지</li><li><b>3</b>← 5칸까지 걷는다</li><li><b>3</b>사다리로 줄16까지</li><li><b>4</b>← 5칸까지 걷는다</li><li><b>4</b>사다리로 줄16까지</li><li><b>1</b>→ 19칸까지 걷는다</li><li><b>2</b>→ 19칸까지 걷는다</li><li><b>1</b>(20,13)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>2 의 손을 잡아 (21,13)로 끌어올린다</li><li><b>3</b>→ 19칸까지 걷는다</li><li><b>4</b>→ 19칸까지 걷는다</li><li><b>3</b>(20,13)로 올라 뛴다 — 어깨 1명</li><li><b>3</b>4 의 손을 잡아 (21,13)로 끌어올린다</li><li><b>1</b>→ 23칸까지 걷는다</li><li><b>2</b>→ 22칸까지 걷는다</li><li><b>3</b>→ 24칸까지 걷는다</li><li><b>4</b>← 21칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">3-2</span>
+    <span class="stage-name">3층 창고</span>
+    <span class="stage-verb">가로로 긴 3층 · 120×28</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>상자를 떨어뜨려 딛고, 상자로 누름판, 어깨와 손으로 단 위 열쇠.</b> 물류 창고. 2층 틈으로 상자를 떨어뜨려 1층 벽을 넘고, 둘째 상자로 누름판을 누른다. 2층 깜빡이는 다리 너머 사다리로 3층 — 열쇠는 세 칸 단 위라 둘이 간다. 2층 경사로에서 통이 굴러온다.</p>
+  <div class="mapwrap"><canvas data-stage="9" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>2층 상자를 틈으로. 1층 벽 앞에 앉는다 — 넷이 딛고 넘는다.</li><li>1층 둘째 상자는 왼쪽으로 밀어 누름판에.</li><li>둘이 오른쪽 사다리로 2층 — 깜빡이는 다리를 건너 3층. 단 위 열쇠는 어깨로 올리고 손으로 끌어올려 둘이 함께 내려온다.</li><li>넷이 다 모여야 끝. 통은 2층에서 왼쪽으로 굴러와 틈으로 떨어진다.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>64걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 30칸까지 걷는다</li><li><b>1</b>사다리로 줄17까지</li><li><b>2</b>→ 30칸까지 걷는다</li><li><b>2</b>사다리로 줄17까지</li><li><b>3</b>→ 30칸까지 걷는다</li><li><b>3</b>사다리로 줄17까지</li><li><b>4</b>→ 30칸까지 걷는다</li><li><b>4</b>사다리로 줄17까지</li><li><b>1</b>→ 44칸까지 걷는다</li><li><b>1</b>x0 를 52칸까지 밀어 구멍으로 떨어뜨린다</li><li><b>·</b>x0 가 줄26까지 떨어진다</li><li><b>1</b>← 51칸까지 걷는다</li><li><b>1</b>(52,25)로 내려 뛴다</li><li><b>1</b>(54,23)로 올라 뛴다</li><li><b>1</b>(55,26)로 내려 뛴다</li><li><b>2</b>→ 51칸까지 걷는다</li><li><b>2</b>(52,25)로 내려 뛴다</li><li><b>2</b>(54,23)로 올라 뛴다</li><li><b>2</b>(55,26)로 내려 뛴다</li><li><b>3</b>→ 51칸까지 걷는다</li><li><b>3</b>(52,25)로 내려 뛴다</li><li><b>3</b>(54,23)로 올라 뛴다</li><li><b>3</b>(55,26)로 내려 뛴다</li><li><b>4</b>→ 51칸까지 걷는다</li><li><b>4</b>(52,25)로 내려 뛴다</li><li><b>4</b>(54,23)로 올라 뛴다</li><li><b>4</b>(55,26)로 내려 뛴다</li><li><b>1</b>70칸의 것을 뛰어넘는다</li><li><b>1</b>→ 71칸까지 걷는다</li><li><b>1</b>x1 를 64칸까지 민다</li><li><b>·</b>누름판 p 가 눌려 셔터 P 가 열려 있다 (상자)</li><li><b>1</b>→ 100칸까지 걷는다</li><li><b>1</b>사다리로 줄17까지</li><li><b>2</b>64칸의 것을 뛰어넘는다</li><li><b>2</b>→ 100칸까지 걷는다</li><li><b>2</b>사다리로 줄17까지</li><li><b>1</b>→ 104칸까지 걷는다</li><li><b>1</b>사다리로 줄8까지</li><li><b>2</b>→ 104칸까지 걷는다</li><li><b>2</b>사다리로 줄8까지</li><li><b>1</b>→ 107칸까지 걷는다</li><li><b>2</b>→ 107칸까지 걷는다</li><li><b>1</b>(108,5)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>2 의 손을 잡아 (109,5)로 끌어올린다</li><li><b>1</b>→ 110칸까지 걷는다</li><li><b>1</b>빨간 열쇠를 집는다 → 빨간 블록이 전부 사라진다</li><li><b>1</b>← 108칸까지 걷는다</li><li><b>1</b>(107,8)로 내려 뛴다</li><li><b>2</b>(106,8)로 내려 뛴다</li><li><b>1</b>← 104칸까지 걷는다</li><li><b>1</b>리프트로 줄17까지</li><li><b>1</b>← 100칸까지 걷는다</li><li><b>1</b>리프트로 줄26까지</li><li><b>1</b>→ 112칸까지 걷는다</li><li><b>2</b>← 104칸까지 걷는다</li><li><b>2</b>리프트로 줄17까지</li><li><b>2</b>← 100칸까지 걷는다</li><li><b>2</b>리프트로 줄26까지</li><li><b>2</b>→ 111칸까지 걷는다</li><li><b>3</b>64칸의 것을 뛰어넘는다</li><li><b>3</b>→ 113칸까지 걷는다</li><li><b>4</b>64칸의 것을 뛰어넘는다</li><li><b>4</b>→ 114칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">3-3</span>
+    <span class="stage-name">동시에</span>
+    <span class="stage-verb">가로로 긴 한 층 · 72×22</span>
+    <span class="badge one">한 명만 닿으면 끝</span>
+  </div>
+  <p class="stage-line"><b>둘이 누름판을 지키고, 하나가 올려 주고, 하나가 깜빡이는 다리를 건너 달린다.</b> 급수탑 둘. 두 탑 위 누름판을 둘 다 밟고 있어야 이중 셔터가 열린다. 그 뒤 세 칸 방음벽, 깜빡이는 다리 다섯 칸, 통 — 달리는 한 명이 혼자 다 해내야 한다.</p>
+  <div class="mapwrap"><canvas data-stage="10" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>둘이 각자 탑에 올라 누름판에 선다.</li><li>남은 둘: 하나가 어깨를 내주고 하나가 방음벽을 넘는다. 어깨 내준 사람은 거기서 끝.</li><li>깜빡이는 다리 다섯 칸을 켜진 2초 안에 건너고 통을 넘어 포탈에 닿으면 끝.</li><li>한 명만 닿으면 끝. 넷의 역할이 다 다르다.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>14걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 19칸까지 걷는다</li><li><b>1</b>사다리로 줄12까지</li><li><b>1</b>→ 22칸까지 걷는다</li><li><b>2</b>→ 39칸까지 걷는다</li><li><b>2</b>사다리로 줄12까지</li><li><b>2</b>→ 42칸까지 걷는다</li><li><b>·</b>누름판 p 가 눌려 셔터 P 가 열려 있다 (1 가 밟고 있다)</li><li><b>·</b>누름판 q 가 눌려 셔터 Q 가 열려 있다 (2 가 밟고 있다)</li><li><b>3</b>→ 55칸까지 걷는다</li><li><b>4</b>→ 54칸까지 걷는다</li><li><b>4</b>(56,15)로 올라 뛴다 — 어깨 1명</li><li><b>4</b>(57,18)로 내려 뛴다</li><li><b>4</b>→ 68칸까지 걷는다</li><li><b>4</b>출구 포탈에서 ⌥↑ — 한 명이 닿았으니 끝</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">3-4</span>
+    <span class="stage-name">옥상</span>
+    <span class="stage-verb">가로로 긴 3층 · 120초 · 120×28</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>열쇠 → 선반이 사라진다 → 상자가 떨어져 누름판을 누른다. 마지막 단은 상자 + 어깨 + 손.</b> 주차장에서 옥상까지. 무거운 상자로 첫 셔터, 2층 깜빡이는 다리, 옥상 세 칸 벽은 어깨와 손, 빨간 열쇠를 집으면 2층 빨간 선반이 사라져 그 위 상자가 누름판 위로 떨어진다. 옥외 계단 네 칸은 상자 위에서 어깨, 위에서 손. 120초.</p>
+  <div class="mapwrap"><canvas data-stage="11" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>무거운 상자는 둘이. 누름판까지 밀면 첫 셔터.</li><li>둘이 옥상 — 벽에서 어깨, 열쇠를 집으면 2층 선반이 사라지고 상자가 누름판에 떨어져 셔터가 열린다. 올라간 사람이 손을 내려 끌어올린다.</li><li>넷이 오른쪽 끝 사다리로 1층. 마지막 단은 네 칸: 상자 위에 둘이 서서 하나가 어깨, 올라간 하나가 손. 두 번 되풀이.</li><li>120초. 다 되면 방장이 되감은 것과 같다.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>64걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 11칸까지 걷는다</li><li><b>2</b>→ 10칸까지 걷는다</li><li><b>1+2</b>X0 를 22칸까지 민다</li><li><b>·</b>누름판 q 가 눌려 셔터 Q 가 열려 있다 (상자)</li><li><b>1</b>22칸의 것을 뛰어넘는다</li><li><b>1</b>→ 40칸까지 걷는다</li><li><b>1</b>사다리로 줄17까지</li><li><b>2</b>22칸의 것을 뛰어넘는다</li><li><b>2</b>→ 40칸까지 걷는다</li><li><b>2</b>사다리로 줄17까지</li><li><b>3</b>22칸의 것을 뛰어넘는다</li><li><b>3</b>→ 40칸까지 걷는다</li><li><b>3</b>사다리로 줄17까지</li><li><b>4</b>22칸의 것을 뛰어넘는다</li><li><b>4</b>→ 40칸까지 걷는다</li><li><b>4</b>사다리로 줄17까지</li><li><b>1</b>→ 84칸까지 걷는다</li><li><b>2</b>→ 84칸까지 걷는다</li><li><b>1</b>사다리로 줄8까지</li><li><b>2</b>사다리로 줄8까지</li><li><b>1</b>→ 86칸까지 걷는다</li><li><b>2</b>→ 86칸까지 걷는다</li><li><b>1</b>(87,5)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>2 의 손을 잡아 (87,5)로 끌어올린다</li><li><b>1</b>(89,8)로 내려 뛴다</li><li><b>2</b>(90,8)로 내려 뛴다</li><li><b>2</b>빨간 열쇠를 집는다 → 빨간 블록이 전부 사라진다</li><li><b>·</b>x0 가 줄17까지 떨어진다</li><li><b>1</b>→ 90칸까지 걷는다</li><li><b>·</b>누름판 p 가 눌려 셔터 P 가 열려 있다 (상자)</li><li><b>1</b>→ 100칸까지 걷는다</li><li><b>1</b>리프트로 줄17까지</li><li><b>2</b>→ 100칸까지 걷는다</li><li><b>2</b>리프트로 줄17까지</li><li><b>1</b>→ 108칸까지 걷는다</li><li><b>1</b>리프트로 줄26까지</li><li><b>2</b>→ 108칸까지 걷는다</li><li><b>2</b>리프트로 줄26까지</li><li><b>3</b>71칸의 것을 뛰어넘는다</li><li><b>3</b>→ 108칸까지 걷는다</li><li><b>3</b>리프트로 줄26까지</li><li><b>4</b>71칸의 것을 뛰어넘는다</li><li><b>4</b>→ 108칸까지 걷는다</li><li><b>4</b>리프트로 줄26까지</li><li><b>1</b>106칸의 것을 뛰어넘는다</li><li><b>1</b>← 105칸까지 걷는다</li><li><b>1</b>x1 를 111칸까지 민다</li><li><b>1</b>← 110칸까지 걷는다</li><li><b>2</b>→ 110칸까지 걷는다</li><li><b>1</b>(111,25)로 올라 뛴다</li><li><b>2</b>(111,25)로 올라 뛴다</li><li><b>1</b>(112,22)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>2 의 손을 잡아 (113,22)로 끌어올린다</li><li><b>3</b>→ 110칸까지 걷는다</li><li><b>4</b>→ 110칸까지 걷는다</li><li><b>3</b>(111,25)로 올라 뛴다</li><li><b>4</b>(111,25)로 올라 뛴다</li><li><b>3</b>(112,22)로 올라 뛴다 — 어깨 1명</li><li><b>3</b>4 의 손을 잡아 (113,22)로 끌어올린다</li><li><b>1</b>→ 115칸까지 걷는다</li><li><b>2</b>→ 114칸까지 걷는다</li><li><b>3</b>→ 116칸까지 걷는다</li><li><b>4</b>← 113칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article><div class="world"><div class="num">4단계</div><h3>지하철</h3><p>개찰구 너머 통로와 종점 승강장. 무빙워크, 포탈, 삭은 발판. 상자가 포탈을 지나 누름판에 떨어진다.</p></div>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">4-1</span>
+    <span class="stage-name">무빙워크</span>
+    <span class="stage-verb">가로로 긴 한 층 · 108×22</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>무빙워크에 상자를 실어 누름판까지, 어깨로만 닿는 포탈로 한 명이 선반 위 상자를 누름판에.</b> 개찰구 너머 긴 통로. 순방향 무빙워크를 타고 달리면 삭은 판자 넷 — 0.5초 밟으면 부서진다, 한 명씩. 세 칸 벽 뒤 역방향 무빙워크에 상자를 올리면 알아서 턱까지 실려 와 누름판을 누른다. 세 칸 위 선반의 포탈은 어깨로만 닿고, 저편 승강장 위 선반에는 상자와 둘째 누름판.</p>
+  <div class="mapwrap"><canvas data-stage="12" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>삭은 판자는 0.5초 밟으면 부서지고 3초 뒤 돌아온다. 넷이 줄지어 건너면 넷째가 빠진다 — 한 명씩.</li><li>역방향 무빙워크는 걸어서는 거의 못 간다 — 뛰어 넘는다. 상자는 반대다: 올려 두면 알아서 실려 가 턱에 걸리고 누름판을 누른다.</li><li>선반 위 포탈은 어깨로만 닿는다. 넘어간 한 명이 승강장 위 선반의 상자를 둘째 누름판에 밀고 선반 끝에서 내려온다.</li><li>넷이 승강장 포탈에 다 모여야 끝.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>56걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 25칸까지 걷는다</li><li><b>1</b>→ 32칸까지 걷는다</li><li><b>2</b>→ 25칸까지 걷는다</li><li><b>2</b>→ 32칸까지 걷는다</li><li><b>3</b>→ 25칸까지 걷는다</li><li><b>3</b>→ 32칸까지 걷는다</li><li><b>4</b>→ 25칸까지 걷는다</li><li><b>4</b>→ 32칸까지 걷는다</li><li><b>2</b>→ 34칸까지 걷는다</li><li><b>1</b>→ 33칸까지 걷는다</li><li><b>1</b>(35,15)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>2 의 손을 잡아 (35,15)로 끌어올린다</li><li><b>1</b>(36,18)로 내려 뛴다</li><li><b>2</b>(36,18)로 내려 뛴다</li><li><b>1</b>→ 38칸까지 걷는다</li><li><b>2</b>→ 38칸까지 걷는다</li><li><b>4</b>→ 34칸까지 걷는다</li><li><b>3</b>→ 33칸까지 걷는다</li><li><b>3</b>(35,15)로 올라 뛴다 — 어깨 1명</li><li><b>3</b>4 의 손을 잡아 (35,15)로 끌어올린다</li><li><b>3</b>(36,18)로 내려 뛴다</li><li><b>4</b>(36,18)로 내려 뛴다</li><li><b>1</b>43칸의 것을 뛰어넘는다</li><li><b>1</b>50칸의 것을 뛰어넘는다</li><li><b>1</b>→ 51칸까지 걷는다</li><li><b>1</b>x1 를 48칸까지 민다</li><li><b>·</b>x1 가 무빙워크에 실려 44칸까지 간다</li><li><b>·</b>누름판 p 가 눌려 셔터 P 가 열려 있다 (상자)</li><li><b>1</b>→ 60칸까지 걷는다</li><li><b>2</b>→ 42칸까지 걷는다</li><li><b>2</b>(45,18)로 내려 뛴다</li><li><b>2</b>(49,18)로 내려 뛴다</li><li><b>2</b>→ 60칸까지 걷는다</li><li><b>3</b>→ 42칸까지 걷는다</li><li><b>3</b>(45,18)로 내려 뛴다</li><li><b>3</b>(49,18)로 내려 뛴다</li><li><b>3</b>→ 60칸까지 걷는다</li><li><b>4</b>→ 42칸까지 걷는다</li><li><b>4</b>(45,18)로 내려 뛴다</li><li><b>4</b>(49,18)로 내려 뛴다</li><li><b>4</b>→ 60칸까지 걷는다</li><li><b>2</b>→ 61칸까지 걷는다</li><li><b>1</b>← 60칸까지 걷는다</li><li><b>1</b>(62,15)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>포탈 u→U</li><li><b>1</b>85칸의 것을 뛰어넘는다</li><li><b>1</b>→ 86칸까지 걷는다</li><li><b>1</b>x0 를 80칸까지 민다</li><li><b>·</b>누름판 q 가 눌려 셔터 Q 가 열려 있다 (상자)</li><li><b>1</b>→ 87칸까지 걷는다</li><li><b>1</b>(89,18)로 내려 뛴다</li><li><b>2</b>→ 101칸까지 걷는다</li><li><b>3</b>→ 100칸까지 걷는다</li><li><b>4</b>→ 102칸까지 걷는다</li><li><b>1</b>→ 103칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article>
+<article class="stage">
+  <div class="stage-head">
+    <span class="stage-no">4-2</span>
+    <span class="stage-name">종점</span>
+    <span class="stage-verb">가로로 긴 3층 · 150초 · 120×28</span>
+    <span class="badge all">넷이 다 모여야 끝</span>
+  </div>
+  <p class="stage-line"><b>무거운 상자 둘이, 3층 상자를 포탈에 넣어 1층 누름판에 떨어뜨린다, 빨간 열쇠로 2층 벽을 지운다.</b> 종점. 1층 무거운 상자로 첫 셔터, 사다리로 2층 — 삭은 통로 다섯 칸, 세 칸 벽, 역방향 무빙워크. 3층의 무거운 상자를 둘이 포탈에 밀어 넣으면 1층 끝 누름판 위로 떨어져 출구 셔터가 열린다. 3층 끝 깜빡이는 다리 너머 빨간 열쇠 — 바닥도 빨갛다, 집으면 2층으로 떨어지고 2층 빨간 벽이 사라진다.</p>
+  <div class="mapwrap"><canvas data-stage="13" width="10" height="10"></canvas></div>
+  <div class="solve">
+    <div><h4>어떻게 깨나</h4><ul><li>무거운 상자는 둘이 붙어 민다. 첫 셔터도, 3층 포탈도.</li><li>삭은 통로는 한 명씩. 빠지면 1층 — 사다리로 되돌아온다.</li><li>3층 상자가 포탈을 지나 1층 끝 누름판에 떨어진다 — 그게 출구 셔터다. 누름판 위 상자는 무거워 혼자서는 못 밀어낸다: 뛰어 넘는다.</li><li>빨간 열쇠를 집은 사람은 떨어져 2층으로. 빨간 벽이 사라졌으니 넷이 끝 사다리로 1층. 150초.</li></ul></div>
+    <div class="fail"><h4>기계로 확인한 풀이</h4>
+      <details><summary>73걸음 — 매 걸음의 전제가 지형에서 성립한다</summary>
+      <ol class="steps-list"><li><b>1</b>→ 9칸까지 걷는다</li><li><b>2</b>→ 8칸까지 걷는다</li><li><b>1+2</b>X1 를 20칸까지 민다</li><li><b>·</b>누름판 q 가 눌려 셔터 Q 가 열려 있다 (상자)</li><li><b>1</b>20칸의 것을 뛰어넘는다</li><li><b>1</b>→ 30칸까지 걷는다</li><li><b>1</b>사다리로 줄17까지</li><li><b>1</b>→ 46칸까지 걷는다</li><li><b>2</b>20칸의 것을 뛰어넘는다</li><li><b>2</b>→ 30칸까지 걷는다</li><li><b>2</b>사다리로 줄17까지</li><li><b>2</b>→ 46칸까지 걷는다</li><li><b>3</b>20칸의 것을 뛰어넘는다</li><li><b>3</b>→ 30칸까지 걷는다</li><li><b>3</b>사다리로 줄17까지</li><li><b>3</b>→ 46칸까지 걷는다</li><li><b>4</b>20칸의 것을 뛰어넘는다</li><li><b>4</b>→ 30칸까지 걷는다</li><li><b>4</b>사다리로 줄17까지</li><li><b>4</b>→ 46칸까지 걷는다</li><li><b>2</b>→ 49칸까지 걷는다</li><li><b>1</b>→ 48칸까지 걷는다</li><li><b>1</b>(50,14)로 올라 뛴다 — 어깨 1명</li><li><b>1</b>2 의 손을 잡아 (50,14)로 끌어올린다</li><li><b>1</b>(51,17)로 내려 뛴다</li><li><b>2</b>(51,17)로 내려 뛴다</li><li><b>1</b>→ 53칸까지 걷는다</li><li><b>2</b>→ 53칸까지 걷는다</li><li><b>4</b>→ 49칸까지 걷는다</li><li><b>3</b>→ 48칸까지 걷는다</li><li><b>3</b>(50,14)로 올라 뛴다 — 어깨 1명</li><li><b>3</b>4 의 손을 잡아 (50,14)로 끌어올린다</li><li><b>3</b>(51,17)로 내려 뛴다</li><li><b>4</b>(51,17)로 내려 뛴다</li><li><b>1</b>→ 62칸까지 걷는다</li><li><b>2</b>→ 62칸까지 걷는다</li><li><b>3</b>→ 62칸까지 걷는다</li><li><b>4</b>→ 62칸까지 걷는다</li><li><b>1</b>→ 64칸까지 걷는다</li><li><b>1</b>사다리로 줄8까지</li><li><b>2</b>→ 64칸까지 걷는다</li><li><b>2</b>사다리로 줄8까지</li><li><b>1</b>→ 69칸까지 걷는다</li><li><b>2</b>→ 68칸까지 걷는다</li><li><b>1+2</b>X0 를 75칸까지 민다</li><li><b>·</b>X0 가 포탈 w→W 로</li><li><b>·</b>X0 가 줄26까지 떨어진다</li><li><b>·</b>누름판 p 가 눌려 셔터 P 가 열려 있다 (상자)</li><li><b>1</b>78칸으로 뛰어 넘는다 — 열쇠를 안 집고</li><li><b>1</b>→ 83칸까지 걷는다</li><li><b>1</b>→ 93칸까지 걷는다</li><li><b>1</b>→ 96칸까지 걷는다</li><li><b>1</b>빨간 열쇠를 집는다 → 빨간 블록이 전부 사라진다</li><li><b>1</b>발판이 사라져 줄17로 떨어진다</li><li><b>2</b>← 64칸까지 걷는다</li><li><b>2</b>리프트로 줄17까지</li><li><b>1</b>→ 101칸까지 걷는다</li><li><b>1</b>리프트로 줄26까지</li><li><b>2</b>→ 101칸까지 걷는다</li><li><b>2</b>리프트로 줄26까지</li><li><b>3</b>→ 101칸까지 걷는다</li><li><b>3</b>리프트로 줄26까지</li><li><b>4</b>→ 101칸까지 걷는다</li><li><b>4</b>리프트로 줄26까지</li><li><b>1</b>104칸의 것을 뛰어넘는다</li><li><b>1</b>→ 111칸까지 걷는다</li><li><b>2</b>104칸의 것을 뛰어넘는다</li><li><b>2</b>→ 113칸까지 걷는다</li><li><b>3</b>104칸의 것을 뛰어넘는다</li><li><b>3</b>→ 110칸까지 걷는다</li><li><b>4</b>104칸의 것을 뛰어넘는다</li><li><b>4</b>→ 114칸까지 걷는다</li><li><b>1·2·3·4</b>출구 포탈에서 ⌥↑ — 넷이 다 모였다</li></ol></details></div>
+  </div>
+</article>
+</section>
+
+<section>
+  <div class="num">12</div>
+  <h2>깰 수 있다 — 어떻게 확인했나</h2>
+  <div class="verb"><b>풀이를 걸음으로 적었다</b><span>걷기 · 뛰기 · 사다리 · 어깨 · 밀기 · 포탈 · 스위치 · 누름판 · 스프링 · 열쇠 · 출구. 열두 판 489걸음.</span><span class="why">「이렇게 하면 깨진다」를 말로 하지 않고 순서로 적는다.</span></div>
+<div class="verb"><b>매 걸음의 전제를 지형에 댔다</b><span>길에 벽이 없나, 구멍이 네 칸을 안 넘나, 오르는 높이가 두 칸(+어깨) 안인가, 사다리가 그 줄에 있나, 상자가 앉을 바닥이 있나, 누름판 위에 뭐가 있나, 셔터·색 블록이 지금 열려 있나.</span><span class="why">깨지면 그 자리에서 터진다. 만들면서 여덟 군데를 잡았다 — 탑을 세워 길을 막은 것, 발밑이 사라진 뒤 못 뛰어 넘는 폭, 리프트가 벽 반대편으로 데려다 준 것.</span></div>
+<div class="verb"><b>열쇠를 집으면 떨어뜨려 봤다</b><span>색 블록이 사라지면 그 위의 사람·상자를 바닥까지 떨어뜨리고, 가시에 닿으면 실패로 친다.</span><span class="why">「탑」과 「마지막」의 순서 퍼즐이 이걸로 확인된다.</span></div>
+<div class="verb"><b>실제 엔진에서 넷이 키를 눌러 깼다 (6판)</b><span>같은 풀이를 <code>test/coop-play.mjs</code> 가 게임 물리 그대로 해 본다 — 걷다 구멍 앞에서 뛰고, 사다리를 타고, 상자를 밀고, 남의 머리를 딛고, 손을 잡아 끌어올리고, 왕복 발판을 기다리고, 깜빡이는 다리가 켜질 때 건너고, 출구에서 ⌥↑. 통만 뺐다 — 맞아도 죽지 않고 박자 문제라.</span><span class="why">어림값(칸)과 픽셀 물리가 어긋난 판을 여섯 잡았다 — 아래 표와 13.</span></div>
+<div class="verb"><b>안 본 것</b><span>통의 박자, 시간 제한, 넷이 동시에 움직일 때의 엇갈림(봇은 한 명씩 움직인다).</span><span class="why">이 확인은 「길이 있다」이지 「쉽다」가 아니다. 쉬운지는 넷이 붙어 봐야 안다.</span></div>
+  <div class="scroll"><table>
+    <tr><th>판</th><th>걸음</th><th>엔진에서</th><th>한 명씩 움직여</th></tr>
+    <tr><td class="k"><b>1-1</b> 표지판</td><td class="">64걸음</td><td class="">깼다</td><td class="n">90초</td></tr>
+<tr><td class="k"><b>1-2</b> 상자 계단</td><td class="">32걸음</td><td class="">깼다</td><td class="n">26초</td></tr>
+<tr><td class="k"><b>1-3</b> 두 열쇠</td><td class="">14걸음</td><td class="">깼다</td><td class="n">15초</td></tr>
+<tr><td class="k"><b>1-4</b> 지키는 사람</td><td class="">12걸음</td><td class="">깼다</td><td class="n">41초</td></tr>
+<tr><td class="k"><b>2-1</b> 두 길</td><td class="">20걸음</td><td class="">깼다</td><td class="n">80초</td></tr>
+<tr><td class="k"><b>2-2</b> 엘리베이터</td><td class="">17걸음</td><td class="">깼다</td><td class="n">29초</td></tr>
+<tr><td class="k"><b>2-3</b> 움직이는 발판</td><td class="">69걸음</td><td class="">깼다</td><td class="n">145초</td></tr>
+<tr><td class="k"><b>2-4</b> 되돌아오기</td><td class="">31걸음</td><td class="">깼다</td><td class="n">89초</td></tr>
+<tr><td class="k"><b>3-1</b> 탑</td><td class="">92걸음</td><td class="">깼다</td><td class="n">134초</td></tr>
+<tr><td class="k"><b>3-2</b> 3층 창고</td><td class="">58걸음</td><td class="">깼다</td><td class="n">111초</td></tr>
+<tr><td class="k"><b>3-3</b> 동시에</td><td class="">13걸음</td><td class="">깼다</td><td class="n">30초</td></tr>
+<tr><td class="k"><b>3-4</b> 옥상</td><td class="">55걸음</td><td class="">깼다</td><td class="n">108초</td></tr>
+<tr><td class="k"><b>4-1</b> 무빙워크</td><td class="">52걸음</td><td class="">깼다</td><td class="n">81초</td></tr>
+<tr><td class="k"><b>4-2</b> 종점</td><td class="">62걸음</td><td class="">깼다</td><td class="n">118초</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <div class="num">13</div>
+  <h2>6판에서 고친 것 — 검토</h2>
+  <p class="sub">「맵을 다 검토하고, 버그도 검토하고, 처음 점프할 때 발이 땅 밑까지 들어가는 것도」. 엔진 아홉(회귀 하나 포함), 판 여섯, 검사기 둘.</p>
+  <h3>엔진</h3>
+  <div class="verb"><b>남의 발이 착지마다 땅에 박혔다</b><span>남의 자리는 마지막 꾸러미에서 속도로 이어 그리는데 그 계산이 땅을 몰랐다 — 뛰어내리는 사람은 다음 꾸러미까지 발판을 뚫고 내려가 보였다. 내려가던 발이 바닥을 지나면 바닥에 세운다.</span><span class="why">「처음에 점프할 때 발이 땅 밑까지 침범」의 첫째 원인.</span></div>
+<div class="verb"><b>발끝이 땅 밑으로 4px 그려졌다</b><span>다리 획이 발 높이 아래까지 이어져 서 있는 사람도 발이 땅에 박혀 보였다. 발끝은 발 높이에서 끝난다.</span><span class="why">둘째 원인. 2층 이상에서는 늘 「공중 다리」로 그려지던 것(높이로 공중을 가렸다)도 함께 — 바닥에 섰나로 본다.</span></div>
+<div class="verb"><b>사다리 꼭대기에서 ⌥↓ 가 웅크리기였다</b><span>발밑 칸이 사다리면 잡고 내려간다. 밑에 닿으면 선다 — 안 그러면 ⌥↓ 를 잡은 채 허공에 매달려 걷지도 못했다. 리프트에서 옆으로 내리면 층 바닥이 발 높이 ±16px 안에 있을 때 올라선다.</span><span class="why">「두 길」에서 2층 사람이 내려올 길이 없었다.</span></div>
+<div class="verb"><b>상자·통이 빨리 떨어지면 바닥을 뚫었다</b><span>새 자리에서 바닥을 다시 찾아, 한 프레임에 19px 씩 가는 상자는 얇은 바닥을 지나쳐 판 밑으로 갔다. 지금 자리에서 본 가장 가까운 아래 바닥을 이번 프레임에 지나치면 거기 앉는다.</span><span class="why">「3층 창고」의 상자가 1층 바닥을 통과했다.</span></div>
+<div class="verb"><b>상자 밀기가 3/4 속도였다</b><span>밀 때 제자리에 서서 상자가 1.5px 앞서가면 4.8px 씩 따라 잡느라 네 프레임 중 하나를 놓쳤다. 상자에 붙는다.</span><span class="why">초당 2.2칸이 1.6칸으로 가던 것.</span></div>
+<div class="verb"><b>무빙워크가 사람을 상자 속으로 밀어 넣었다</b><span>실려 가는 만큼을 자리에 바로 더했다. 걸음과 합쳐 벽·상자에 대 본다.</span><span class="why">새로 넣은 무빙워크에서 잡았다.</span></div>
+<div class="verb"><b>손잡기가 벽 모서리 1px 위 허공에 세웠다</b><span>올라선 사람이 설 자리는 몸이 4px 이상 바닥에 걸쳐야 한다. 상대 쪽 옆, 반대쪽 옆, 아니면 내 자리.</span><span class="why">「옥상」 세 칸 벽 위에서 끌어올린 사람이 도로 떨어졌다.</span></div>
+<div class="verb"><b>출구 안에서 동료 머리 위에 서면 「안」이 아니었다</b><span>포탈 앞에 넷이 몰리면 누가 누구 머리 위에 서게 된다. 한 칸 반까지 안이다.</span><span class="why">「움직이는 발판」 끝에서 넷이 모였는데 「2명 더」.</span></div>
+<div class="verb"><b>(회귀) 남의 발을 세우는 계산이 사다리 꼭대기를 바닥으로 쳤다</b><span>첫 고침이 낳은 것. 사다리를 내려오는 동료가 내 화면에서 꼭대기에 붙어 안 내려왔다. 사다리 꼭대기는 그 계산에서 바닥이 아니다 — 시험으로 박아 뒀다.</span><span class="why">3.4.1. 판 목록과 꾸러미가 달라져 옛 앱은 방에 못 들어온다 (규약 6).</span></div>
+  <h3>판</h3>
+  <div class="verb"><b>두 열쇠 — 셋을 쌓았는데 머리가 닿았다</b><span>다락 바닥이 기둥 옆 칸 위까지 덮어, 셋을 쌓고 뛰면 천장에 막혀 다섯 칸 기둥에 못 올랐다. 다락은 6칸부터.</span><span class="why">칸 검사는 세로 길을 안 봤다.</span></div>
+<div class="verb"><b>3층 창고 — 상자 위에서 벽 너머로 한 번에 못 갔다</b><span>한 칸 상자 위에서 두 칸 위 벽을 넘어 세 칸 옆에 내리는 건 달릴 자리가 없다. 벽 위에 올라선 뒤 내려선다.</span><span class="why">칸 검사는 「두 칸 위」와 「네 칸 옆」을 따로 봤다.</span></div>
+<div class="verb"><b>옥상 — 사다리 발치에서 뛰면 사다리를 잡았다</b><span>⌥↑ 는 점프이자 사다리다. 상자 옆 사다리를 두 칸 뗐다.</span><span class="why"></span></div>
+<div class="verb"><b>두 길 · 탑 — 열쇠를 지나치며 집었다</b><span>열쇠는 닿으면 집는다. 노란 열쇠를 먼저 집으면 발밑이 사라진다 — 길에 놓인 열쇠는 <b>뛰어 넘는다</b>(hop).</span><span class="why">풀이에 뛰어넘기 걸음을 넣고, 검사기가 지나가는 걷기를 막는다.</span></div>
+<div class="verb"><b>표지판 — 선반을 뚫고 내려뛰었다</b><span>서 있는 발판을 뚫고는 못 내려간다. 선반 가장자리 밖으로 뛴다.</span><span class="why">검사기가 내려뛰기 기둥을 본다.</span></div>
+<div class="verb"><b>탑 · 무빙워크 · 종점 — 손 닿는 자리에 다른 사람</b><span>손잡기는 옆 한 칸·아래 세 칸 안에서 가장 가까운 사람을 끌어올린다. 다른 사람이 그 안에 서 있으면 그쪽이 올라온다 — 두 칸 물러선다.</span><span class="why">검사기가 곁 사람을 본다.</span></div>
+  <h3>검사기</h3>
+  <div class="verb"><b>실전 검사기</b><span><code>test/coop-play.mjs</code>. 풀이 원문(<code>test/coop-moves.json</code>)을 엔진에서 키로 실행한다. 넷을 한 세상에서 굴리되 움직이는 한 명만 진짜 물리, 나머지는 그 자리에 선 남 — 남의 물리는 그 사람 화면 것이니 서 있는 자리와 떨어지는 것만 흉내 낸다.</span><span class="why">판마다 몇 초에 깨지는지도 남는다 (위 표).</span></div>
+<div class="verb"><b>칸 검사기(solve.py) 규칙 다섯</b><span>열쇠는 닿으면 집는다 · 포탈은 지나가면 들어간다 · 내려뛰기는 발판을 뚫지 못한다 · 손잡기 곁에 다른 사람이 있으면 그쪽이 끌려온다 · 무빙워크 위 상자는 혼자 간다(ride).</span><span class="why">어림값 검사가 엔진과 같은 말을 하게.</span></div>
+<div class="verb"><b>넷 세상 검사(coop-net.mjs)</b><span>방장 1 + 손님 3, 세상 넷, 꾸러미를 50ms 지연으로 주고받는다. 손님이 자기 물리로 걷고, 방장 스냅샷(pack/unpack)으로 상자·열쇠·삭은 발판을 받고, 손잡기·밀기·출구 부탁이 방장을 거쳐 중계된다. 한 명씩 하는 동작(걷기·사다리·리프트·열쇠·포탈·누름판·손잡기)은 지연을 넣어도 넘어간다.</span><span class="why">다만 봇은 한 명씩 움직인다 — 둘이 한 상자를 동시에 밀거나 사람 계단을 쌓는 진짜 동시 동작은 넷이 붙어야 안다.</span></div>
+</section>
+
+<footer>
+  <div>조사한 곳 — <a href="https://en.wikipedia.org/wiki/Pico_Park">Wikipedia: Pico Park</a> · <a href="https://picoparkgame.com/en/pp1/">피코파크 공식</a> ·
+       <a href="https://namu.wiki/w/%EC%A3%BC%ED%99%A9%EB%B2%84%EC%84%AF%EC%9D%98%20%EC%86%8C%EA%B0%9C%ED%8C%85">나무위키: 주황버섯의 소개팅</a> (맵 사진 1-1~1-8, 2-1~2-4)</div>
+  <div>열네 판은 조각 DSL 로 쌓았고, 풀이 639걸음을 지형에 한 걸음씩 대서 확인한 뒤 실제 엔진에서 키를 눌러 다시 깼다. 자료는 리포 <code>docs/넷이서/</code>, 실전 검사는 <code>test/coop-play.mjs</code>.</div>
+</footer>
+</div>
+
+<script>
+const STAGES = [{"art": "############################################################################################################\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#....O...a.................................................................................................#\n#.==========H...................................#..........................................................#\n#...........H...................................#..........................................................#\n#...........H...................................#..........................................................#\n#...........H.====..====....====....====....============....====....====....====...........................#\n#...........H..............................................................................................#\n#...........H...................................................................####.......................#\n#...........H...............................................................########.......................#\n#...........H...........................................................############.......................#\n#...........HA......................................................################.......................#\n#...........HA..................................................####################.......................#\n#...........HA......1.2.3.4.................................########################....................{..#\n############################################################################################################\n############################################################################################################\n############################################################################################################", "notes": [[4, 17, "버섯 집"], [40, 17, "→ 계단으로"], [72, 9, "← 위로 돌아오기"], [96, 17, "← 통!"], [3, 5, "벼랑 위 포탈"]]}, {"art": "####################################\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..............................O.{.#\n#.........................##########\n#.........................##########\n#.........................##########\n#...................x.....##########\n#...............####################\n#...............####################\n#..1.2.3.4..x...####################\n####################################\n####################################\n####################################", "notes": [[4, 16, "텃밭 · 물뿌리개"], [27, 10, "언덕 — 통이 굴러 내려온다"]]}, {"art": "####################################\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#.............................r....#\n#.....######################RRRRR..#\n#..................................#\n#.###..............................#\n#.###............b.................#\n#.###...........###.....R........B.#\n#.###...........###.....R........B.#\n#.###.1.2.3.4...###.....R........BO#\n####################################\n####################################\n####################################", "notes": [[14, 10, "다락"], [18, 17, "복도 — 빨간 블록이 막는다"], [29, 9, "빨간 열쇠 · 바닥도 빨갛다"], [15, 13, "선반 위 파란 열쇠"]]}, {"art": "############################################################################################################\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#.............................P.............................#...............................Q..............#\n#.............................P.............................#...............................Q..............#\n#...1.2.3.4.........p.........P.............................#........................q......Q.......O...{..#\n####################################################################~~~~~~~~################################\n####################################################################^^^^^^^^################################\n############################################################################################################", "notes": [[22, 17, "누름판 — 밟는 동안만"], [58, 14, "담벼락"], [70, 17, "깜빡이는 징검다리 — 2초 켜지고 2초 꺼진다"], [87, 17, "둘째 누름판"], [101, 16, "골목 끝 포탈"]]}, {"art": "############################################################################################################\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#.................................................#........................................................#\n#.................................................#........................................................#\n#.................................................#...................y.................b..................#\n############H#######################################################YYYYY############################......#\n#...........H..............................................................................................#\n#...........H..............................................................................................#\n#...........H..............................................................................................#\n#...........H..............................................................................................#\n#...........H..............................................................................................#\n#...........H.................Y.............................Y........................B.....................#\n#...1.2.3.4.H.................Y.............................Y........................B..............O...{..#\n############################################################################################################\n############################################################################################################\n############################################################################################################", "notes": [[20, 9, "2층 복도 · 사물함"], [40, 17, "1층 복도 — 노란 블록 둘, 파란 블록 하나"], [68, 8, "노란 바닥 위 노란 열쇠"], [88, 8, "파란 열쇠"], [100, 16, "교문"]]}, {"art": "####################################\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#...........................p......#\n#..........#####################H###\n#...............................H..#\n#...............................H..#\n#...............................H..#\n#...............................H..#\n#...................#...........H..#\n#...................#...........H..#\n#...................#...........H..#\n#.........|###############....######\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|.....q..................#\n#.........|#########....############\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|........................#\n#.........|...........P..Q.........#\n#.........|...........P..Q.........#\n#..1.2.3.4|...........P..Q.......O.#\n###########################~~~~#####\n###########################^^^^#####\n####################################", "notes": [[12, 10, "4층 · 옥상 출입문"], [12, 18, "3층"], [12, 28, "2층"], [12, 39, "1층 로비"], [27, 38, "체육관 앞 배수로"]]}, {"art": "############################################################################################################\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#...........................................................---------------------..........................#\n#...................................................................................{......................#\n#................................................................................##########.......P...###..#\n#...................---------------------........................................##########.......P...###..#\n#...1.2.3.4..............................................S.......................##########...x.p.P.x.###.O#\n####################.....................###################.....................###########################\n####################^^^^^^^^^^^^^^^^^^^^^###################^^^^^^^^^^^^^^^^^^^^^###########################\n############################################################################################################", "notes": [[30, 20, "연못"], [70, 20, "연못"], [54, 16, "트램펄린"], [82, 14, "가방이 굴러 떨어진다"], [105, 16, "운동장 포탈"]]}, {"art": "############################################################################################################\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#.......................................#..................................................................#\n#.......................................#..................................................................#\n#.......................................#......................................................x...........#\n#....#H###########################################################################################H##......#\n#.....H.........###...............................................................................H........#\n#.....H.........###...............................................................................H........#\n#.....H.........###...............................................................................H........#\n#.....H...B.....###...............................................................................H........#\n#.....H...B.....###...............................................................................H........#\n#..1.2H3.4B...O.###...............................................................................H.....{..#\n###########################################################..b..##############~~~~~~~#######################\n##############################################################################^^^^^^^#######################\n############################################################################################################", "notes": [[11, 14, "출구가 코앞"], [30, 10, "2층 복도"], [58, 21, "배수로 · 파란 열쇠"], [78, 17, "깜빡이는 다리"], [90, 17, "가방 ←"]]}, {"art": "####################################\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#..................................#\n#......................O...........#\n#...................#######........#\n#...................#######........#\n#...................#######........#\n#####H##############################\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.Y...........................#\n#....H.Y.............y.............#\n####################YYYY######H#####\n#.............................H....#\n#.............................H....#\n#.............................H....#\n#.............................H....#\n#.............................H....#\n#.............................H....#\n#.................#...........H....#\n#.................#...........H....#\n#.................#...........H....#\n#####H##############################\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n#....H.............................#\n##############################H#####\n#.............................H....#\n#.............................H....#\n#.............................H....#\n#.............................H....#\n#.............................H....#\n#.............................H....#\n#...........................########\n#...........................########\n#..1.2.3.4........x.........########\n####################################\n####################################\n####################################", "notes": [[8, 55, "상가 입구"], [8, 45, "2층"], [20, 33, "3층 — 칸막이"], [24, 25, "4층 — 바닥이 노랗다"], [8, 15, "옥상 · 물탱크 위 포탈"]]}, {"art": "########################################################################################################################\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#.............................................................................................................r........#\n#...........................................................................................................#####......#\n#...........................................................................................................#####......#\n#...........................................................................................................#####......#\n########################################################################################################H###############\n#.......................................................................................................H..............#\n#.......................................................................................................H..............#\n#.......................................................................................................H..............#\n#.......................................................................................................H..............#\n#.......................................................................................................H..............#\n#.......................................................................................................H..............#\n#.......................................................................................................H..............#\n#............................................x......................................................{...H..............#\n##############################H#####################..##########################~~~~~~~#############H###################\n#.............................H.....................................................................H..................#\n#.............................H.....................................................................H..................#\n#.............................H.....................................................................H..................#\n#.............................H.....................................................................H..................#\n#.............................H.....................................................................H..................#\n#.............................H.......................#.............................................H....P..R..........#\n#.............................H.......................#.............................................H....P..R..........#\n#..1.2.3.4....................H.......................#.........p.....x.............................H....P..R...O......#\n########################################################################################################################", "notes": [[8, 15, "철제 선반"], [56, 25, "\"3층 사무실 →\""], [80, 16, "삭아서 깜빡이는 발판"], [98, 15, "통이 굴러온다"], [108, 4, "사무실 단 위 — 빨간 열쇠"]]}, {"art": "########################################################################\n#......................................................................#\n#......................................................................#\n#......................................................................#\n#......................................................................#\n#......................................................................#\n#......................................................................#\n#......................................................................#\n#......................................................................#\n#......................................................................#\n#......................................................................#\n#......................................................................#\n#.....................p...................q............................#\n#..................H#####..............H#####..........................#\n#..................H#####..............H#####..........................#\n#..................H...................H...............................#\n#..................H...................H..........P.....#..............#\n#..................H...................H..........Q.....#..............#\n#..1.2.3.4.........H...................H..........P.....#.........{.O..#\n############################################################~~~~~#######\n############################################################^^^^^#######\n########################################################################", "notes": [[21, 11, "급수탑 A"], [41, 11, "급수탑 B"], [47, 14, "이중 셔터"], [56, 13, "방음벽 세 칸"], [60, 17, "깜빡이는 다리"], [67, 16, "지하철 입구"]]}, {"art": "########################################################################################################################\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................#...............................#\n#......................................................................................#...............................#\n#......................................................................................#..r.............{..............#\n####################################################################################H###############H###################\n#...................................................................................H...............H..................#\n#...................................................................................H...............H..................#\n#...................................................................................H...............H..................#\n#...................................................................................H...............H..................#\n#......................................................................x............H...............H..................#\n#.....................................................................RRR...........H..........P....H..................#\n#...................................................................................H..........P....H..................#\n#......................................................................p............H..........P....H..................#\n########################################H###################~~~~~###########################################H###########\n#.......................................H...................................................................H..........#\n#.......................................H...................................................................H..........#\n#.......................................H...................................................................H..........#\n#.......................................H...................................................................H......O...#\n#.......................................H...................................................................H...######.#\n#.........................Q.............H...................................................................H...######.#\n#.........................Q.............H...................................................................H...######.#\n#..1.2.3.4..X.........q...Q.............H.................................................................x.H...######.#\n########################################################################################################################", "notes": [[8, 24, "주차장"], [60, 13, "빨간 선반 위 상자 — 열쇠를 집으면 떨어진다"], [88, 5, "옥상 · 빨간 열쇠"], [60, 17, "깜빡이는 다리"], [112, 21, "옥외 계단 위 포탈 · 120초"]]}, {"art": "############################################################################################################\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#..........................................................................................................#\n#.............................................................................U.q....x.....................#\n#...........................................................................############...................#\n#..........................................................................................................#\n#..........................................................................................................#\n#.............................................................u............................................#\n#..................................#.....................P...===.............................Q.............#\n#..................................#.....................P...................................Q.............#\n#..1.2.3.4.........................#.......#p.....x......P...................................Q.......O.....#\n############>>>>>>>>>>#####vvvv#############<<<<<###########################################################\n###########################^^^^#############################################################################\n############################################################################################################", "notes": [[4, 17, "개찰구"], [14, 17, "무빙워크 →"], [26, 17, "삭은 판자 — 한 명씩"], [45, 21, "← 역방향"], [60, 14, "어깨로만 닿는 선반 · 포탈"], [77, 10, "승강장 위 선반"], [99, 16, "승강장 포탈"]]}, {"art": "########################################################################################################################\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#......................................................................................................................#\n#.....................................................................X....w....................r......................#\n################################################################H###################~~~~~~####RRRRR#####################\n#...............................................................H......................................................#\n#...............................................................H......................................................#\n#...............................................................H......................................................#\n#...............................................................H......................................................#\n#...............................................................H......................................................#\n#.................................................#.............H...................................R..................#\n#.................................................#.............H...................................R..................#\n#.................................................#.............H...................................R..................#\n##############################H###vvvvv###############<<<<<##########################################H##################\n#.............................H..........###########################################################.H.................#\n#.............................H..........###########################################################.H.................#\n#.............................H..........###########################################################.H.................#\n#.............................H..........###########################################################.H.................#\n#.............................H..........###########################################################.H.................#\n#.......................Q.....H..........###########################################################.H.....P...........#\n#.......................Q.....H..........###########################################################.H..W..P...........#\n#..1.2.3.4X.........q...Q.....H..........###########################################################.H..p..P....O......#\n########################################################################################################################", "notes": [[4, 25, "종점 승강장"], [44, 22, "지하 기계실"], [34, 16, "삭은 통로"], [70, 6, "둘이 밀어 포탈에"], [104, 22, "포탈 출구 — 상자가 떨어진다"], [85, 7, "깜빡이는 다리"], [94, 6, "빨간 바닥 · 열쇠"], [110, 24, "종점 포탈 · 150초"]]}];
+const COL = {'#':'#141210','=':'#6b665c','H':'#8a7a5a','|':'#8a7a5a','-':'#2f6fb0','^':'#d02f22','x':'#6f4a2c','X':'#4f3320',
+  'r':'#d02f22','y':'#c9a200','b':'#2f6fb0','R':'#e0857c','Y':'#e2cf6a','B':'#8fb3dc',
+  'a':'#3f8f56','p':'#3f8f56','q':'#3f8f56','A':'#7fbf95','P':'#7fbf95','Q':'#7fbf95',
+  'u':'#2f6fb0','U':'#2f6fb0','w':'#2f6fb0','W':'#2f6fb0','O':'#8a5bb5','{':'#d97b1f','}':'#d97b1f','S':'#2f9c9c','v':'#b8912a','~':'#b8912a','>':'#2f6fb0','<':'#2f6fb0'};
+const SHIRT = ['#2f6fb0','#3f8f56','#d97b1f','#8a5bb5'];
+const T = 9;
+function draw(cv, st) {
+  const rows = st.art.split('\n'); const W = rows[0].length, H = rows.length;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = W*T*dpr; cv.height = H*T*dpr; cv.style.width = (W*T)+'px'; cv.style.height = (H*T)+'px';
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const dark = (matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light') || document.documentElement.dataset.theme === 'dark';
+  const paper = dark ? '#1c1917' : '#f4efe2', ink = dark ? '#f2ece0' : '#141210';
+  g.fillStyle = paper; g.fillRect(0,0,W*T,H*T);
+  g.strokeStyle = dark ? 'rgba(242,236,224,.09)' : 'rgba(20,18,16,.09)'; g.lineWidth = 1;
+  for (let x = 36; x < W; x += 36) { g.beginPath(); g.moveTo(x*T+.5, 0); g.lineTo(x*T+.5, H*T); g.stroke(); }
+  for (let y = 22; y < H; y += 22) { g.beginPath(); g.moveTo(0, y*T+.5); g.lineTo(W*T, y*T+.5); g.stroke(); }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const ch = rows[y][x]; if (ch === '.') continue;
+    const X = x*T, Y = y*T;
+    if ('1234'.includes(ch)) { const i = +ch-1; g.fillStyle = SHIRT[i]; g.strokeStyle = ink; g.lineWidth = 1.2;
+      g.beginPath(); g.roundRect(X+T*0.1, Y-T*0.3, T*0.8, T*1.3, 2); g.fill(); g.stroke(); continue; }
+    g.fillStyle = (ch === '#') ? (dark ? '#c9c1b2' : '#141210') : (COL[ch] || '#999');
+    if (ch === '=') { g.fillRect(X, Y+T*0.3, T, T*0.4); continue; }
+    if (ch === 'H' || ch === '|') { g.fillRect(X+1, Y, 2, T); g.fillRect(X+T-3, Y, 2, T); g.fillRect(X+1, Y+T/2-1, T-2, 2); continue; }
+    if (ch === '~') { g.fillRect(X+1, Y+T*0.3, T-2, T*0.4); g.fillStyle = paper; g.fillRect(X+T*0.45, Y+T*0.3, 1.2, T*0.4); continue; }
+    if (ch === '-') { g.setLineDash([2,2]); g.strokeStyle = COL['-']; g.beginPath(); g.moveTo(X, Y+T/2); g.lineTo(X+T, Y+T/2); g.stroke(); g.setLineDash([]); continue; }
+    if (ch === '^') { g.beginPath(); g.moveTo(X, Y+T); g.lineTo(X+T/2, Y+2); g.lineTo(X+T, Y+T); g.fill(); continue; }
+    if ('uUwWO'.includes(ch)) { g.beginPath(); g.ellipse(X+T/2, Y+T/2, T*0.42, T*0.62, 0, 0, Math.PI*2); g.fill();
+      if (ch === 'O') { g.fillStyle = paper; g.font = '700 6px sans-serif'; g.textAlign='center'; g.fillText('↑', X+T/2, Y+T/2+2.5); } continue; }
+    if ('ryb'.includes(ch)) { g.beginPath(); g.arc(X+T/2, Y+T/2, T*0.3, 0, Math.PI*2); g.fill(); g.fillRect(X+T/2, Y+T/2-1, T*0.45, 2); continue; }
+    if ('{}'.includes(ch)) { g.beginPath(); g.arc(X+T/2, Y+T/2, T*0.45, 0, Math.PI*2); g.fill(); continue; }
+    g.fillRect(X, Y, T, T);
+    if ('RYB'.includes(ch)) { g.strokeStyle = ink; g.lineWidth = .8; g.strokeRect(X+.5, Y+.5, T-1, T-1); }
+    if ('xX'.includes(ch)) { g.strokeStyle = paper; g.lineWidth = 1; g.beginPath(); g.moveTo(X+T/2, Y); g.lineTo(X+T/2, Y+T); g.moveTo(X, Y+T/2); g.lineTo(X+T, Y+T/2); g.stroke(); }
+    if ('apq'.includes(ch)) { g.fillStyle = paper; g.fillRect(X+2, Y+T*0.55, T-4, T*0.3); }
+  }
+  g.fillStyle = dark ? 'rgba(242,236,224,.6)' : 'rgba(107,102,92,.95)'; g.font = '500 8px "IBM Plex Sans KR", sans-serif'; g.textAlign = 'left';
+  for (const [x, y, text] of st.notes) g.fillText(text, x*T, y*T + 6);
+}
+document.querySelectorAll('canvas[data-stage]').forEach(cv => draw(cv, STAGES[+cv.dataset.stage]));
+
+const MOMENT = {"stage": 4, "p": {"1": [74, 10], "2": [49, 10], "3": [8, 18], "4": [27, 18]}, "host": "1"};
+function drawView(cv, st, me) {
+  const rows = st.art.split('\n'); const W = rows[0].length, H = rows.length;
+  const VW = 36, VH = 22, T = 12;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = VW*T*dpr; cv.height = VH*T*dpr; cv.style.aspectRatio = (VW*T) + '/' + (VH*T);
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const dark = (matchMedia('(prefers-color-scheme: dark)').matches && document.documentElement.dataset.theme !== 'light') || document.documentElement.dataset.theme === 'dark';
+  const paper = dark ? '#1c1917' : '#faf7ee', ink = dark ? '#f2ece0' : '#141210', pencil = dark ? '#a29a8c' : '#6b665c';
+  const P = MOMENT.p; const [mx, my] = P[me];
+  // 카메라 — 내 자리 중심, 판 끝에서 멈춘다
+  let cx = Math.round(mx - VW/2 + 0.5), cy = Math.round(my - VH/2 + 2);
+  cx = Math.max(0, Math.min(W - VW, cx)); cy = Math.max(0, Math.min(H - VH, cy));
+  // 남의 작업 화면 위 — 흐릿한 문서 몇 줄로 「투명한 창」임을 보인다
+  g.fillStyle = paper; g.fillRect(0, 0, VW*T, VH*T);
+  g.fillStyle = dark ? 'rgba(242,236,224,.05)' : 'rgba(20,18,16,.05)';
+  for (let i = 0; i < 9; i++) g.fillRect(40, 60 + i*22, 120 + ((i*53)%180), 6);
+  g.fillRect(40, 40, 200, 10);
+  // 지형
+  for (let y = 0; y < VH; y++) for (let x = 0; x < VW; x++) {
+    const ch = (rows[cy+y] || '')[cx+x]; if (!ch || ch === '.' || '1234'.includes(ch)) continue;
+    const X = x*T, Y = y*T;
+    g.fillStyle = (ch === '#') ? ink : (COL[ch] || pencil);
+    if (ch === '=') { g.fillRect(X, Y+T*0.3, T, T*0.4); continue; }
+    if (ch === 'H' || ch === '|') { g.fillRect(X+2, Y, 2, T); g.fillRect(X+T-4, Y, 2, T); g.fillRect(X+2, Y+T/2-1, T-4, 2); continue; }
+    if (ch === '^') { g.beginPath(); g.moveTo(X, Y+T); g.lineTo(X+T/2, Y+2); g.lineTo(X+T, Y+T); g.fill(); continue; }
+    if ('uUwWO'.includes(ch)) { g.beginPath(); g.ellipse(X+T/2, Y+T/2, T*0.42, T*0.7, 0, 0, Math.PI*2); g.fill(); continue; }
+    if ('ryb'.includes(ch)) { g.beginPath(); g.arc(X+T/2, Y+T/2, T*0.3, 0, Math.PI*2); g.fill(); g.fillRect(X+T/2, Y+T/2-1, T*0.5, 2); continue; }
+    if (ch === '#') { g.fillRect(X, Y, T, T); g.strokeStyle = paper; g.lineWidth = .6; g.beginPath(); g.moveTo(X+2, Y+T-2); g.lineTo(X+T-2, Y+2); g.stroke(); continue; }
+    g.fillRect(X, Y, T, T);
+    if ('RYB'.includes(ch)) { g.strokeStyle = ink; g.lineWidth = 1; g.strokeRect(X+.5, Y+.5, T-1, T-1); }
+    if ('xX'.includes(ch)) { g.strokeStyle = paper; g.lineWidth = 1; g.beginPath(); g.moveTo(X+T/2, Y); g.lineTo(X+T/2, Y+T); g.moveTo(X, Y+T/2); g.lineTo(X+T, Y+T/2); g.stroke(); }
+  }
+  // 사람 — 화면 안에 있는 사람만 그린다
+  const names = {1:'도현', 2:'범창', 3:'민지', 4:'수아'};
+  const floorOf = (y) => y <= 11 ? '2층' : '1층';
+  for (const who of ['1','2','3','4']) {
+    const [px, py] = P[who]; const i = +who - 1;
+    const vx = px - cx, vy = py - cy;
+    if (vx < 0 || vx >= VW || vy < 0 || vy >= VH) {
+      // 화면 밖 — 가장자리 화살표. 그 사람 쪽을 가리키고, 옷 색 네모와 몇 층인지 적는다
+      const ax = Math.max(T, Math.min(VW*T - T, (vx + .5)*T)), ay = Math.max(T*1.4, Math.min(VH*T - T, (vy + .5)*T));
+      const dx = Math.sign(vx < 0 ? -1 : vx >= VW ? 1 : 0), dy = vy < 0 ? -1 : vy >= VH ? 1 : 0;
+      g.save(); g.translate(ax, ay); g.rotate(Math.atan2(dy, dx || (dy ? 0 : 1)));
+      g.fillStyle = SHIRT[i]; g.beginPath(); g.moveTo(8, 0); g.lineTo(-4, -6); g.lineTo(-4, 6); g.closePath(); g.fill(); g.restore();
+      g.fillStyle = SHIRT[i]; g.strokeStyle = ink; g.lineWidth = 1;
+      const bx = ax - dx*22 - 5, by = ay - 8 + (dy < 0 ? 14 : dy > 0 ? -14 : 0);
+      g.beginPath(); g.roundRect(bx, by, 10, 15, 2); g.fill(); g.stroke();
+      g.fillStyle = ink; g.font = '600 9px "IBM Plex Sans KR", sans-serif'; g.textAlign = dx > 0 ? 'right' : 'left';
+      g.fillText(names[who] + ' · ' + floorOf(py) + ' ' + Math.abs(px - mx) + '칸', bx + (dx > 0 ? -4 : 14), by + 11);
+      continue;
+    }
+    const X = (vx + .5)*T, feet = (vy + 1)*T;
+    const bw = T*0.8, bh = T*1.2;
+    g.fillStyle = SHIRT[i]; g.strokeStyle = ink; g.lineWidth = 1.4;
+    g.beginPath(); g.roundRect(X - bw/2, feet - bh - 2, bw, bh, 2.5); g.fill(); g.stroke();
+    g.strokeStyle = ink; g.lineWidth = 1.2; g.beginPath(); g.moveTo(X-3, feet-2); g.lineTo(X-3, feet); g.moveTo(X+3, feet-2); g.lineTo(X+3, feet); g.stroke();
+    g.fillStyle = ink; g.fillRect(X-2.5, feet-bh+3, 1.2, 2.4); g.fillRect(X+1.3, feet-bh+3, 1.2, 2.4);
+    // 머리 표
+    g.strokeStyle = SHIRT[i]; g.lineWidth = 1.6; g.beginPath();
+    if (i === 0) { g.moveTo(X-1, feet-bh-2); g.quadraticCurveTo(X, feet-bh-8, X+3, feet-bh-6); }
+    if (i === 1) { g.arc(X-2.5, feet-bh+4, 2.2, 0, Math.PI*2); g.moveTo(X+3.7, feet-bh+4); g.arc(X+1.5, feet-bh+4, 2.2, 0, Math.PI*2); }
+    if (i === 2) { g.moveTo(X-bw/2-1.5, feet-bh+5); g.lineTo(X-bw/2-1.5, feet-bh-1); g.quadraticCurveTo(X, feet-bh-5, X+bw/2+1.5, feet-bh-1); g.lineTo(X+bw/2+1.5, feet-bh+5); }
+    if (i === 3) { g.lineWidth = 3; g.moveTo(X-bw/2+1, feet-bh-1); g.quadraticCurveTo(X, feet-bh-5, X+bw/2-1, feet-bh-1); g.moveTo(X+1, feet-bh-1.5); g.lineTo(X+bw/2+4, feet-bh-2.5); }
+    g.stroke();
+    // 이름표 — 내 것은 빨간 밑줄, 방장은 왕관
+    g.fillStyle = SHIRT[i]; g.font = '700 9px "IBM Plex Sans KR", sans-serif'; g.textAlign = 'center';
+    const ty = feet - bh - 12; g.fillText(names[who], X, ty);
+    if (who === MOMENT.host) { g.fillStyle = SHIRT[i]; g.font = '700 8px sans-serif'; g.fillText('♛', X - g.measureText(names[who]).width/2 - 7, ty); }
+    if (who === me) { g.strokeStyle = '#d02f22'; g.lineWidth = 1.4; g.beginPath(); g.moveTo(X-12, ty+3); g.lineTo(X+12, ty+3); g.stroke(); }
+  }
+  // 글자판 — 왼쪽 위 판 이름, 오른쪽 위 방
+  const card = (x, y, w, h) => { g.fillStyle = dark ? 'rgba(28,25,23,.92)' : 'rgba(250,247,238,.92)'; g.fillRect(x, y, w, h); g.strokeStyle = pencil; g.lineWidth = .6; g.strokeRect(x+.5, y+.5, w-1, h-1); };
+  card(8, 8, 118, 26); g.fillStyle = '#d02f22'; g.fillRect(12, 12, 1.5, 18);
+  g.fillStyle = ink; g.textAlign = 'left'; g.font = '800 11px "Gothic A1", sans-serif'; g.fillText('2-1 두 길', 20, 21);
+  g.fillStyle = pencil; g.font = '600 8px "IBM Plex Sans KR", sans-serif'; g.fillText('학교 · 되감기 0 · 넷이 다 모여야 끝', 20, 30);
+  card(VW*T - 96, 8, 88, 26); g.fillStyle = ink; g.font = '600 12px "IBM Plex Mono", monospace'; g.fillText('K3P9', VW*T - 88, 21);
+  g.fillStyle = pencil; g.font = '600 8px "IBM Plex Sans KR", sans-serif'; g.fillText('4명 · ' + (me === MOMENT.host ? '방장' : '손님'), VW*T - 88, 30);
+}
+document.querySelectorAll('canvas[data-view]').forEach(cv => drawView(cv, STAGES[MOMENT.stage], cv.dataset.view));
+
+</script>

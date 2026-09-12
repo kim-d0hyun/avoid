@@ -652,4 +652,18 @@ say('남의 발 — 사다리를 타고 내려오는 사람은 꼭대기에 붙�
   note(`발 ${(fy / T).toFixed(2)}줄 (꼭대기 11.00)`);
 }
 
+
+say('상자 위의 사람 — 상자가 무빙워크에 실려 가면 같이 간다');
+{
+  const world = make('무빙워크');
+  const box = world.bag.boxes.find((x) => Math.round(x.x / T - 0.5) === 50);
+  box.x = 48.5 * T;                                      // 역방향 무빙워크 위
+  setPos(world, 48, 17); world.player.air = world.groundY - 18 * T; world.player.grounded = true;   // 상자 위
+  tick(world, 2, {});
+  const x0 = world.player.x;
+  tick(world, 30, {});
+  ok('상자가 왼쪽으로 갔다', box.x < 48.5 * T - 40);
+  ok('위에 선 사람도 같이 갔다 (상자 위에 그대로)', Math.abs((world.player.x - x0) - (box.x - 48.5 * T)) < 6 && world.player.grounded);
+}
+
 done('넷이서');

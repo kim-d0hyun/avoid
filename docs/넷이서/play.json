@@ -6,6 +6,8 @@
   "ok": true,
   "steps": 64,
   "seconds": 89.8,
+  "parallel": 28.8,
+  "limit": 0,
   "fail": null
  },
  {
@@ -15,6 +17,8 @@
   "ok": true,
   "steps": 32,
   "seconds": 26.5,
+  "parallel": 10.4,
+  "limit": 0,
   "fail": null
  },
  {
@@ -23,7 +27,9 @@
   "world": "뒷마당",
   "ok": true,
   "steps": 14,
-  "seconds": 15.3,
+  "seconds": 15.4,
+  "parallel": 9,
+  "limit": 0,
   "fail": null
  },
  {
@@ -33,6 +39,8 @@
   "ok": true,
   "steps": 12,
   "seconds": 41.1,
+  "parallel": 16,
+  "limit": 0,
   "fail": null
  },
  {
@@ -42,6 +50,8 @@
   "ok": true,
   "steps": 20,
   "seconds": 79.7,
+  "parallel": 28.4,
+  "limit": 0,
   "fail": null
  },
  {
@@ -51,6 +61,8 @@
   "ok": true,
   "steps": 17,
   "seconds": 29.3,
+  "parallel": 13.7,
+  "limit": 0,
   "fail": null
  },
  {
@@ -60,6 +72,8 @@
   "ok": true,
   "steps": 69,
   "seconds": 145,
+  "parallel": 50,
+  "limit": 0,
   "fail": null
  },
  {
@@ -68,7 +82,9 @@
   "world": "학교",
   "ok": true,
   "steps": 31,
-  "seconds": 89.2,
+  "seconds": 89.3,
+  "parallel": 72.7,
+  "limit": 0,
   "fail": null
  },
  {
@@ -78,6 +94,8 @@
   "ok": true,
   "steps": 92,
   "seconds": 134.5,
+  "parallel": 45,
+  "limit": 0,
   "fail": null
  },
  {
@@ -86,7 +104,9 @@
   "world": "도시",
   "ok": true,
   "steps": 58,
-  "seconds": 111.1,
+  "seconds": 111,
+  "parallel": 40.9,
+  "limit": 0,
   "fail": null
  },
  {
@@ -95,7 +115,9 @@
   "world": "도시",
   "ok": true,
   "steps": 13,
-  "seconds": 29.5,
+  "seconds": 29.6,
+  "parallel": 10.6,
+  "limit": 0,
   "fail": null
  },
  {
@@ -105,6 +127,8 @@
   "ok": true,
   "steps": 55,
   "seconds": 107.5,
+  "parallel": 37.1,
+  "limit": 120,
   "fail": null
  },
  {
@@ -113,7 +137,9 @@
   "world": "지하철",
   "ok": true,
   "steps": 52,
-  "seconds": 81,
+  "seconds": 80.9,
+  "parallel": 25.1,
+  "limit": 0,
   "fail": null
  },
  {
@@ -122,7 +148,9 @@
   "world": "지하철",
   "ok": true,
   "steps": 62,
-  "seconds": 117.9,
+  "seconds": 117.8,
+  "parallel": 37.4,
+  "limit": 150,
   "fail": null
  }
 ]
