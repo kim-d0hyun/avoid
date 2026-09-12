@@ -263,7 +263,8 @@ function settleOthers(world) {
     const prev = o.fyPrev;
     o.fyPrev = fy;
     if (o.dead || o.waiting || prev === undefined || fy <= prev + 0.01) continue;
-    const floor = floorBelow(world, o.x, prev, fy, HALF - 2, { people: false });
+    // 사다리 꼭대기는 여기서 바닥이 아니다 — 그걸 바닥으로 치면 사다리를 내려오는 동료가 꼭대기에 붙어 안 내려온다.
+    const floor = floorBelow(world, o.x, prev, fy, HALF - 2, { people: false, ladders: false });
     if (floor !== null && floor < fy) { o.air = o.groundY - floor; o.vyDraw = 0; o.fyPrev = floor; }
   }
 }
