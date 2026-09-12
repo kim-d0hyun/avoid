@@ -1137,9 +1137,9 @@ export default {
       ctx.save(); ctx.translate(ax, ay); ctx.rotate(ang);
       stroke(ctx, [[10, 0], [-4, -7], [-4, 7]], { width: 2, color, seed: o.id, amp: 0.4, close: true, halo: false, fill: color });
       ctx.restore();
-      const dxT = Math.round(Math.abs(o.x - me.x) / T);
+      // 누구인지와 어느 쪽인지만. 몇 칸인지는 안 알려 준다 — 화살표가 방향을, 층이 위아래를 말해 준다.
       const floor = Math.max(1, Math.round((o.air) / (9 * T)) + 1);
-      const info = `${o.name || '?'} · ${b.h > 24 ? `${floor}층 ` : ''}${dxT}칸`;
+      const info = `${o.name || '?'}${b.h > 24 ? ` · ${floor}층` : ''}`;
       const tx = ax + (sx < ax ? 16 : -16);
       text(ctx, info, tx, ay + 4, { font: '600 11px "Apple SD Gothic Neo", sans-serif', color, align: sx < ax ? 'left' : 'right', halo: 3 });
     }
