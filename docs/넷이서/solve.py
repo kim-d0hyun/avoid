@@ -55,11 +55,24 @@ class Run:
                 if self.g.get(x, ny) == '^': raise Bad(f'{who} 가 떨어져 가시에 닿는다 ({x},{ny})')
                 self.p[who] = (x, ny); self.say(who, f'발판이 사라져 줄{ny}로 떨어진다')
 
+    # ── 열쇠는 닿으면 집는다 (엔진이 그렇다). 지나가는 길에 있으면 걷기는 실패 — take 로 집거나 hop 으로 넘는다.
+    def key_at(self, x, y):
+        for cy in (y, y - 1):
+            ch = self.g.get(x, cy)
+            if ch in 'ryb' and ch not in self.opened: return ch
+        return None
+    def touch(self, who):
+        x, y = self.p[who]; k = self.key_at(x, y)
+        if k: self.take(who, k)
+
     # ── 걸음 ──
     def walk(self, who, x1):
         x, y = self.p[who]; step = 1 if x1 > x else -1; gap = 0; cx = x
         while cx != x1:
             cx += step
+            k = self.key_at(cx, y)
+            if k and cx != x1: raise Bad(f'{who} 걷기 {x}→{x1}: {cx}칸의 {k} 열쇠에 닿아 집게 된다 — take 로 집거나 hop 으로 넘는다')
+            if self.g.get(cx, y) in 'uUwW' and cx != x1: raise Bad(f'{who} 걷기 {x}→{x1}: {cx}칸의 포탈에 들어가 버린다 — portal 로 타거나 hop 으로 넘는다')
             if not self.free(cx, y):
                 low = (self.solid(cx, y) and not self.solid(cx, y - 1) and not self.solid(cx, y - 2)
                        and self.g.get(cx, y) != '^')
@@ -72,14 +85,32 @@ class Run:
                 if gap > JUMP_ACROSS: raise Bad(f'{who} 걷기 {x}→{x1}: {cx}칸 앞 구멍이 {gap}칸')
         if not self.support(x1, y): raise Bad(f'{who} 걷기 끝 {x1}에 발판이 없다')
         self.p[who] = (x1, y); self.say(who, f'{"→" if step > 0 else "←"} {x1}칸까지 걷는다')
+        self.touch(who)
+
+    def hop(self, who, x1):
+        """제자리 높이로 뛰어 넘는다 — 길에 놓인 열쇠를 안 집고 지나가려고. 옆으로 네 칸까지, 머리 위가 비어야."""
+        x, y = self.p[who]; step = 1 if x1 > x else -1
+        if abs(x1 - x) > JUMP_ACROSS: raise Bad(f'{who} 뛰어넘기 {x}→{x1}: 옆으로 {abs(x1-x)}칸')
+        for cx in range(x + step, x1, step):
+            if self.solid(cx, y - 1) or self.solid(cx, y - 2) or self.solid(cx, y - 3):
+                raise Bad(f'{who} 뛰어넘기 {x}→{x1}: {cx}칸 위가 막혀 있다')
+        if not self.standable(x1, y): raise Bad(f'{who} 뛰어넘기 착지 ({x1},{y})에 설 수 없다')
+        self.p[who] = (x1, y); self.say(who, f'{x1}칸으로 뛰어 넘는다 — 열쇠를 안 집고')
+        self.touch(who)
 
     def jump(self, who, x1, y1, boost=0):
         x, y = self.p[who]
         if abs(x1 - x) > JUMP_ACROSS: raise Bad(f'{who} 점프 {x}→{x1}: 옆으로 {abs(x1-x)}칸')
         if y - y1 > JUMP_UP + boost: raise Bad(f'{who} 점프 ({x},{y})→({x1},{y1}): 위로 {y-y1}칸 (한도 {JUMP_UP+boost})')
+        if y1 > y:
+            # 내려뛰기 — 서 있는 발판을 뚫고 내려갈 수는 없다. 착지 기둥(x1) 이 내 발 밑줄부터 착지 줄까지 비어 있어야 한다.
+            for cy in range(y + 1, y1 + 1):
+                ch = self.g.get(x1, cy)
+                if self.solid(x1, cy) or ch in '=~v-<>S': raise Bad(f'{who} 내려뛰기 ({x},{y})→({x1},{y1}): ({x1},{cy}) 가 막는다 — 발판 가장자리 밖으로 뛰어야 한다')
         if not self.standable(x1, y1): raise Bad(f'{who} 점프 착지 ({x1},{y1})에 설 수 없다')
         self.p[who] = (x1, y1)
         self.say(who, f'({x1},{y1})로 {"올라" if y1 < y else "내려"} 뛴다' + (f' — 어깨 {boost}명' if boost else ''))
+        self.touch(who)
 
     def boost(self, who, x1, y1, on):
         x, y = self.p[who]
@@ -115,6 +146,21 @@ class Run:
         self.boxes[box] = (x1, by, w)
         for o in who: self.p[o] = (x1 - step, by)
         self.say('+'.join(who), f'{box} 를 {x1}칸까지 민다')
+
+    def ride(self, box, x1):
+        """무빙워크 위의 상자는 혼자 간다 — 그 방향의 '>' '<' 칸을 따라, 막히는 데까지."""
+        bx, by, w = self.boxes[box]
+        belt = self.g.get(bx, by + 1)
+        if belt not in '<>': raise Bad(f'{box} 가 무빙워크 위에 없다 ({bx},{by}) 밑은 {belt}')
+        step = 1 if belt == '>' else -1
+        if (x1 - bx) * step <= 0: raise Bad(f'{box} 는 무빙워크가 {"오른쪽" if step > 0 else "왼쪽"}으로 간다 — {x1}칸은 반대다')
+        cx = bx
+        while cx != x1:
+            if self.solid(cx + step, by): raise Bad(f'{box} 실려 가기: {cx+step}칸이 막혀 있다')
+            if self.g.get(cx + step, by + 1) not in '<>' and not self.solid(cx + step, by + 1): raise Bad(f'{box} 실려 가기: {cx+step}칸 밑에 바닥이 없다')
+            cx += step
+        if not self.solid(x1 + step, by) and self.g.get(x1, by + 1) in '<>': raise Bad(f'{box} 는 {x1}칸에서 안 선다 — 막는 것이 없다')
+        self.boxes[box] = (x1, by, w); self.say('', f'{box} 가 무빙워크에 실려 {x1}칸까지 간다')
 
     def portal(self, who, tag):
         x, y = self.p[who]
@@ -152,6 +198,10 @@ class Run:
         if abs(ux - x) > 1: raise Bad(f'{by_whom} 가 {who} 바로 위쫀에 없다 ({ux},{uy}) vs ({x},{y})')
         if not (0 < y - uy <= 3): raise Bad(f'{by_whom} 가 {who} 보다 1~3칸 위에 있어야 한다 ({y-uy})')
         if not self.standable(ux, uy): raise Bad(f'{by_whom} 가 설 자리가 아니다')
+        # 엔진은 손 닿는 데(옆 한 칸 · 아래 세 칸) 있는 사람 중 **가장 가까운** 사람을 끌어올린다. 다른 사람이 그 안에 서 있으면 그쪽이 끌려온다.
+        for o, (ox, oy) in self.p.items():
+            if o in (who, by_whom): continue
+            if abs(ox - ux) <= 1 and 0 < oy - uy <= 3: raise Bad(f'{by_whom} 손 닿는 자리에 {o} 도 있다 ({ox},{oy}) — {who} 대신 끌려올 수 있다. 비켜 서야 한다')
         # 끌어올린 사람은 끌어 준 사람 옆에 선다 (같은 칸이면 그 칸)
         land = None
         for lx in (ux + (1 if ux >= x else -1), ux, ux - (1 if ux >= x else -1)):
@@ -174,7 +224,8 @@ class Run:
 
     def take(self, who, color):
         x, y = self.p[who]
-        if self.g.get(x, y) != color: raise Bad(f'{who} 가 {color} 열쇠 자리에 없다 ({x},{y}) 는 {self.g.get(x,y)}')
+        if color in self.opened: return                     # 걸어 들어오며 이미 집었다
+        if self.g.get(x, y) != color and self.g.get(x, y - 1) != color: raise Bad(f'{who} 가 {color} 열쇠 자리에 없다 ({x},{y}) 는 {self.g.get(x,y)}')
         self.opened.add(color)
         name = {'r': '빨간', 'y': '노란', 'b': '파란'}[color]
         self.say(who, f'{name} 열쇠를 집는다 → {name} 블록이 전부 사라진다')

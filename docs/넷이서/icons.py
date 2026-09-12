@@ -20,6 +20,11 @@ def ground(theme):
                    + hatch(8, 30, 104, 52, '#8a6a3a')
                    + ''.join(f'<path d="M{x} 30 q3 -8 6 0" fill="none" stroke="#3f8f56" stroke-width="2.4" stroke-linecap="round"/>' for x in range(10, 110, 9))
                    + f'<circle cx="40" cy="60" r="3" fill="{INK}" opacity=".5"/><circle cx="82" cy="70" r="2.4" fill="{INK}" opacity=".5"/>')
+    if theme == 'subway':
+        tiles = ''.join(f'<rect x="{x}" y="{y}" width="24" height="12" fill="none" stroke="{INK}" stroke-width="1.2" opacity=".7"/>'
+                        for y in range(30, 82, 13) for x in range(8, 112, 26))
+        return svg(f'<rect x="8" y="30" width="104" height="52" fill="#55606c" fill-opacity=".35" stroke="{INK}" stroke-width="3"/>{tiles}'
+                   f'<line x1="8" y1="30" x2="112" y2="30" stroke="#2f9c9c" stroke-width="3"/>')
     if theme == 'school':
         rows = ''.join(f'<line x1="8" y1="{y}" x2="112" y2="{y}" stroke="{INK}" stroke-width="1.4"/>' for y in range(42, 82, 12))
         bricks = ''.join(f'<line x1="{x + (12 if (y//12)%2 else 0)}" y1="{y}" x2="{x + (12 if (y//12)%2 else 0)}" y2="{y+12}" stroke="{INK}" stroke-width="1.4"/>'
@@ -29,6 +34,20 @@ def ground(theme):
                + hatch(8, 30, 104, 52, '#6b665c', 9, .5)
                + ''.join(f'<circle cx="{x}" cy="{y}" r="1.8" fill="{INK}"/>' for x in (16, 104) for y in (38, 74))
                + f'<line x1="8" y1="56" x2="112" y2="56" stroke="{INK}" stroke-width="2" stroke-dasharray="6 4"/>')
+
+def rotten():
+    """삭은 발판 — 회색빛 판자에 금. 밟으면 금이 벌어지다 부서지고, 부서진 자리는 점선 윤곽만."""
+    return svg(f'<rect x="10" y="40" width="100" height="14" fill="#9c8f74" fill-opacity=".5" stroke="{INK}" stroke-width="3"/>'
+               f'<path d="M34 40 L40 47 L36 54 M72 54 L74 46" fill="none" stroke="{INK}" stroke-width="2.4"/>'
+               f'<rect x="10" y="66" width="100" height="14" fill="none" stroke="{PENCIL}" stroke-width="1.4" stroke-dasharray="4 5"/>'
+               f'<text x="60" y="30" text-anchor="middle" font-size="10" font-family="IBM Plex Mono" fill="{PENCIL}">0.5초 → 부서짐 → 3초 뒤</text>')
+
+def belt():
+    """무빙워크 — 파란 띠에 흐르는 화살표. 위의 사람도 상자도 실려 간다."""
+    arrows = ''.join(f'<path d="M{x} 46 l6 6 l-6 6" fill="none" stroke="#2f6fb0" stroke-width="2"/>' for x in range(18, 106, 16))
+    return svg(f'<rect x="10" y="40" width="100" height="24" fill="#2f6fb0" fill-opacity=".3" stroke="{INK}" stroke-width="3"/>{arrows}'
+               f'<rect x="40" y="10" width="26" height="26" fill="#6f4a2c" fill-opacity=".45" stroke="{INK}" stroke-width="2.6"/>'
+               f'<path d="M66 23 l12 0" stroke="{PENCIL}" stroke-width="1.8" stroke-dasharray="3 3"/>')
 
 def platform():
     """선반·발판 — 나무 판자. 밑에서 통과."""
@@ -120,6 +139,9 @@ ITEMS = [
     ('땅 · 벽 — 뒷마당', ground('yard'), '흙에 잔디 한 줄. 색연필 빗금으로 채운다. 벽도 같은 무늬 — 땅이 서 있는 것이다.'),
     ('땅 · 벽 — 학교', ground('school'), '벽돌 줄무늬. 줄이 한 칸씩 엇갈린다.'),
     ('땅 · 벽 — 도시', ground('city'), '콘크리트. 성긴 빗금과 리벳 넷, 가운데 점선 이음매.'),
+    ('땅 · 벽 — 지하철', ground('subway'), '회청색 타일에 청록 안전선 한 줄. 승강장 바닥이다.'),
+    ('삭은 발판', rotten(), '회색 판자에 금. 0.5초 밟으면 부서지고 3초 뒤 돌아온다. 밟다 만 것은 비면 아물어 간다 — 한 명씩 건넌다.'),
+    ('무빙워크', belt(), '파란 띠에 흐르는 화살표. 서 있으면 실려 가고, 상자도 실려 간다(사람의 반 속도). 역방향은 걸어서는 거의 못 간다 — 뛴다.'),
     ('선반 · 발판', platform(), '나무 판자 한 장에 못 둘. 밑에서 뛰면 통과한다.'),
     ('사다리', ladder(), '세로줄 둘에 가로대. 사다리 앞에서 ⌥↑.'),
     ('리프트', lift(), '철판 발판 위에 삼각 걸이. 오가는 길은 점선, 끝은 빨간 화살표.'),

@@ -7,8 +7,13 @@ out = ["// 넷이서 — 판 열둘. docs/넷이서/stages.py 가 만든다. 손
 rows = [{'world': s['world'], 'name': s['name'], 'shape': s['shape'], 'end': s['end'], 'pattern': s['pattern'],
          'scene': s['scene'], 'tips': s['tips'], 'w': s['size'][0], 'h': s['size'][1],
          'notes': [[x, y, t] for x, y, t in s['notes']], 'art': s['art'].split('\n'),
-         'limit': 120 if s['name'] == '마지막' else 0} for s in S]
+         'limit': s.get('limit', 0)} for s in S]
 out.append("export const STAGES = " + json.dumps(rows, ensure_ascii=False, indent=1) + ";\n")
 dst = os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'games', 'coop-stages.js')
 open(dst, 'w').write(''.join(out))
 print('coop-stages.js', len(rows), '판')
+# 풀이 원문 — test/coop-play.mjs 가 이걸 읽어 실제 엔진에서 넷을 굴려 본다.
+moves = [{'name': s['name'], 'world': s['world'], 'end': s['end'], 'moves': s['moves']} for s in S]
+mdst = os.path.join(os.path.dirname(__file__), '..', '..', 'test', 'coop-moves.json')
+open(mdst, 'w').write(json.dumps(moves, ensure_ascii=False, indent=0))
+print('coop-moves.json', sum(len(m['moves']) for m in moves), '걸음')

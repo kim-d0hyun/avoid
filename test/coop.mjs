@@ -12,6 +12,7 @@ const { T, STAGES, exitState, blinkOn } = coopMod;
 import { check, ok, say, note, done } from './check.mjs';
 
 const stage = (name) => STAGES.findIndex((s) => s.name === name);
+const HALF_PX = 17;
 
 function make(stageName = '표지판', { mp = false, host = true, debug = true } = {}) {
   const world = w.createWorld({ ms: 0, dodged: 0 }, 'coop');
@@ -42,10 +43,10 @@ const other = (world, id, tx, ty, extra = {}) => {
   world.mp.others.set(id, o); return o;
 };
 
-say('판 — 열둘이 다 열리고 크기가 맞다');
+say('판 — 열넷이 다 열리고 크기가 맞다');
 {
   const world = make();
-  check('판 수', STAGES.length, 12);
+  check('판 수', STAGES.length, 14);
   for (const s of STAGES) {
     const world2 = make(s.name);
     const b = world2.bag;
@@ -54,7 +55,7 @@ say('판 — 열둘이 다 열리고 크기가 맞다');
     if (!b.spawn.every(Boolean)) check(`${s.name} 시작 자리 넷`, b.spawn.every(Boolean), true);
     if (world2.w !== s.w * T || world2.groundY !== s.h * T) check(`${s.name} 판 크기`, [world2.w, world2.groundY], [s.w * T, s.h * T]);
   }
-  ok('열둘 다 열렸다', true);
+  ok('열넷 다 열렸다', true);
   check('첫 판은 뒷마당 표지판', [world.bag.def.world, world.bag.def.name], ['뒷마당', '표지판']);
   check('내 발이 시작 줄에 선다', feetRow(world), 18);
   check('시작 자리 칸', col(world), 20);
@@ -164,7 +165,7 @@ say('상자 — 걸어가서 밀고, 무거운 것은 혼자 못 민다 (같이 
   ok('상자가 밀렸다', box.x > bx0 + 20);
   ok('미는 그림', world.player.pushing === true || box.x > bx0);
   // 무거운 상자: 같이 할 때 혼자면 안 밀린다
-  const w2 = make('마지막', { mp: true, host: true });
+  const w2 = make('옥상', { mp: true, host: true });
   const heavy = w2.bag.boxes.find((b) => b.weight === 2);
   const hx0 = heavy.x;
   setPos(w2, 10, 26);
@@ -385,7 +386,7 @@ say('출구 — 「넷」 판은 넷이 다, 「한 명」 판은 하나면');
 
 say('마지막 판을 깨면 끝');
 {
-  const world = make('마지막', { mp: true });
+  const world = make('종점', { mp: true });
   const b = world.bag;
   setPos(world, b.exit.x, b.exit.y);
   other(world, 2, b.exit.x, b.exit.y); other(world, 3, b.exit.x, b.exit.y); other(world, 4, b.exit.x, b.exit.y);
@@ -421,10 +422,11 @@ say('되감기 — 방장 ⌥R 이면 상자·열쇠·사람이 처음으로, �
   check('같은 판이다', world.bag.def.name, '두 열쇠');
 }
 
-say('시간 제한 — 마지막 판 120초');
+say('시간 제한 — 옥상 120초 · 종점 150초');
 {
-  const world = make('마지막', { mp: true });
+  const world = make('옥상', { mp: true });
   check('120초', world.bag.limit, 120);
+  check('종점은 150초', make('종점', { mp: true }).bag.limit, 150);
   world.bag.clock = 119.9;
   tick(world, 10, {});
   ok('다 되면 되감는다', world.bag.resets === 1 && world.bag.clock < 1);
@@ -502,6 +504,137 @@ say('카메라 — 나를 따라가고 판 끝에서 멈춘다');
   const small = make('상자 계단');           // 36×22 — 화면과 같다
   const c2 = small.bag && coop.camera(small, vw, vh);
   check('한 화면짜리 판은 안 움직인다', [Math.round(c2.x), Math.round(c2.y)], [0, 0]);
+}
+
+
+say('남의 발 — 꾸러미 사이에 발판을 뚫고 내려가지 않는다');
+{
+  // 남의 자리는 마지막 속도로 이어 그린다. 떨어지는 사람은 다음 꾸러미까지 발판 밑으로 파고든다 —
+  // 넷이서에서는 착지마다 발이 땅에 박혀 보였다. 내려가던 발이 바닥을 지나면 바닥에 세운다.
+  const world = make('상자 계단', { mp: true });   // 첫 단 윗면 16줄 (x 16~25)
+  const top = 16 * T;
+  const o = other(world, 2, 20, 15);
+  o.baseAir = world.groundY - (top - 30); o.air = o.baseAir; o.vy = -120;   // 30px 위에서 떨어지는 중
+  let lowest = 0;
+  for (let i = 0; i < 40; i++) { tick(world, 1, {}); lowest = Math.max(lowest, o.groundY - o.air); }
+  ok('발이 단 윗면 밑으로 안 내려간다', lowest <= top + 0.5);
+  ok('단 윗면에 선다', Math.abs((o.groundY - o.air) - top) < 0.5);
+  check('세로 속도 그림도 0', o.vyDraw, 0);
+  // 올라가는 사람은 건드리지 않는다 — 선반 밑에서 뛰어 오르는 중일 수 있다
+  const w2 = make('상자 계단', { mp: true });
+  const u = other(w2, 2, 20, 18);
+  u.vy = 500; u.baseAir = u.air;
+  tick(w2, 10, {});
+  ok('올라가는 중은 그대로 (16줄 단을 뚫고 오른다)', u.groundY - u.air < 19 * T - 40);
+}
+
+say('사다리 — 꼭대기에 서서 ⌥↓ 로 내려가고, 옆으로 내리면 그 층에 선다');
+{
+  const world = make('두 길');                // 12칸 사다리 11~18줄, 2층 바닥 11줄
+  setPos(world, 12, 10);                     // 사다리 꼭대기 칸 위에 선다
+  tick(world, 2, {});
+  ok('꼭대기는 바닥이다', world.player.grounded && feetRow(world) === 10);
+  tick(world, 30, { duck: true });
+  ok('⌥↓ 로 사다리를 잡고 내려간다', world.player.onLadder === true && feetRow(world) > 10);
+  ok('웅크리지 않았다', world.player.crouch < 0.3);
+  tick(world, 200, { duck: true });
+  ok('1층까지 내려와 선다', feetRow(world) === 18 && world.player.grounded);
+  // 리프트 옆으로 내리기 — 바닥 끝을 몇 픽셀 못 미쳐도 올라선다
+  const w2 = make('엘리베이터');              // 리프트 10칸 20~40줄, 2층 바닥 30줄 (x 11~)
+  setPos(w2, 10, 29); w2.player.onLadder = true; w2.player.grounded = false;
+  tick(w2, 1, { jump: true });               // 잡은 채 한 프레임
+  tick(w2, 20, { right: true });
+  ok('⌥→ 로 2층에 내려선다', w2.player.grounded && feetRow(w2) === 29 && col(w2) >= 10);
+  ok('통로로 떨어지지 않았다', w2.player.onLadder === false && feetRow(w2) === 29);
+}
+
+say('삭은 발판 — 0.5초 밟으면 부서지고 3초 뒤 돌아온다');
+{
+  const world = make('상자 계단');
+  const b = world.bag;
+  b.boxes = [];
+  for (let x = 8; x <= 12; x++) b.rows[15][x] = 'v';    // 15줄에 삭은 판자 다섯, 밑은 허공(16~18줄) — 땅은 19줄
+  setPos(world, 10, 14); world.player.air = world.groundY - (15 * T + T * 0.3); world.player.grounded = true;
+  tick(world, 12, {});
+  ok('판자 위에 서 있다', world.player.grounded && Math.abs((world.groundY - world.player.air) - (15 * T + T * 0.3)) < 1);
+  ok('삭아 가는 중', (b.rot.get('10,15')?.t ?? 0) > 0.1);
+  tick(world, 30, {});
+  ok('부서졌다', (b.rot.get('10,15')?.gone ?? 0) > 2);
+  ok('부서진 자리는 발판이 아니다', !coopMod.floorBelow(world, 10.5 * T, 15 * T, 15 * T + 20));
+  tick(world, 60, {});
+  check('떨어져 땅에 섰다', feetRow(world), 18);
+  tick(world, 200, {});
+  ok('3초 뒤 돌아온다', !b.rot.has('10,15'));
+  // 꾸러미에 실린다
+  const packed = JSON.parse(JSON.stringify(coop.pack(world)));
+  b.rot.set('10,15', { t: 0.2, gone: 1.5 });
+  const p2 = coop.pack(world);
+  check('삭은 발판 상태가 꾸러미에', p2.rt, [['10,15', 0.2, 1.5]]);
+  const guest = make('상자 계단', { mp: true, host: false });
+  coop.unpack(guest, JSON.parse(JSON.stringify(p2)));
+  check('손님이 받는다', guest.bag.rot.get('10,15'), { t: 0.2, gone: 1.5 });
+  ok('빈 꾸러미도 괜찮다', (coop.unpack(guest, packed), guest.bag.rot.size === 0));
+}
+
+say('네모 — 공중인지는 높이가 아니라 「섰나」로 본다');
+{
+  const { inAir } = await import(R + 'draw/block.js');
+  ok('내 사람: 바닥에 서면 공중이 아니다 (2층이라 air 가 커도)', inAir({ grounded: true, air: 300 }) === false);
+  ok('내 사람: 떠 있으면 공중', inAir({ grounded: false, air: 300 }) === true);
+  ok('사다리에 매달리면 공중 아님', inAir({ grounded: false, onLadder: true }) === false);
+  ok('남: 세로 속도 0 이면 서 있다', inAir({ vyDraw: 0, air: 300 }) === false);
+  ok('남: 떨어지는 중이면 공중', inAir({ vyDraw: -200, air: 300 }) === true);
+}
+
+say('손잡기 — 올라선 자리에 바닥이 있는 쪽을 고른다');
+{
+  const world = make('탑', { mp: true, host: true });   // 2층 바닥 47줄 (x 1~34)
+  const b = world.bag;
+  // 3층 단 위(53줄, 28~34칸) 왼쪽 끝에 서고 상대는 밑 27칸에 — 상대 쪽(왼쪽)은 허공, 오른쫀은 단
+  setPos(world, 28, 53); world.player.grounded = true;
+  other(world, 2, 27, 56);
+  coop.action(world);
+  const sent = world.sent.find((s) => s.m.k === 'pull');
+  ok('끌어올린다', !!sent);
+  ok('허공(왼쪽)이 아니라 단 위(오른쪽)에 세운다', sent.m.x > world.player.x);
+}
+
+
+say('떨어지는 것 — 상자·통이 빨라져도 바닥을 뚫지 않는다');
+{
+  // 3층 창고: 2층 틈(52) 으로 떨어진 상자는 아홉 칸 아래 1층(27줄)에 앉아야 한다. 한 프레임에 19px 씩 갈 때다.
+  const world = make('3층 창고');
+  const box = world.bag.boxes[0];
+  box.x = 52.5 * T; box.y = 18 * T;
+  for (let i = 0; i < 120; i++) tick(world, 1, {});
+  check('상자가 1층 바닥에 앉는다 (밑 27줄)', Math.round(box.y / T), 27);
+  ok('판 밑으로 안 갔다', box.y < world.groundY);
+  // 통: 상자 계단 언덕(12줄)에서 첫 단(16줄)으로 네 칸 떨어져도 단 위에 선다
+  const w2 = make('상자 계단');
+  w2.bag.chutes = [];
+  w2.bag.barrels.push({ x: 24.5 * T, y: 12 * T, vx: 0, vy: 0, falls: 0, dead: false, spin: 0 });
+  const br = w2.bag.barrels[0];
+  for (let i = 0; i < 90; i++) tick(w2, 1, {});
+  ok('통이 첫 단 위(16줄)에 선다', !br.dead && Math.abs(br.y - 16 * T) < 1);
+}
+
+
+say('무빙워크 — 사람을 실어 가고, 상자를 실어 가고, 상자에 밀어붙여도 속으로 넣지 않는다');
+{
+  const world = make('무빙워크');            // 44~48 역방향(<), 12~21 순방향(>)
+  const b = world.bag;
+  setPos(world, 16, 18); tick(world, 30, {});
+  ok('순방향 무빙워크가 서 있는 사람을 오른쪽으로 실어 간다', world.player.x > 16.5 * T + 60);
+  // 상자를 역방향 무빙워크에 올리면 알아서 왼쪽으로 가 턱(43)에 걸린다
+  const box = b.boxes.find((x) => Math.round(x.x / T - 0.5) === 50);
+  box.x = 48.5 * T;
+  for (let i = 0; i < 300 && Math.abs(box.x - 44.5 * T) > 1; i++) tick(world, 1, {});
+  ok('상자가 무빙워크에 실려 44칸까지 온다', Math.abs(box.x - 44.5 * T) < 2);
+  ok('누름판이 눌린다', b.plates.p === true);
+  // 사람이 46칸에 서면 왼쪽으로 실려 가 상자에 막힌다 — 상자 속이 아니라 옆에
+  setPos(world, 46, 18); tick(world, 60, {});
+  ok('상자 옆에서 선다 (속으로 안 들어간다)', world.player.x - HALF_PX >= box.x + T / 2 - 1);
+  ok('상자는 턱에 걸려 그대로', Math.abs(box.x - 44.5 * T) < 2);
 }
 
 done('넷이서');

@@ -13,10 +13,17 @@ export const BLOCK_W = 34;     // 한 칸(42)의 0.8
 export const BLOCK_H = 50;     // 1.2칸
 export const CROUCH_H = 28;    // 웅크리면 0.7칸 — 한 칸 굴을 지난다
 
+/// 공중에 있나. 넷이서의 air 는 판 맨 밑에서 잰 높이라 2층에 서 있어도 크다 — 높이로는 못 가른다.
+/// 내 사람은 grounded 가 있고, 남은 세로 속도(vyDraw)로 본다 (서 있으면 0 으로 온다).
+export function inAir(p) {
+  if (p.grounded !== undefined) return !p.grounded && !p.onLadder;
+  return Math.abs(p.vyDraw ?? 0) > 1;
+}
+
 /// 몸통 크기. 웅크림·점프·눌림에 따라 달라진다.
 export function blockSize(p) {
   const c = p.crouch ?? 0;
-  const flying = (p.air ?? 0) > 2 && Math.abs(p.vyDraw ?? p.vy ?? 0) > 60;
+  const flying = inAir(p) && Math.abs(p.vyDraw ?? p.vy ?? 0) > 60;
   let w = BLOCK_W + c * 8 - (flying ? 5 : 0);
   let h = BLOCK_H - c * (BLOCK_H - CROUCH_H) + (flying ? 7 : 0);
   // 누가 위에 서 있으면 눌린다. 무게가 보여야 「밟고 있다」가 양쪽 화면에서 읽힌다.
@@ -64,15 +71,16 @@ export function drawBlock(ctx, p, time, seed, opts = {}) {
     ctx.arc(cx, cy, r, a0, a0 + Math.PI / 2); ctx.stroke();
   }
 
-  // 다리 — 밑으로 나온 짧은 획 둘. 걸을 때 번갈아, 뛸 때 접는다.
+  // 다리 — 몸 밑으로 나온 짧은 획 둘. 걸을 때 번갈아, 뛸 때 접는다.
+  // **발끝은 발 높이(0)에서 끝난다.** 밑으로 더 그으면 서 있는 사람의 발이 땅에 박혀 보인다.
   const legL = -w * 0.27, legR = w * 0.27;
-  if ((p.air ?? 0) > 2) {
-    stroke(ctx, [[legL, 0 - 3], [legL + 3, 2]], pen(5, 3));
-    stroke(ctx, [[legR, 0 - 3], [legR - 3, 2]], pen(6, 3));
+  if (inAir(p)) {
+    stroke(ctx, [[legL, -4], [legL + 3, 0]], pen(5, 3));
+    stroke(ctx, [[legR, -4], [legR - 3, 0]], pen(6, 3));
   } else {
     const ph = Math.sin(p.walk ?? 0) * Math.min(1, Math.abs(p.vx ?? 0) / 120);
-    stroke(ctx, [[legL, -3], [legL - ph * 5, 4]], pen(5, 3));
-    stroke(ctx, [[legR, -3], [legR + ph * 5, 4]], pen(6, 3));
+    stroke(ctx, [[legL, -4], [legL - ph * 5, 0]], pen(5, 3));
+    stroke(ctx, [[legR, -4], [legR + ph * 5, 0]], pen(6, 3));
   }
 
   // 팔 — 잡고 있을 때만. 밀 때는 앞으로 둘, 매달릴 때는 위로 하나, 끌어올릴 때는 아래로 하나.

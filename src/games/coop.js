@@ -32,6 +32,7 @@ const BARREL_SPEED = 210, BARREL_EVERY = 4, BARREL_R = 19;
 const KNOCK = 380, STUN = 0.5;             // 통에 맞으면 세 칸 밀려나고 0.5초 넘어진다
 const PULL_REACH = 3 * T + 8;              // 손잡기: 세 칸 아래까지
 const PORTAL_COOL = 0.3;
+const ROT_AFTER = 0.5, ROT_GONE = 3;         // 삭은 발판: 0.5초 밟으면 부서지고 3초 뒤 돌아온다 — 한 명씩 건넌다
 const DIE_FOR = 0.8;                       // 죽고 나서 시작 자리에 다시 서기까지
 const NEXT_FADE = 0.6;                     // 판 사이 어두워지는 시간
 const SHIRTS = ['#2f6fb0', '#3f8f56', '#d97b1f', '#8a5bb5'];
@@ -41,6 +42,7 @@ const THEME = {
   '뒷마당': { ground: '#c9a86a', edge: '#3f8f56', hatch: '#8a6a3a', barrel: '통' },
   '학교':   { ground: '#b8912a', edge: null,      hatch: '#7a6020', barrel: '가방' },
   '도시':   { ground: '#6b665c', edge: null,      hatch: '#4a463f', barrel: '파이프' },
+  '지하철': { ground: '#55606c', edge: '#2f9c9c', hatch: '#39434d', barrel: '카트' },
 };
 
 // ── 판 살림살이 ──────────────────────────────────────────────────────────────
@@ -59,6 +61,7 @@ function loadStage(world, index) {
   b.latched = false;
   b.plates = { p: false, q: false };
   b.boxes = []; b.barrels = []; b.chutes = []; b.tracks = []; b.keys = {}; b.portals = {};
+  b.rot = new Map();                       // 삭은 발판 — 'tx,ty' → { t: 밟은 시간, gone: 부서져 있는 남은 시간 }
   b.spawn = [null, null, null, null];
   b.exit = null;
   b.done = 0;                              // 다음 판으로 넘어가는 중이면 남은 시간
@@ -120,11 +123,14 @@ function solidTile(b, ch) {
   return false;
 }
 /// 위에서만 딛는 칸인가 (밑에서는 통과).
-function onewayTile(b, ch) {
-  if (ch === '=' || ch === '>' || ch === '<' || ch === 'S' || ch === 'v') return true;
+function onewayTile(b, ch, tx, ty) {
+  if (ch === '=' || ch === '>' || ch === '<' || ch === 'S') return true;
+  if (ch === 'v') return !rotGone(b, tx, ty);
   if (ch === '~') return blinkOn(b);
   return false;
 }
+/// 삭은 발판이 지금 부서져 있나.
+function rotGone(b, tx, ty) { return (b.rot?.get(tx + ',' + ty)?.gone ?? 0) > 0; }
 /// 왕복 발판의 지금 자리. [x0px, x1px, ypx(윗면)]
 function trackRect(tr) {
   const x0 = tr.x0 * T + tr.pos;
@@ -135,7 +141,9 @@ function trackRect(tr) {
 
 /// 발판 높이를 찾는다. x 자리에서 발이 fy 로 내려올 때 딛는 윗면 y (없으면 null).
 /// 타일 · 상자 · 왕복 발판 · **남의 머리** 순으로 본다.
-function floorBelow(world, x, fyOld, fyNew, halfW = HALF - 2) {
+/// opt.ladders=false 면 사다리 꼭대기를 바닥으로 안 친다 (사다리를 타고 내려갈 때).
+/// opt.people=false 면 남의 머리를 안 본다 (남의 자리를 바닥에 맞출 때 — 자기 머리를 밟으면 안 된다).
+function floorBelow(world, x, fyOld, fyNew, halfW = HALF - 2, opt = {}) {
   const b = world.bag;
   let best = null;
   const take = (top) => { if (top >= fyOld - 1 && top <= fyNew + 1 && (best === null || top < best)) best = top; };
@@ -144,9 +152,9 @@ function floorBelow(world, x, fyOld, fyNew, halfW = HALF - 2) {
   for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
     const ch = tile(b, tx, ty);
     if (solidTile(b, ch)) take(ty * T);
-    else if (onewayTile(b, ch)) take(ty * T + (ch === '=' ? T * 0.3 : 0));
+    else if (onewayTile(b, ch, tx, ty)) take(ty * T + (ch === '=' || ch === 'v' ? T * 0.3 : 0));
     // 사다리 꼭대기는 딛는 바닥이다 (위 칸이 사다리가 아닐 때). 중간 칸은 매달리는 곳.
-    else if ((ch === 'H' || ch === '|') && !'H|'.includes(tile(b, tx, ty - 1))) take(ty * T);
+    else if (opt.ladders !== false && (ch === 'H' || ch === '|') && !'H|'.includes(tile(b, tx, ty - 1))) take(ty * T);
   }
   for (const bx of b.boxes) {
     if (Math.abs(bx.x - x) < HALF + T / 2 - 2) take(bx.y - T);
@@ -155,8 +163,8 @@ function floorBelow(world, x, fyOld, fyNew, halfW = HALF - 2) {
     const r = trackRect(tr);
     if (x + halfW > r.x0 && x - halfW < r.x1) take(r.top);
   }
+  if (opt.people === false) return best;
   // 남의 머리. 웅크린 사람은 낮다 — 그래서 계단이 된다.
-  const me = world.player;
   for (const o of world.mp.others.values()) {
     if (o.dead || o.waiting) continue;
     if (Math.abs(o.x - x) >= HALF + BLOCK_W / 2 - 4) continue;
@@ -243,6 +251,23 @@ function die(world) {
   if (world.debug) world.log?.(`죽음 f${String(world.shot ?? 0).padStart(5, '0')} x=${Math.round(p.x)} air=${Math.round(p.air)}`);
 }
 
+/// 남의 발을 바닥 위에 세운다.
+///
+/// 남의 자리는 마지막 꾸러미에서 속도로 이어 그린다 (net.js interpolate). 그 계산은 땅을 모른다 —
+/// 뛰어내리는 사람은 다음 꾸러미가 오기까지 발판을 **뚫고 내려가** 보인다. 랜에서도 왕복 시간만큼은
+/// 앞서 그리니 착지 순간마다 발이 땅에 몇 픽셀씩 박힌다. 여기서 내려가던 발이 바닥을 지나면 바닥에 세운다.
+/// 올라가는 중은 건드리지 않는다 — 선반 밑에서 뛰어 오르는 사람은 정말로 선반을 지나는 중이다.
+function settleOthers(world) {
+  for (const o of world.mp.others.values()) {
+    const fy = o.groundY - o.air;
+    const prev = o.fyPrev;
+    o.fyPrev = fy;
+    if (o.dead || o.waiting || prev === undefined || fy <= prev + 0.01) continue;
+    const floor = floorBelow(world, o.x, prev, fy, HALF - 2, { people: false });
+    if (floor !== null && floor < fy) { o.air = o.groundY - floor; o.vyDraw = 0; o.fyPrev = floor; }
+  }
+}
+
 /// 내 사람을 한 프레임 굴린다. world.js 의 movePlayer 대신 이걸 쓴다 — 여기는 땅이 평평하지 않다.
 export function move(world, dt) {
   const b = world.bag;
@@ -250,6 +275,7 @@ export function move(world, dt) {
   const input = world.input;
   if (!b?.rows) return;
   p.groundY = world.groundY;
+  if (world.mp.on) settleOthers(world);
 
   // 죽어 있으면 잠깐 누워 있다가 시작 자리에서 다시 선다.
   if (p.dead) {
@@ -265,8 +291,16 @@ export function move(world, dt) {
   const grounded = p.grounded ?? false;
   const climbing = p.onLadder && onLadderColumn(b, p.x, fy, BLOCK_H);
 
+  // 사다리 꼭대기에 서서 ⌥↓ — 내려간다. 꼭대기 칸은 딛는 바닥이라 그냥은 웅크리기가 된다.
+  // 발밑 칸이 사다리면 웅크리는 게 아니라 잡고 내려가는 것이다.
+  if (!climbing && grounded && input.duck && !input.jump && p.stun <= 0 && p.load === 0
+      && 'H|'.includes(tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T)))) {
+    p.onLadder = true; p.grounded = false; p.vx = 0; p.vy = 0;
+    p.x = (Math.floor(p.x / T) + 0.5) * T;
+  }
+  const onLadder = p.onLadder && (onLadderColumn(b, p.x, fy, BLOCK_H) || 'H|'.includes(tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T))));
   // 웅크리기 — 땅에서, 사다리 아니면. 한 칸 굴은 웅크려야 지난다.
-  const wantCrouch = input.duck && grounded && !climbing ? 1 : 0;
+  const wantCrouch = input.duck && grounded && !climbing && !onLadder ? 1 : 0;
   p.crouch += (wantCrouch - p.crouch) * Math.min(1, dt * 16);
   if (p.crouch < 0.01) p.crouch = 0;
   const h = BLOCK_H - p.crouch * (BLOCK_H - CROUCH_H);
@@ -278,15 +312,28 @@ export function move(world, dt) {
     p.x = (Math.floor(p.x / T) + 0.5) * T;
   }
   if (p.onLadder) {
-    if (!onLadderColumn(b, p.x, fy, BLOCK_H) || dir !== 0 && !input.jump && !input.duck) p.onLadder = false;
+    const column = onLadderColumn(b, p.x, fy, BLOCK_H) || 'H|'.includes(tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T)));
+    if (!column) p.onLadder = false;
+    else if (dir !== 0 && !input.jump && !input.duck) {
+      // 옆으로 내린다. 그 층 바닥이 발 높이 근처(±16px)에 있으면 거기 올라선다 — 리프트에서 2층에
+      // 내리려고 ⌥← 를 누른 사람이 바닥 끝을 몇 픽셀 못 미쳐 통로로 떨어지는 일이 없게.
+      p.onLadder = false;
+      const side = floorBelow(world, p.x + dir * (T * 0.5 + 6), fy - 16, fy + 16, HALF - 2, { ladders: false, people: false });
+      if (side !== null && !bodyBlocked(world, p.x + dir * 8, side - 1, BLOCK_H)) {
+        fy = side; p.air = world.groundY - fy; p.grounded = true; p.vy = 0; p.x += dir * 8;
+      }
+    }
   }
 
   if (p.onLadder && p.stun <= 0) {
     const up = (input.jump ? 1 : 0) - (input.duck ? 1 : 0);
     let nfy = fy - up * CLIMB * dt;
-    // 사다리 끝: 위로 올라가 발이 사다리 위 칸에 닿으면 그 위에 선다
-    const floor = up > 0 ? null : floorBelow(world, p.x, fy, nfy);
-    if (floor !== null) { nfy = floor; p.onLadder = false; }
+    // 사다리 끝: 내려가다 바닥에 닿으면 선다. 사다리 꼭대기 칸은 여기서는 바닥이 아니다 — 그걸 바닥으로
+    // 치면 꼭대기에서 ⌥↓ 를 눌러도 한 발도 못 내려간다.
+    const floor = up > 0 ? null : floorBelow(world, p.x, fy, nfy, HALF - 2, { ladders: false });
+    // 바닥에 닿으면 **선 것**이다. 안 그러면 ⌥↓ 를 잡은 채로는 다음 프레임에 도로 사다리를 잡아
+    // 바닥 위 허공에 매달린 채 걷지도 못한다.
+    if (floor !== null) { nfy = floor; p.onLadder = false; p.grounded = true; p.vy = 0; }
     if (up > 0 && !onLadderColumn(b, p.x, nfy - 2, 4)) {
       // 사다리 꼭대기. 그 위에 설 자리가 있으면 올라선다.
       const tx = Math.floor(p.x / T), ty = Math.floor((nfy - 1) / T);
@@ -313,15 +360,16 @@ export function move(world, dt) {
     const drop = FRICTION * dt * (grounded ? 1 : 0.35);
     p.vx = Math.abs(p.vx) <= drop ? 0 : p.vx - Math.sign(p.vx) * drop;
   }
-  // 무빙워크
+  // 무빙워크·왕복 발판이 실어 가는 만큼. 자리에 바로 더하지 않고 걸음과 합쳐 아래에서 벽·상자에 대 본다 —
+  // 그냥 더하면 무빙워크가 사람을 상자 **속으로** 밀어 넣는다.
+  let drift = 0;
   if (grounded) {
     const under = tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T));
-    if (under === '>') p.x += CONVEYOR * dt;
-    if (under === '<') p.x -= CONVEYOR * dt;
-    // 왕복 발판 위면 같이 움직인다
+    if (under === '>') drift += CONVEYOR * dt;
+    if (under === '<') drift -= CONVEYOR * dt;
     for (const tr of b.tracks) {
       const r = trackRect(tr);
-      if (Math.abs(fy - r.top) < 3 && p.x > r.x0 - HALF && p.x < r.x1 + HALF) p.x += (tr.vx ?? 0) * dt;
+      if (Math.abs(fy - r.top) < 3 && p.x > r.x0 - HALF && p.x < r.x1 + HALF) drift += (tr.vx ?? 0) * dt;
     }
   }
 
@@ -337,7 +385,7 @@ export function move(world, dt) {
   }
 
   // x 로 움직이고 벽·상자에 막히면 되돌린다. 상자는 **밀린다** — 밀 수 있으면.
-  let nx = p.x + (p.vx + p.knock) * dt + ride;
+  let nx = p.x + (p.vx + p.knock) * dt + ride + drift;
   p.pushing = false;
   if (bodyBlocked(world, nx, fy - 1, h) && grounded) {
     // 판자 두께만큼의 턱(14px 안)은 걸어서 올라선다 — 선반에 발이 걸려 서는 일이 없게.
@@ -348,8 +396,12 @@ export function move(world, dt) {
     const box = grounded && p.stun <= 0 ? boxInFront(world, nx, fy, h, Math.sign(nx - p.x)) : null;
     if (box) {
       p.pushing = true;
-      pushBox(world, box, Math.sign(nx - p.x), dt);
-      nx = bodyBlocked(world, nx, fy - 1, h) ? p.x : nx;
+      const dir = Math.sign(nx - p.x);
+      pushBox(world, box, dir, dt);
+      // 상자에 **붙는다.** 제자리에 두면 상자가 1.5px 앞서 가고 나는 4.8px 씩 뒤따라 잡는 사이 세 프레임 중
+      // 한 프레임은 밀지 못한다 — 초당 2.2칸짜리 상자가 1.6칸으로 간다.
+      if (bodyBlocked(world, nx, fy - 1, h)) nx = box.x - dir * (T / 2 + HALF + 0.5);
+      if (bodyBlocked(world, nx, fy - 1, h)) nx = p.x;
     } else {
       // 한 칸씩 물러서 벽에 붙인다
       const step = Math.sign(nx - p.x);
@@ -484,6 +536,26 @@ function stepObjects(world, dt) {
     if (box && countPushers(world, box, w.d) >= box.weight) box.px = w.d;
   }
 
+  // 삭은 발판 — 누가 밟고 서 있으면 삭아 가고, 다 삭으면 부서진다. 부서진 것은 시간이 돌아오게 하고,
+  // 밟다 만 것은 비어 있는 동안 아물어 간다 (안 그러면 넷이 한 명씩 지나가도 넷째가 빠진다).
+  const stood = new Set();
+  for (const q of people) {
+    const ty = Math.floor((q.fy + 2) / T);
+    for (const tx of [Math.floor((q.x - HALF + 3) / T), Math.floor((q.x + HALF - 3) / T)]) {
+      if (tile(b, tx, ty) !== 'v' || rotGone(b, tx, ty) || Math.abs(q.fy - (ty * T + T * 0.3)) > 3) continue;
+      const key = tx + ',' + ty;
+      stood.add(key);
+      const r = b.rot.get(key) ?? { t: 0, gone: 0 };
+      r.t += dt;
+      if (r.t >= ROT_AFTER) { r.t = 0; r.gone = ROT_GONE; }
+      b.rot.set(key, r);
+    }
+  }
+  for (const [key, r] of b.rot) {
+    if (r.gone > 0) { r.gone = Math.max(0, r.gone - dt); }
+    else if (!stood.has(key)) r.t = Math.max(0, r.t - dt * 1.5);
+    if (r.gone === 0 && r.t === 0) b.rot.delete(key);
+  }
   // 누름판 — 사람이든 상자든 위에 있으면 눌린다
   for (const tag of ['p', 'q']) {
     let held = false;
@@ -507,22 +579,26 @@ function stepObjects(world, dt) {
       }
     }
   }
-  // 상자 — 밀리고, 떨어지고, 포탈을 지난다
+  // 상자 — 밀리고, 무빙워크에 실려 가고, 떨어지고, 포탈을 지난다
   for (const bx of b.boxes) {
-    if (bx.px) {
-      const nx = bx.x + bx.px * PUSH * dt;
-      const tx = Math.floor((nx + bx.px * (T / 2 - 1)) / T), ty = Math.floor((bx.y - T / 2) / T);
+    // 무빙워크 위의 상자는 혼자 간다 — 사람 걷는 속도의 절반. 밀지 않아도 누름판까지 실어다 준다.
+    const belt = tile(b, Math.floor(bx.x / T), Math.floor((bx.y + 2) / T));
+    const drift = bx.px ? bx.px * PUSH : belt === '>' ? CONVEYOR * 0.5 : belt === '<' ? -CONVEYOR * 0.5 : 0;
+    if (drift) {
+      const dir = Math.sign(drift);
+      const nx = bx.x + drift * dt;
+      const tx = Math.floor((nx + dir * (T / 2 - 1)) / T), ty = Math.floor((bx.y - T / 2) / T);
       const blocked = solidTile(b, tile(b, tx, ty)) || b.boxes.some((o) => o !== bx && Math.abs(o.x - nx) < T - 1 && Math.abs(o.y - bx.y) < T - 1);
       if (!blocked) bx.x = nx;
       bx.px = 0;
     }
-    // 떨어지기
+    // 떨어지기. 지금 자리에서 본 **가장 가까운 아래 바닥**을 이번 프레임에 지나치면 거기 앉는다 —
+    // 새 자리에서 다시 찾으면, 아홉 칸을 떨어져 한 프레임에 19px 씩 가는 상자는 바닥을 뚫고 판 밑으로 간다.
     const under = boxFloor(world, bx);
     if (under === null || under > bx.y + 0.5) {
       bx.vy = (bx.vy ?? 0) + G * dt;
       let ny = bx.y + bx.vy * dt;
-      const f = boxFloor(world, bx, ny);
-      if (f !== null && f <= ny) { ny = f; bx.vy = 0; }
+      if (under !== null && ny >= under) { ny = under; bx.vy = 0; }
       bx.y = ny;
       if (bx.y > world.groundY + T) { bx.y = world.groundY; bx.vy = 0; }   // 판 밖으로는 안 떨어진다
     } else { bx.vy = 0; bx.y = under; }
@@ -549,7 +625,9 @@ function stepObjects(world, dt) {
     const tx = Math.floor((nx + Math.sign(br.vx) * BARREL_R) / T), ty = Math.floor((br.y - BARREL_R) / T);
     if (solidTile(b, tile(b, tx, ty))) { br.dead = true; br.burst = 0.4; continue; }
     br.x = nx;
-    const under = floorBelow(world, br.x, br.y - 1, br.y + 8, BARREL_R - 6);
+    // 이번 프레임에 내려갈 자리까지 본다 — 빨리 떨어지는 통이 얇은 발판을 지나쳐 판 밑으로 사라지지 않게
+    const drop = Math.max(8, (br.vy + G * dt) * dt + 1);
+    const under = floorBelow(world, br.x, br.y - 1, br.y + drop, BARREL_R - 6, { people: false });
     if (under === null) {
       br.vy += G * dt; br.falling = true;
       br.y += br.vy * dt;
@@ -580,7 +658,7 @@ function boxFloor(world, box, y = box.y) {
     for (let tx = tx0; tx <= tx1; tx++) {
       const ch = tile(b, tx, ty);
       if (solidTile(b, ch)) take(ty * T);
-      else if (onewayTile(b, ch)) take(ty * T + (ch === '=' ? T * 0.3 : 0));
+      else if (onewayTile(b, ch, tx, ty)) take(ty * T + (ch === '=' || ch === 'v' ? T * 0.3 : 0));
     }
     if (best !== null) break;
   }
@@ -595,7 +673,8 @@ function exitState(world) {
   if (!b.exit) return { inside: 0, ready: false };
   const cx = (b.exit.x + 0.5) * T, top = (b.exit.y + 1) * T;
   let inside = 0;
-  for (const q of everyone(world)) if (Math.abs(q.x - cx) < T * 2.5 && Math.abs(q.fy - top) < T * 0.6) inside++;
+  // 세로로는 한 칸 반 — 포탈 앞에 넷이 몰리면 누가 누구 머리 위에 서게 된다(머리 53px). 그것도 안에 있는 것이다.
+  for (const q of everyone(world)) if (Math.abs(q.x - cx) < T * 2.5 && q.fy <= top + T * 0.6 && q.fy > top - T * 1.5) inside++;
   // 「넷」 판은 방에 있는 사람 전부 (넷이어야 시작하니 넷). 혼자 남았어도 둘은 되어야 — 혼자서 끝내는 판이 아니다.
   const need = b.end === 'one' ? 1 : (world.mp.on ? Math.max(2, world.mp.others.size + 1) : 1);
   return { inside, need, ready: inside >= need };
@@ -604,7 +683,8 @@ function exitState(world) {
 function meAtExit(world) {
   const b = world.bag, p = world.player;
   if (!b.exit || p.dead) return false;
-  return Math.abs(p.x - (b.exit.x + 0.5) * T) < T * 2.5 && Math.abs((world.groundY - p.air) - (b.exit.y + 1) * T) < T * 0.6;
+  const fy = world.groundY - p.air, top = (b.exit.y + 1) * T;
+  return Math.abs(p.x - (b.exit.x + 0.5) * T) < T * 2.5 && fy <= top + T * 0.6 && fy > top - T * 1.5;
 }
 
 function nextStage(world) {
@@ -655,11 +735,27 @@ function drawTiles(ctx, world, time, boil) {
         if (!solidTile(b, tile(b, tx + 1, ty))) stroke(ctx, [[x + T, y], [x + T, y + T]], { width: 2.4, color: INK, seed: tx * 3 + ty * 7 + 3, amp: 0.6, halo: false });
         break;
       }
-      case '=': case 'v': {
+      case '=': {
         // 나무 판자. 못 둘.
         ctx.fillStyle = '#c9a86a'; ctx.globalAlpha = 0.45; ctx.fillRect(x, y + T * 0.3, T, T * 0.4); ctx.globalAlpha = 1;
         stroke(ctx, [[x, y + T * 0.3], [x + T, y + T * 0.3], [x + T, y + T * 0.7], [x, y + T * 0.7]], { width: 2.2, color: INK, seed: tx + ty * 9, amp: 0.5, close: true, halo: false, sharp: true });
         circle(ctx, x + 8, y + T * 0.5, 1.6, { width: 1, color: INK, fill: INK, halo: false, seed: 1, amp: 0 });
+        break;
+      }
+      case 'v': {
+        // 삭은 판자. 회색빛에 금이 갔다. 밟으면 금이 벌어지다 부서지고, 부서진 자리는 점선 윤곽만 남는다.
+        const r = b.rot.get(tx + ',' + ty);
+        if (r?.gone > 0) {
+          ctx.save(); ctx.setLineDash([3, 5]); ctx.strokeStyle = PENCIL; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.5;
+          ctx.strokeRect(x + 1, y + T * 0.3, T - 2, T * 0.4); ctx.restore();
+          break;
+        }
+        const crack = Math.min(1, (r?.t ?? 0) / ROT_AFTER);
+        const jit = crack > 0 ? Math.sin(time * 50) * crack * 1.5 : 0;
+        ctx.fillStyle = '#9c8f74'; ctx.globalAlpha = 0.45; ctx.fillRect(x + jit, y + T * 0.3, T, T * 0.4); ctx.globalAlpha = 1;
+        stroke(ctx, [[x + jit, y + T * 0.3], [x + T + jit, y + T * 0.3], [x + T + jit, y + T * 0.7], [x + jit, y + T * 0.7]], { width: 2.2, color: INK, seed: tx + ty * 9, amp: 0.5, close: true, halo: false, sharp: true });
+        stroke(ctx, [[x + 10 + jit, y + T * 0.3], [x + 16 + jit, y + T * 0.5], [x + 12 + jit, y + T * 0.7]], { width: 1.4 + crack * 1.6, color: INK, seed: tx * 5 + ty, amp: 0.6, halo: false });
+        stroke(ctx, [[x + 28 + jit, y + T * 0.7], [x + 30 + jit, y + T * 0.45]], { width: 1.2 + crack, color: INK, seed: tx * 5 + ty + 1, amp: 0.5, halo: false });
         break;
       }
       case '~': {
@@ -882,9 +978,12 @@ export default {
     if (!best) return;
     p.pulling = 0.35;
     const side = Math.sign(best.x - p.x) || p.facing || 1;
-    const land = { x: p.x + side * (BLOCK_W + 4), air: p.air };
-    // 옆에 설 자리가 막혀 있으면 내 자리로
-    if (bodyBlocked(world, land.x, fy - 1, BLOCK_H)) land.x = p.x;
+    // 올라선 사람이 설 자리 — 상대 쪽 옆, 안 되면 반대쪽 옆, 그것도 안 되면 내 자리.
+    // 「선다」는 막히지 않고 **발밑에 바닥이 있다**는 뜻이다. 벼랑 끝에서 끌어올린 사람을 허공에 세우면
+    // 그 사람 화면에서 도로 떨어진다.
+    const standable = (x) => !bodyBlocked(world, x, fy - 1, BLOCK_H) && floorBelow(world, x, fy - 2, fy + 2, HALF - 6, { people: false }) !== null;
+    const land = { x: p.x, air: p.air };
+    for (const x of [p.x + side * (BLOCK_W + 4), p.x - side * (BLOCK_W + 4)]) { if (standable(x)) { land.x = x; break; } }
     world.send?.({ t: 'gm', k: 'pull', to: best.id, x: Math.round(land.x), air: Math.round(land.air) }, world.mp.role === 'host' ? best.id : undefined);
     if (world.debug) world.log?.(`손잡기 ${best.id} → ${Math.round(land.x)}`);
   },
@@ -1035,6 +1134,7 @@ export default {
       bx: b.boxes.map((x) => [Math.round(x.x), Math.round(x.y)]),
       br: b.barrels.filter((r) => !r.dead).map((r) => [Math.round(r.x), Math.round(r.y), Math.round(r.vx), r.falls]),
       tr: b.tracks.map((t) => [Math.round(t.pos), t.dir ?? 1]),
+      rt: [...b.rot].map(([k, r]) => [k, Math.round(r.t * 100) / 100, Math.round(r.gone * 100) / 100]),
       dn: Math.round(b.done * 100) / 100,
     };
   },
@@ -1068,6 +1168,10 @@ export default {
         .map((r, i) => ({ x: r[0], y: r[1], vx: r[2], vy: 0, falls: r[3] | 0, dead: false, spin: b.barrels[i]?.spin ?? 0 }));
     }
     if (Array.isArray(d.tr)) d.tr.forEach((row, i) => { if (b.tracks[i] && Array.isArray(row)) { b.tracks[i].pos = row[0]; b.tracks[i].dir = row[1]; } });
+    if (Array.isArray(d.rt)) {
+      b.rot = new Map();
+      for (const row of d.rt) if (Array.isArray(row) && typeof row[0] === 'string' && Number.isFinite(row[1]) && Number.isFinite(row[2])) b.rot.set(row[0], { t: row[1], gone: row[2] });
+    }
     if (typeof d.dn === 'number') b.done = d.dn;
   },
 
