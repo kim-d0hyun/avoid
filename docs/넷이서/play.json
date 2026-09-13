@@ -15,8 +15,8 @@
   "name": "상자 계단",
   "world": "뒷마당",
   "ok": true,
-  "steps": 32,
-  "seconds": 25.6,
+  "steps": 36,
+  "seconds": 25.8,
   "parallel": 9.2,
   "limit": 0,
   "fail": null

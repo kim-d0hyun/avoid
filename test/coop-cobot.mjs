@@ -29,6 +29,7 @@ const LAG = Math.max(0, +(process.env.LAG ?? 2) | 0);
 const OUTDIR = process.env.OUT || `${homedir()}/Downloads/몰겜-넷이서-동시`;
 const ONLY = process.env.STAGE;
 const W = 960, H = 560, STEP = 3;
+const NOVID = !!process.env.NOVID;                       // 진단용 — 그림을 안 그린다
 const px = (tx) => (tx + 0.5) * T, pfy = (ty) => (ty + 1) * T;
 const FR = { n: 0 };                                    // 지금 프레임 (왕복 발판 타이밍용)
 const framesNow = () => FR.n;
@@ -53,6 +54,7 @@ class Quad {
     const blank = { left: false, right: false, jump: false, duck: false };
     for (const k of IDS) Object.assign(this.worlds[k].input, blank, inputs[k] ?? {});
     for (const k of IDS) w.update(this.worlds[k], DT);
+    if (process.env.TRACE2 && this.frames >= +process.env.TRACE2 && this.frames < +process.env.TRACE2 + 40) { const k = process.env.TRACE2_WHO || '2', q = this.worlds[k], p = q.player; console.log(`f${this.frames} ${k}: x=${(p.x / T).toFixed(2)} fy=${((q.groundY - p.air) / T).toFixed(2)} vx=${p.vx.toFixed(0)} g=${p.grounded ? 1 : 0} load=${p.load} dead=${p.dead ? 1 : 0} in=${JSON.stringify(inputs[k] ?? {})} knock=${(p.knock ?? 0).toFixed(0)} stun=${(p.stun ?? 0).toFixed(2)} ahead=${floorAt(q, p.x + 25, q.groundY - p.air, true)} track=${trackNear(q, p.x + 25, q.groundY - p.air) ? 'Y' : 'n'} tracks=${q.bag.tracks.length} boxes=${q.bag.boxes.map((x) => (x.x / T).toFixed(1)).join('/')}`); }
     for (const k of ['2', '3', '4']) this.queue.push({ due: this.frames + LAG, to: '1', from: +k, msg: this.packetOf(this.worlds[k]) });
     const host = this.host, mp = host.mp, players = [[1, ...this.packetOf(host).slice(1)]];
     for (const o of mp.others.values()) players.push([o.id, o.baseX, o.vx, o.baseAir, o.vy, o.tcrouch, o.facing, o.state ?? 0, o.grabbing, o.escapes, o.dodged ?? 0, Math.round(o.age * 1000) / 1000]);
@@ -170,31 +172,44 @@ function* one(who, gen) { let r; while (!(r = gen.next()).done) yield { [who]: r
 // ── 협동·즉시 마디 — {id: 입력} 를 프레임마다 yield ──────────────────────────
 function* mPush(quad, stage, box, x1, whoList) {
   const idx = boxIndex(stage, box), b = quad.host.bag, bx = b.boxes[idx];
-  const dir = Math.sign(px(x1) - bx.x), main = whoList[0];
-  // 모으기 — 다들 상자 뒤로 걸어온다 (동시에)
+  const dir = Math.sign(px(x1) - bx.x);
+  // 모으기 — 다들 상자 뒤로 걸어온다 (동시에). 첫째가 상자에 붙고 나머지는 그 뒤에 34px 씩.
   const gens = {}; whoList.forEach((m, i) => { gens[m] = gwalk(quad.W(m), bx.x - dir * (T / 2 + HALF + 4 + 34 * i), { frames: 400 }); });
   let gathering = true;
   while (gathering) { const ins = {}; gathering = false; for (const m of whoList) { const r = gens[m].next(); if (!r.done) { ins[m] = r.value || {}; gathering = true; } } yield ins; }
-  // 밀기 — 다 같이 그쪽으로
+  // 밀기 — 다 같이 그쪽으로. 목표 칸 가운데에 닿거나 지나치면 멈춘다.
   const y0 = bx.y; let lastBx = bx.x, still = 0;
   for (let f = 0; f < 60 * 40; f++) {
     const ins = {}; for (const m of whoList) ins[m] = { left: dir < 0, right: dir > 0 }; yield ins;
-    if (Math.abs(bx.x - lastBx) > 3 * T) return; lastBx = bx.x;
-    if (bx.y > y0 + 2) { if (bx.vy === 0 && ++still > 6) return; } else still = 0;
-    if (bx.y <= y0 + 2 && Math.abs(bx.x - px(x1)) < 4) return;
-    if ('<>'.includes(tile(b, col(bx.x), Math.floor((bx.y + 2) / T))) && Math.abs(bx.x - px(x1)) < 6 * T) return;
+    if (Math.abs(bx.x - lastBx) > 3 * T) break; lastBx = bx.x;                                 // 포탈을 지났다
+    if (bx.y > y0 + 2) { if (bx.vy === 0 && ++still > 6) break; else continue; }              // 떨어지는 중 — 앉을 때까지
+    if (dir * (bx.x - px(x1)) > -3) break;                                                    // 닿았다
+    if ('<>'.includes(tile(b, col(bx.x), Math.floor((bx.y + 2) / T))) && Math.abs(bx.x - px(x1)) < 6 * T) break;   // 무빙워크에 올렸다 — 알아서 간다
+  }
+  for (let f = 0; f < 12; f++) yield {};                                                      // 손을 뗀다
+}
+function* gchain(world, lay, me, present, upto, finalOffset) {
+  // 머리 0..upto 를 차례로 딛고 올라간다. 다음다음 사람(j+2)이 있으면 그 발에 머리를 찧지 않게 뒤쪽 가장자리에.
+  for (let j = 0; j <= upto; j++) {
+    const edge = (j + 2 < present) ? -lay.lean * 20 : (j === upto ? finalOffset : 0);
+    yield* gjump(world, lay.base + lay.lean * 14 * j + edge, me.fy - HEAD * (j + 1));
   }
 }
 function* mBoost(quad, stage, who, x1, y1, on) {
   const me0 = quad.at(who), dir = Math.sign(px(x1) - me0.x) || 1;
   const lay = stackLayout(quad.W(who), me0, dir, on.length);
   if (!lay) return;
-  const gens = {}; on.forEach((o, j) => { gens[o] = gwalk(quad.W(o), lay.base + lay.lean * 14 * j, { frames: 400 }); });
-  const meGen = gwalk(quad.W(who), lay.start, { frames: 400 });
-  let gathering = true;
-  while (gathering) { const ins = {}; gathering = false; for (const o of on) { const r = gens[o].next(); if (!r.done) { ins[o] = r.value || {}; gathering = true; } } const rm = meGen.next(); if (!rm.done) { ins[who] = rm.value || {}; gathering = true; } yield ins; }
-  // who 가 머리를 밟고 올라가 뛴다
-  for (let j = 0; j < on.length; j++) { const edge = j < on.length - 1 ? -lay.lean * 20 : 0; yield* one(who, gjump(quad.W(who), lay.base + lay.lean * 14 * j + edge, me0.fy - HEAD * (j + 1))); }
+  // 뛰는 사람이 먼저 스택 뒤로 비켜 선다
+  if (!lay.tower) yield* one(who, gwalk(quad.W(who), lay.start, { frames: 400 }));
+  // 밑 사람이 자리에 서고, 그 위 사람들은 뒤에서 걸어와 머리를 딛고 올라서서 14px 씩 기울여 선다
+  yield* one(on[0], gwalk(quad.W(on[0]), lay.base, { frames: 400 }));
+  for (let k = 1; k < on.length; k++) {
+    yield* one(on[k], gwalk(quad.W(on[k]), lay.start, { frames: 400 }));
+    yield* one(on[k], gchain(quad.W(on[k]), lay, me0, k, k - 1, lay.lean * 14));
+  }
+  for (let f = 0; f < 6; f++) yield {};
+  // 뛰는 사람이 머리를 차례로 딛고 올라가 목표로 뛴다
+  yield* one(who, gchain(quad.W(who), lay, me0, on.length, on.length - 1, 0));
   yield* one(who, gjump(quad.W(who), px(x1), pfy(y1)));
 }
 function* mTake(quad, who, color) { const g = gwalk(quad.W(who), quad.W(who).player.x, { frames: 8 }); for (let f = 0; f < 60 && !quad.host.bag.opened.has(color); f++) yield {}; }
@@ -202,7 +217,8 @@ function* mSwitch(quad) { for (let f = 0; f < 30 && !quad.host.bag.latched; f++)
 function* mNeedPlate(quad, tag) { for (let f = 0; f < 40 && !quad.host.bag.plates[tag]; f++) yield {}; }
 function* mRide(quad, stage, box, x1) { const bx = quad.host.bag.boxes[boxIndex(stage, box)]; for (let f = 0; f < 900 && Math.abs(bx.x - px(x1)) >= 3; f++) yield {}; }
 function* mPortalBox(quad, stage, box, tag) { const b = quad.host.bag, bx = b.boxes[boxIndex(stage, box)], to = b.portals[other(tag)]; for (let f = 0; f < 120 && col(bx.x) !== to.x; f++) yield {}; }
-function* mPortal(quad, who, tag) { const b = quad.host.bag, to = b.portals[other(tag)]; for (let f = 0; f < 120 && !(col(quad.W(who).player.x) === to.x && quad.W(who).player.grounded); f++) yield* one(who, gwalk(quad.W(who), quad.W(who).player.x, { frames: 1 })); }
+// 포탈을 지나 저편에 내려설 때까지 **프레임을 흘려보내며** 기다린다 (제자리 걷기는 한 프레임도 안 흘려 바로 끝났다 — 그래서 다음 걸음 도중에 옮겨졌다)
+function* mPortal(quad, who, tag) { const b = quad.host.bag, to = b.portals[other(tag)]; for (let f = 0; f < 240 && !(col(quad.W(who).player.x) === to.x && quad.W(who).player.grounded); f++) yield {}; for (let f = 0; f < 4; f++) yield {}; }
 const other = (t) => (t === t.toLowerCase() ? t.toUpperCase() : t.toLowerCase());
 
 function makeGen(quad, stage, move) {
@@ -241,21 +257,36 @@ function playConcurrent(stage, moves, quad, onFrame) {
   const incBarrierBefore = (i) => { for (let j = 0; j < i; j++) if (!done[j] && meta[j].barrier) return true; return false; };
   const anyBefore = (i) => { for (let j = 0; j < i; j++) if (!done[j]) return true; return false; };
   const sharerBusy = (i) => { for (let j = 0; j < i; j++) if (!done[j] && !running.has(j) && meta[j].actors.some((x) => meta[i].actors.includes(x))) return true; return false; };
+  // 같은 칸에 내리는 뛰기는 한 번에 하나 — 둘이 같은 발판을 노리면 뒤 사람이 앞 사람 머리에 내린다.
+  const landingOf = (m) => (m[0] === 'jump' || m[0] === 'spring') ? `${m[2]},${m[3]}` : m[0] === 'hop' ? `h${m[2]}` : null;
+  const landingTaken = (i) => { const key = landingOf(moves[i]); return !!key && [...running.values()].some((t) => t.key === key); };
+  // 내릴 자리에 남이 서 있으면 비킬 때까지 기다린다 (내려선 사람은 바로 비켜 서는 걸음이 뒤에 있다)
+  const waited = new Array(N).fill(0);
+  const landingOccupied = (i) => {
+    const m = moves[i]; if (m[0] !== 'jump') return false;
+    if (waited[i] > 180) return false;                                              // 3초 기다렸으면 그냥 간다 (머리에 내려도 된다) — 교착 방지
+    const tx = px(m[2]), tfy = pfy(m[3]);
+    const occ = IDS.some((k) => k !== m[1] && (() => { const q = quad.at(k); return Math.abs(q.x - tx) < 0.7 * T && Math.abs(q.fy - tfy) < 20; })());
+    if (occ) waited[i]++;
+    return occ;
+  };
   let guard = 0;
   while (done.some((d) => !d)) {
-    if (++guard > 60 * 500) return { ok: false, err: `시간 초과 (남은 ${done.filter((d) => !d).length})` };
+    if (++guard > 60 * 500) { const left = moves.map((m, i) => done[i] ? null : `${i}:${m.join(' ')}${running.has(i) ? '*' : ''}`).filter(Boolean).slice(0, 6).join(' | '); const spots = IDS.map((k) => { const q = quad.at(k); return `${k}:(${col(q.x)},${row(q.fy)})`; }).join(' '); return { ok: false, err: `시간 초과 (남은 ${done.filter((d) => !d).length}) ${left} · 자리 ${spots}` }; }
     for (let i = 0; i < N; i++) {
       if (done[i] || running.has(i)) continue;
       if (incBarrierBefore(i)) break;
       if (meta[i].barrier) { if (running.size === 0 && !anyBefore(i)) { running.set(i, { gen: makeGen(quad, stage, moves[i]), actors: meta[i].actors, budget: 60 * 60 }); meta[i].actors.forEach((p) => busy.add(p)); } break; }
       if (meta[i].actors.some((p) => busy.has(p))) continue;
-      if (sharerBusy(i)) continue;
-      running.set(i, { gen: makeGen(quad, stage, moves[i]), actors: meta[i].actors, budget: 60 * 30 }); meta[i].actors.forEach((p) => busy.add(p)); if (process.env.TRACE) console.log('start', i, moves[i].join(' '));
+      if (sharerBusy(i) || landingTaken(i) || landingOccupied(i)) continue;
+      running.set(i, { gen: makeGen(quad, stage, moves[i]), actors: meta[i].actors, budget: 60 * 30, key: landingOf(moves[i]) }); meta[i].actors.forEach((p) => busy.add(p)); if (process.env.TRACE) console.log('start', i, moves[i].join(' '));
     }
     const inputs = {};
     for (const [i, task] of [...running]) {
       const r = (task.budget-- > 0) ? task.gen.next() : { done: true };
       if (r.done) { done[i] = true; task.actors.forEach((p) => busy.delete(p)); running.delete(i); if (process.env.TRACE) console.log('done ', i, moves[i].join(' '), '@', quad.frames); continue; }
+      if (process.env.TRACE3 && quad.frames >= +process.env.TRACE3 && quad.frames < +process.env.TRACE3 + 3) console.log(`  f${quad.frames} task ${i} ${moves[i].join(' ')} → ${JSON.stringify(r.value)}`);
+      if (process.env.TRACE_TASK && i === +process.env.TRACE_TASK && ((task.n = (task.n ?? 0) + 1) % 40 === 1)) { const who = moves[i][1], q = quad.W(who), pp = q.player; console.log(`  f${quad.frames} task ${i} ${moves[i].join(' ')} → ${JSON.stringify(r.value)} | ${who}: x=${(pp.x / T).toFixed(2)} fy=${((q.groundY - pp.air) / T).toFixed(2)} g=${pp.grounded ? 1 : 0} vx=${pp.vx.toFixed(0)} push=${pp.pushing ? 1 : 0} box=${q.bag.boxes.map((x) => (x.x / T).toFixed(2)).join('/')} others=${[...q.mp.others.values()].map((o) => `${o.id}@${(o.x / T).toFixed(1)}`).join(',')}`); }
       Object.assign(inputs, r.value || {});
     }
     quad.step(inputs);
@@ -276,33 +307,34 @@ function playConcurrent(stage, moves, quad, onFrame) {
 // ── 렌더 (넷을 다 담는 카메라) ────────────────────────────────────────────────
 const upright = (cx, cy, fn) => fn();
 function renderFrame(ctx, quad) {
-  const w0 = quad.host, b = w0.bag, time = quad.frames / 60;
-  // 카메라 — 산 사람 넷을 다 담는 상자에 여백. 너무 확대/축소 안 되게 최소/최대.
-  const alive = IDS.map((k) => quad.at(k)).filter((q) => !q.dead);
-  const xs = alive.map((q) => q.x), ys = alive.map((q) => q.fy);
-  let cx0 = Math.min(...xs) - 3 * T, cx1 = Math.max(...xs) + 3 * T, cy0 = Math.min(...ys) - 6 * T, cy1 = Math.max(...ys) + 2 * T;
-  let vw = Math.max(16 * T, cx1 - cx0), vh = vw * H / W;
-  if (vh < cy1 - cy0) { vh = cy1 - cy0; vw = vh * W / H; }
-  vw = Math.min(vw, b.w * T); vh = Math.min(vh, b.h * T);
-  let camx = (cx0 + cx1) / 2 - vw / 2, camy = (cy0 + cy1) / 2 - vh / 2;
-  camx = Math.max(0, Math.min(b.w * T - vw, camx)); camy = Math.max(0, Math.min(b.h * T - vh, camy));
-  // 카메라를 부드럽게
-  const s = renderFrame; s.cam ??= { x: camx, y: camy, vw, vh };
-  s.cam.x += (camx - s.cam.x) * 0.15; s.cam.y += (camy - s.cam.y) * 0.15; s.cam.vw += (vw - s.cam.vw) * 0.1; s.cam.vh += (vh - s.cam.vh) * 0.1;
-  const cam = s.cam, k = W / cam.vw;
-  b.cam = { x: cam.x, y: cam.y, w: cam.vw, h: cam.vh };
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#f6f5f2'; ctx.fillRect(0, 0, W, H);
-  const boil = ink.boil(time);
-  ctx.setTransform(k, 0, 0, k, -cam.x * k, -cam.y * k);
-  coop.draw(ctx, w0, time, boil, upright);
-  // 사람 넷 — 각자 자기 세상에서 자기 자리 (제일 정확). 방장 세상의 others 대신 각 세상의 player 를 그린다.
-  for (const k2 of IDS) {
-    const wk = quad.W(k2), p = wk.player;
-    block.drawBlock(ctx, p, time, boil, { name: `${k2}번`, faded: p.dead, color: shirtColor(+k2), mark: ((+k2) % 4 + 4) % 4, crown: k2 === '1', mine: false });
-  }
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  const hud = { ...w0, w: W, h: H };
-  coop.hud?.(ctx, hud, time, (wx, wy) => [(wx - cam.x) * k, (wy - cam.y) * k]);
+  const time = quad.frames / 60, boil = ink.boil(time);
+  const PW = W / 2, PH = H / 2;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#e9e6df'; ctx.fillRect(0, 0, W, H);
+  IDS.forEach((k, i) => {
+    const wk = quad.W(k), px0 = (i % 2) * PW, py0 = Math.floor(i / 2) * PH;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.beginPath(); ctx.rect(px0, py0, PW, PH); ctx.clip();
+    ctx.fillStyle = '#f6f5f2'; ctx.fillRect(px0, py0, PW, PH);
+    const cam = coop.camera(wk, PW, PH) ?? { x: 0, y: 0 };
+    ctx.setTransform(1, 0, 0, 1, px0 - cam.x, py0 - cam.y);
+    coop.draw(ctx, wk, time, boil, upright);
+    const hostId = 1;
+    for (const o of wk.mp.others.values()) {
+      block.drawBlock(ctx, o, time, boil, { name: o.name, faded: o.dead, color: shirtColor(o.id), mark: ((o.id % 4) + 4) % 4, crown: o.id === hostId });
+    }
+    block.drawBlock(ctx, wk.player, time, boil, { name: `${k}번`, mine: true, faded: wk.player.dead, color: shirtColor(+k), mark: ((+k) % 4 + 4) % 4, crown: +k === hostId });
+    ctx.setTransform(1, 0, 0, 1, px0, py0);
+    coop.hud?.(ctx, { ...wk, w: PW, h: PH }, time, (wx, wy) => [wx - cam.x, wy - cam.y]);
+    // 누구 화면인지 — 오른쪽 아래 이름표
+    const tag = `${k}번${+k === hostId ? ' · 방장' : ''} 화면`;
+    ctx.font = '700 12px "Apple SD Gothic Neo", sans-serif'; const tw = ctx.measureText(tag).width;
+    ctx.fillStyle = shirtColor(+k); ctx.globalAlpha = 0.92; ctx.fillRect(PW - tw - 18, PH - 24, tw + 12, 18); ctx.globalAlpha = 1;
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(tag, PW - tw - 12, PH - 15);
+    ctx.restore();
+  });
+  // 칸막이
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = '#141210'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(PW, 0); ctx.lineTo(PW, H); ctx.moveTo(0, PH); ctx.lineTo(W, PH); ctx.stroke();
 }
 
 // ── 돌리기 ──
@@ -312,7 +344,7 @@ function renderStage(stage) {
   const dir = `/private/tmp/cobot-${stage.name}`; rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
   const canvas = createCanvas(W, H), ctx = canvas.getContext('2d');
   let shot = 0;
-  const onFrame = () => { renderFrame(ctx, quad); execWrite(canvas, `${dir}/f${String(shot++).padStart(5, '0')}.png`); };
+  const onFrame = () => { if (NOVID) return; renderFrame(ctx, quad); execWrite(canvas, `${dir}/f${String(shot++).padStart(5, '0')}.png`); };
   const r = playConcurrent(stage, MOVES.find((m) => m.name === stage.name).moves, quad, onFrame);
   return { ...r, dir, shot };
 }
@@ -320,16 +352,26 @@ import { writeFileSync } from 'node:fs';
 function execWrite(canvas, path) { writeFileSync(path, canvas.toBuffer('image/png')); }
 
 mkdirSync(OUTDIR, { recursive: true });
-const made = [];
-for (const s of STAGES) {
-  if (ONLY && s.name !== ONLY) continue;
-  const idx = STAGES.indexOf(s), no = `${WORLD_NAMES.indexOf(s.world) + 1}-${STAGES.filter((t, i) => t.world === s.world && i <= idx).length}`;
-  process.stdout.write(`${no} ${s.name} … `);
-  let r; try { r = renderStage(s); } catch (e) { console.log(`✗ ${e.message}`); continue; }
-  if (!r.ok) { console.log(`✗ ${r.err} (프레임 ${r.shot})`); rmSync(r.dir, { recursive: true, force: true }); continue; }
-  const out = `${OUTDIR}/${no}-${s.name}.mp4`;
+const made = [], failed = [];
+for (const st of STAGES) {
+  if (ONLY && st.name !== ONLY) continue;
+  const idx = STAGES.indexOf(st), no = `${WORLD_NAMES.indexOf(st.world) + 1}-${STAGES.filter((t, i) => t.world === st.world && i <= idx).length}`;
+  process.stdout.write(`${no} ${st.name} … `);
+  let r; try { r = renderStage(st); } catch (e) { console.log(`✗ ${e.message}`); failed.push(`${no} ${st.name}: ${e.message}`); continue; }
+  if (!r.ok) { console.log(`✗ ${r.err} (프레임 ${r.shot})`); failed.push(`${no} ${st.name}: ${r.err}`); rmSync(r.dir, { recursive: true, force: true }); continue; }
+  const out = `${OUTDIR}/${no}-${st.name}.mp4`;
+  if (NOVID) { rmSync(r.dir, { recursive: true, force: true }); console.log(`✓ (그림 없이) ${(quadFrames(r) / 60).toFixed(0)}초`); continue; }
   execFileSync('ffmpeg', ['-y', '-framerate', '20', '-i', `${r.dir}/f%05d.png`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '22', out], { stdio: 'ignore' });
   rmSync(r.dir, { recursive: true, force: true });
-  console.log(`✓ ${r.shot}장`); made.push(out);
+  console.log(`✓ ${r.shot}장 · ${(quadFrames(r) / 60).toFixed(0)}초`); made.push(out);
 }
-console.log(`\n${made.length}판 → ${OUTDIR}`);
+if (!ONLY && made.length) {
+  const list = `${OUTDIR}/.concat.txt`;
+  writeFileSync(list, made.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join('\n') + '\n');
+  const all = `${homedir()}/Downloads/몰겜-넷이서-동시-전체.mp4`;
+  execFileSync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', all], { stdio: 'ignore' });
+  rmSync(list, { force: true });
+  console.log(`전체 → ${all}`);
+}
+console.log(`\n${made.length}판 → ${OUTDIR}${failed.length ? `\n실패 ${failed.length}: ` + failed.join(' | ') : ''}`);
+function quadFrames(r) { return r.frames ?? r.shot * STEP; }

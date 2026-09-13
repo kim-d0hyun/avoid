@@ -601,6 +601,10 @@ say('무빙워크 — 사람을 실어 가고, 상자를 실어 가고, 상자�
   // 사람이 46칸에 서면 왼쪽으로 실려 가 상자에 막힌다 — 상자 속이 아니라 옆에
   setPos(world, 46, 18); tick(world, 60, {});
   ok('상자 옆에서 선다 (속으로 안 들어간다)', world.player.x - HALF_PX >= box.x + T / 2 - 1);
+  // 붙은 채로 반대쪽으로 걸으면 벗어난다 — 벨트가 끌어다 붙이는 걸 「내가 민다」로 치면 영영 못 벗어났다 (3.5.1)
+  tick(world, 120, { right: true });
+  ok('상자에 붙어 있다가 반대로 걸으면 벗어난다', world.player.x > 47 * T);
+  setPos(world, 46, 18); tick(world, 60, {});
   ok('상자는 턱에 걸려 그대로', Math.abs(box.x - 44.5 * T) < 2);
 }
 
@@ -707,6 +711,22 @@ say('나오는 발판 위에 서 있는데 누름판이 풀리면 — 떨어진�
   tick(world, 60, {});
   ok('누름판이 풀렸다', b.plates.q === false);
   check('발판이 사라져 3층 바닥까지 떨어졌다', feetRow(world), 8);
+}
+
+
+say('포탈 — 저편에 내려선 채 가만히 있어도 되돌아가지 않는다. 떠났다 다시 들어오면 다시 탄다');
+{
+  const world = make('무빙워크');                    // u (62,15) 선반 위 · U (78,11) 승강장 선반
+  const b = world.bag, p = world.player;
+  setPos(world, 62, 15); p.grounded = true;
+  tick(world, 5, {});
+  check('포탈을 탔다', Math.floor(p.x / T), 78);
+  tick(world, 120, {});                            // 2초 가만히
+  check('가만히 서 있어도 그 자리', Math.floor(p.x / T), 78);
+  tick(world, 30, { right: true });                // 칸을 떠난다
+  ok('떠났다', Math.floor(p.x / T) !== 78);
+  setPos(world, 78, 11); p.grounded = true; tick(world, 5, {});
+  check('다시 들어오면 다시 탄다 (u 로)', Math.floor(p.x / T), 62);
 }
 
 done('넷이서');

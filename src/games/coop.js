@@ -394,7 +394,9 @@ export function move(world, dt) {
   }
 
   // x 로 움직이고 벽·상자에 막히면 되돌린다. 상자는 **밀린다** — 밀 수 있으면.
-  let nx = p.x + (p.vx + p.knock) * dt + ride + drift;
+  // 걸음(내 속도·튕김·발판)만으로 새 자리를 잡고 벽·상자에 대 본다. 무빙워크가 실어 가는 몫(drift)은 그 뒤에 따로 더한다 —
+  // 벨트가 나를 상자로 끌어다 붙이는 걸 「내가 상자를 민다」로 치면, 반대로 걸어 나가려 해도 매 프레임 상자에 다시 붙어 못 벗어난다.
+  let nx = p.x + (p.vx + p.knock) * dt + ride;
   p.pushing = false;
   if (bodyBlocked(world, nx, fy - 1, h) && grounded) {
     // 판자 두께만큼의 턱(14px 안)은 걸어서 올라선다 — 선반에 발이 걸려 서는 일이 없게.
@@ -420,6 +422,16 @@ export function move(world, dt) {
     }
   }
   p.x = nx;
+  // 무빙워크에 실려 가는 몫 — 벽·상자에 닿으면 거기서 멈춘다 (밀지는 않는다)
+  if (drift !== 0) {
+    const sd = Math.sign(drift);
+    if (!bodyBlocked(world, p.x + drift, fy - 1, h)) p.x += drift;
+    else {
+      const box = grounded ? boxInFront(world, p.x + drift, fy, h, sd) : null;
+      if (box) p.x = box.x - sd * (T / 2 + HALF + 0.5);            // 상자 옆에 붙는다 — 속으로 들어가지 않는다
+      else { let dx = drift; while (bodyBlocked(world, p.x + dx, fy - 1, h) && Math.abs(dx) > 0.5) dx -= sd * 0.5; if (!bodyBlocked(world, p.x + dx, fy - 1, h)) p.x += dx; }
+    }
+  }
   // 사람끼리 부딪힘 — 같은 높이면 서로 막는다. 각자 자기 몸만 밀어내는데, 양쪽 화면이 같은 계산을
   // 하니 뒤에서 밀면 앞 사람이 자기 화면에서 밀려나 조금씩 나아간다(피코파크의 그 밀기다).
   // 머리 위/밑(계단·어깨)은 세로 관계라 안 민다. 벽 쪽으로도 안 밀린다 — 벽에 끼여 겹치지 않게.
@@ -480,16 +492,19 @@ export function move(world, dt) {
   // 죽는 것 둘 — 가시, 판 밖으로 떨어지기
   if (inSpikes(b, p.x, fy, h) || fy > world.groundY + T) { die(world); return; }
 
-  // 포탈 — 몸 가운데가 포탈 칸에 들어가면 저편으로
-  if (b.portalCool <= 0) {
+  // 포탈 — 몸 가운데가 포탈 칸에 **들어서는 순간** 저편으로. 저편에 내려선 채 가만히 있어도 되돌아가지 않는다 —
+  // 칸을 떠났다가 다시 들어와야 다시 탄다. (시간으로만 막으면 0.3초 뒤 그 자리에서 도로 튕겨 갔다.)
+  {
     const ch = tile(b, Math.floor(p.x / T), Math.floor((fy - h / 2) / T));
-    if ('uUwW'.includes(ch)) {
+    const onPortal = 'uUwW'.includes(ch);
+    if (onPortal && !p.onPortal && b.portalCool <= 0) {
       const other = b.portals[ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()];
       if (other) {
         p.x = (other.x + 0.5) * T; p.air = world.groundY - (other.y + 1) * T; p.grounded = false;
         b.portalCool = PORTAL_COOL; b.flash = { x: p.x, y: world.groundY - p.air - h / 2, t: 0.4 };
+        p.onPortal = true;                   // 저편 포탈 칸에 서 있는 것으로 친다
       }
-    }
+    } else p.onPortal = onPortal;
   }
   // 통에 맞았나
   for (const br of b.barrels) {
@@ -630,10 +645,11 @@ function stepObjects(world, dt) {
     } else { bx.vy = 0; bx.y = under; }
     // 포탈
     const ch = tile(b, Math.floor(bx.x / T), Math.floor((bx.y - T / 2) / T));
-    if ('uUwW'.includes(ch) && (bx.cool ?? 0) <= 0) {
+    const onPortal = 'uUwW'.includes(ch);
+    if (onPortal && !bx.onPortal && (bx.cool ?? 0) <= 0) {
       const o = b.portals[ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()];
-      if (o) { bx.x = (o.x + 0.5) * T; bx.y = (o.y + 1) * T; bx.cool = 1; }
-    }
+      if (o) { bx.x = (o.x + 0.5) * T; bx.y = (o.y + 1) * T; bx.cool = 1; bx.onPortal = true; }
+    } else bx.onPortal = onPortal;
     bx.cool = Math.max(0, (bx.cool ?? 0) - dt);
   }
   // 통 — 구멍에서 나와 굴러가고, 떨어지고, 벽에 부딛히면 부서진다
