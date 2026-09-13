@@ -103,9 +103,9 @@
   "name": "3층 창고",
   "world": "도시",
   "ok": true,
-  "steps": 58,
-  "seconds": 108.9,
-  "parallel": 40.1,
+  "steps": 62,
+  "seconds": 109.7,
+  "parallel": 40.2,
   "limit": 0,
   "fail": null
  },

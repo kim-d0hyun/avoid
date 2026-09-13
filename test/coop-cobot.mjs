@@ -86,7 +86,10 @@ function* gwalk(world, targetX, opts = {}) {
       const stop = p.vx * p.vx / (2 * FRICTION_G); if (Math.abs(dx) <= stop + 2) hold = 0;
       if (hold) {
         const ax = p.x + dir * (HALF + 8);
-        const ahead = floorAt(world, ax, fy, true) ?? floorBelow(world, ax, fy + 16, fy + 60, 5, { people: true });
+        // 왕복 발판 위에서는 「조금 낮은 데로 내려선다」를 안 한다 — 발판이 되돌아가는 중에 물가로 내려서려다 연못에 빠진다.
+        // 발판에서 내리는 건 경로의 뛰기(jump) 걸음이 한다.
+        const onTrack = !!trackNear(world, p.x, fy);
+        const ahead = floorAt(world, ax, fy, true) ?? (onTrack ? null : floorBelow(world, ax, fy + 16, fy + 60, 5, { people: true }));
         const tA = tile(b, col(ax), Math.floor((fy + 2) / T)), un = tile(b, col(p.x), Math.floor((fy + 2) / T));
         if (tA === '~' && un !== '~' && !((b.clock % 4) < 0.12)) hold = 0;
         if (hold && ahead === null) {
@@ -252,6 +255,14 @@ function actorsOf(m) {
 // ── 스케줄러 ────────────────────────────────────────────────────────────────
 function playConcurrent(stage, moves, quad, onFrame) {
   const N = moves.length, meta = moves.map(actorsOf), done = new Array(N).fill(false);
+  // 열쇠·스위치·누름판은 **닿는 순간** 발동한다 — 그래서 take/switch/need_plate 바로 앞의 걷기가 진짜 방아쇠다.
+  // 그 걷기도 협동 마디로 친다 (앞 걸음이 다 끝난 뒤에, 그 순간엔 그 사람만). 안 그러면 남이 아직 노란 바닥 위에 있는데 열쇠를 집는다.
+  for (let i = 0; i < N; i++) {
+    if (moves[i][0] !== 'walk') continue;
+    const who = moves[i][1];
+    let j = i + 1; while (j < N && moves[j][0] !== 'need_plate' && !meta[j].actors.includes(who)) j++;
+    if (j < N && ['take', 'switch', 'need_plate'].includes(moves[j][0])) meta[i] = { ...meta[i], barrier: true };
+  }
   const running = new Map();          // i → {gen, actors}
   const busy = new Set();
   const incBarrierBefore = (i) => { for (let j = 0; j < i; j++) if (!done[j] && meta[j].barrier) return true; return false; };
@@ -290,7 +301,7 @@ function playConcurrent(stage, moves, quad, onFrame) {
       Object.assign(inputs, r.value || {});
     }
     quad.step(inputs);
-    if (quad.anyDead()) return { ok: false, err: `누가 죽었다 (프레임 ${quad.frames})` };
+    if (quad.anyDead()) { const who = IDS.filter((k) => quad.at(k).dead); const spots = IDS.map((k) => { const q = quad.at(k); return `${k}:(${col(q.x)},${row(q.fy)})${q.dead ? '†' : ''}`; }).join(' '); const run = [...running.keys()].map((i) => moves[i].join(' ')).join(' | '); return { ok: false, err: `${who.join('·')}번이 죽었다 (프레임 ${quad.frames}) 자리 ${spots} · 하던 것 ${run}` }; }
     if (quad.frames % STEP === 0) onFrame();
   }
   // 출구 — 안에 있는 누가 ⌥↑
