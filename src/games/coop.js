@@ -30,7 +30,6 @@ const TRACK_SPEED = 126;                   // 왕복 발판 초당 3칸
 const TRACK_W = 3 * T;
 const BARREL_SPEED = 210, BARREL_EVERY = 4, BARREL_R = 19;
 const KNOCK = 380, STUN = 0.5;             // 통에 맞으면 세 칸 밀려나고 0.5초 넘어진다
-const PULL_REACH = 3 * T + 8;              // 손잡기: 세 칸 아래까지
 const BUMP_SEP = 300;                      // 사람끼리 부딪힐 때 벌어지는 힘. 걷는 속도(290)보다 조금 세서, 막되 뒤에서 밀면 조금씩 나아간다
 const BUMP_AT = BLOCK_W;                   // 두 몸 중심이 이보다 가까우면 겹친 것 (몸 폭 34)
 const PORTAL_COOL = 0.3;
@@ -120,8 +119,11 @@ function solidTile(b, ch) {
   if (ch === '#') return true;
   if (ch === 'R' || ch === 'Y' || ch === 'B') return !b.opened.has(ch.toLowerCase());
   if (ch === 'A') return !b.latched;
+  if (ch === 'n') return b.latched;          // 스위치 a 를 밟으면 나오는 발판 (A 의 반대)
   if (ch === 'P') return !b.plates.p;
   if (ch === 'Q') return !b.plates.q;
+  if (ch === 'M') return b.plates.p;         // 누름판 p 를 밟고 있는 동안 나오는 발판
+  if (ch === 'm') return b.plates.q;         // 누름판 q 를 밟고 있는 동안 나오는 발판
   return false;
 }
 /// 위에서만 딛는 칸인가 (밑에서는 통과).
@@ -437,7 +439,7 @@ export function move(world, dt) {
   if (p.knock !== 0) { p.knock *= Math.exp(-dt / 0.17); if (Math.abs(p.knock) < 8) p.knock = 0; }
 
   // 누가 내 머리 위에 서 있나 — 눌리는 그림이 되고, **뛰지 못한다.** 사람을 얹은 채 뛰면 위 사람을
-  // 뚫고 오르거나(내 화면) 위 사람이 튕겨 오른다(그 사람 화면). 사람 계단은 웅크리기·손잡기로 오르는 것이다.
+  // 뚫고 오르거나(내 화면) 위 사람이 튕겨 오른다(그 사람 화면). 사람 계단은 웅크리기로 오르는 것이다.
   p.load = ridersOn(world, p.x, fy, h);
   // 점프 — 땅에서만. 웅크린 채로는 안 뛴다 (굴 안에서 머리를 찧는다).
   if (input.jump && grounded && p.crouch < 0.3 && p.stun <= 0 && !p.jumpHeld && p.load === 0) {
@@ -818,6 +820,19 @@ function drawTiles(ctx, world, time, boil) {
         stroke(ctx, [[x + T - 12, y + 12], [x + 12, y + T - 12]], { width: 2, color: c, seed: tx + ty + 1, amp: 0.4, halo: false, alpha: 0.8 });
         break;
       }
+      case 'n': case 'M': case 'm': {
+        // 스위치·누름판으로 나오는 발판. 나오면 나무 판자, 아니면 점선 윤곽만.
+        const out = solidTile(b, ch);
+        if (out) {
+          ctx.fillStyle = '#c9a86a'; ctx.globalAlpha = 0.5; ctx.fillRect(x, y + T * 0.28, T, T * 0.44); ctx.globalAlpha = 1;
+          stroke(ctx, [[x, y + T * 0.28], [x + T, y + T * 0.28], [x + T, y + T * 0.72], [x, y + T * 0.72]], { width: 2.4, color: ch === 'n' ? '#3f8f56' : '#2f6fb0', seed: tx + ty * 9, amp: 0.5, close: true, halo: false, sharp: true });
+          for (let kx = 6; kx < T; kx += 9) circle(ctx, x + kx, y + T * 0.5, 1.2, { width: 1, color: INK, fill: INK, halo: false, seed: 1, amp: 0 });
+        } else {
+          ctx.save(); ctx.setLineDash([3, 5]); ctx.strokeStyle = ch === 'n' ? '#3f8f56' : '#2f6fb0'; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.5;
+          ctx.strokeRect(x + 1, y + T * 0.28, T - 2, T * 0.44); ctx.restore();
+        }
+        break;
+      }
       case 'A': case 'P': case 'Q': {
         const open = !solidTile(b, ch);
         // 롤 셔터. 열리면 위 통으로 말려 올라간다 — 위 칸(통)이 있을 때만 통을 그린다.
@@ -952,7 +967,7 @@ export default {
   name: '넷이서',
   line: '넷이 열쇠를 찾아 포탈에 모인다. 혼자서는 아무것도 못 하게 만든 판 열둘.',
   keys: [['⌥ ← →', '걷기 (상자는 걸어가서 민다)'], ['⌥ ↑', '점프 · 사다리 오르기 · 포탈에서 다음 판'],
-         ['⌥ ↓', '웅크리기 (한 칸 굴) · 사다리 내리기'], ['⌥ Space', '손잡기 — 아래 사람을 끌어올린다 (세 칸)'],
+         ['⌥ ↓', '웅크리기 (한 칸 굴) · 사다리 내리기'],
          ['⌥ R', '판 되감기 (방장만)']],
   noGrab: true, noClock: true, noResults: true, noGround: true,
   /// ⌥R 은 판 도중에도 먹는다 — 방장이 되감는다. 다른 게임은 판이 끝난 뒤에만.
@@ -987,38 +1002,10 @@ export default {
 
   move,
 
-  /// ⌥Space — 손잡기. 바로 밑(세 칸 안)의 사람을 내 옆으로 끌어올린다.
-  action(world) {
-    const p = world.player;
-    if (p.dead || !p.grounded) return;
-    const fy = world.groundY - p.air;
-    let best = null, bestD = 1e9;
-    for (const o of world.mp.others.values()) {
-      if (o.dead) continue;
-      const ofy = o.groundY - o.air;
-      const dy = ofy - fy, dx = Math.abs(o.x - p.x);
-      if (dy > 8 && dy <= PULL_REACH && dx < T * 1.3 && dy + dx < bestD) { best = o; bestD = dy + dx; }
-    }
-    if (!best) return;
-    p.pulling = 0.55;
-    const side = Math.sign(best.x - p.x) || p.facing || 1;
-    // 올라선 사람이 설 자리 — 상대 쪽 옆, 안 되면 반대쪽 옆, 그것도 안 되면 내 자리.
-    // 「선다」는 막히지 않고 **발밑에 바닥이 있다**는 뜻이다. 벼랑 끝에서 끌어올린 사람을 허공에 세우면
-    // 그 사람 화면에서 도로 떨어진다.
-    const standable = (x) => !bodyBlocked(world, x, fy - 1, BLOCK_H) && floorBelow(world, x, fy - 2, fy + 2, HALF - 6, { people: false }) !== null;
-    const land = { x: p.x, air: p.air };
-    for (const x of [p.x + side * (BLOCK_W + 4), p.x - side * (BLOCK_W + 4)]) { if (standable(x)) { land.x = x; break; } }
-    world.send?.({ t: 'gm', k: 'pull', to: best.id, x: Math.round(land.x), air: Math.round(land.air) }, world.mp.role === 'host' ? best.id : undefined);
-    if (world.debug) world.log?.(`손잡기 ${best.id} → ${Math.round(land.x)}`);
-  },
-
   update(world, dt) {
     const b = world.bag;
     if (!b?.rows) return;
     const p = world.player;
-    p.pulling = Math.max(0, (p.pulling ?? 0) - dt);
-    p.lift = Math.max(0, (p.lift ?? 0) - dt);
-    p.pulled = Math.max(0, (p.pulled ?? 0) - dt);
     if (b.flash) { b.flash.t -= dt; if (b.flash.t <= 0) b.flash = null; }
     // p.load (머리 위에 선 사람 수) 는 move 가 센다 — 뛸 수 있는지에 쓰인다.
 
@@ -1217,19 +1204,6 @@ export default {
     if (msg.k === 'exit' && host) {
       if (exitState(world).ready) b.exitAsk = 0.2;
       return;
-    }
-    if (msg.k === 'pull') {
-      // 당사자에게 왔으면 올라선다. 방장에게 왔으면 당사자에게 넘긴다.
-      if (msg.to === world.mp.myId) {
-        const p = world.player;
-        if (p.dead || !Number.isFinite(msg.x) || !Number.isFinite(msg.air)) return;
-        p.liftFrom = { x: p.x, air: p.air }; p.lift = 0.32;   // 스르륵 올라오는 그림 (자기 화면)
-        p.x = msg.x; p.air = msg.air; p.vx = 0; p.vy = 0; p.grounded = true; p.onLadder = false;
-        p.pulled = 0.5;                                             // 잡혀 올라오는 표시
-        say(world, '끌려 올라갔다', 1.2);
-      } else if (host && world.mp.others.has(msg.to)) {
-        world.send?.({ t: 'gm', k: 'pull', to: msg.to, x: msg.x, air: msg.air }, msg.to);
-      }
     }
   },
 };

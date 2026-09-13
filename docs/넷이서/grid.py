@@ -7,6 +7,7 @@
   x  상자(1인)    X  무거운 상자(2인)
   r y b  빨강·노랑·파랑 열쇠 → 집으면 같은 색 블록 R Y B 가 사라진다
   a  스위치(밟으면 셔터 A 가 열린 채 남는다)     p q  누름판(밟는 동안만 P Q 가 열린다)
+  n  스위치 a 를 밟으면 **나오는** 발판 (A 의 반대)          M m  누름판 p·q 를 밟는 동안 나오는 발판
   u U · w W  포탈 한 쌍       -  왕복 발판이 오가는 길(어디서든 탈 수 있다)   |  리프트
   { }  통이 굴러 나오는 구멍(왼쪽/오른쪽으로)     >  <  컨베이어     v  삭은 발판
   ~  깜빡이는 발판 — 2초 켜지고 2초 꺼진다. 켜진 동안 건널 수 있는 폭이다
@@ -88,5 +89,8 @@ def check(g):
         if n[0] != n[1] or n[0] > 1: bad.append(f'포탈 {pair} {n}')
     for sw in 'apq':
         if a.count(sw) > 1: bad.append(f"'{sw}' 가 둘")
-        if a.count(sw) == 1 and a.count(sw.upper()) == 0: bad.append(f"'{sw}' 는 있는데 '{sw.upper()}' 가 없다")
+        # 스위치·누름판은 셔터(대문자)를 열거나 발판(a→n · p→M · q→m)을 낸다 — 둘 중 하나는 있어야 뜻이 있다
+        made = {'a': 'n', 'p': 'M', 'q': 'm'}[sw]
+        if a.count(sw) == 1 and a.count(sw.upper()) == 0 and a.count(made) == 0: bad.append(f"'{sw}' 는 있는데 '{sw.upper()}' 도 '{made}' 도 없다")
+        if a.count(made) and a.count(sw) == 0: bad.append(f"발판 '{made}' 는 있는데 '{sw}' 가 없다")
     return bad

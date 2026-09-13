@@ -5,7 +5,7 @@
 //   coop-net.mjs   넷 — 방장 1 + 손님 3, 세상 넷. 자리 꾸러미와 방장 스냅샷을 지연을 두고 주고받는다. 손님 물리·
 //                  꾸러미·중계(손잡기·밀기·출구 부탁)·남의 자리 예측이 전부 진짜다.
 //
-// 걸음(verb)은 solve.py 와 같다: walk jump hop climb boost stairs push ride pull take switch need_plate portal box_portal spring.
+// 걸음(verb)은 solve.py 와 같다: walk jump hop climb boost stairs push ride take switch need_plate portal box_portal spring.
 
 import './dom-stub.mjs';
 import { readFileSync } from 'node:fs';
@@ -297,7 +297,7 @@ export function hopChain(sim, world, lay, me, present, upto, finalOffset) {
 /// sim 이 갖춰야 할 것:
 ///   frames · host · step(world, input) · activate(k) → world · land(world) → err · at(k) → {x, fy}
 ///   deadOne() → k|null · stack(on, lay, me) → err · settle() → err · holdMates(mates, box, dir) · releaseMates(mates)
-///   pull(who, by) → err · ids()
+///   ids()
 export function play(stage, moves, sim) {
   const host = sim.host, b = host.bag;
   const px = (tx) => (tx + 0.5) * T, pfy = (ty) => (ty + 1) * T;
@@ -384,13 +384,6 @@ export function play(stage, moves, sim) {
         for (let f = 0; f < 900 && Math.abs(bx.x - px(a[1])) >= 3; f++) sim.step(world, {});
         if (Math.abs(bx.x - px(a[1])) >= 3) err = `상자 ${a[0]} 가 무빙워크로 ${a[1]}칸까지 안 왔다 — ${col(bx.x)}칸`;
         else note(`${a[0]} 가 무빙워크에 실려 ${col(bx.x)}칸까지`);
-        break;
-      }
-      case 'pull': {
-        const [who, by] = a;
-        err = go(by); if (err) break;
-        for (let f = 0; f < 4; f++) sim.step(world, {});
-        err = sim.pull(who, by);
         break;
       }
       case 'take': {

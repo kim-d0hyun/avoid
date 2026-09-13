@@ -20,7 +20,7 @@ class NetSim {
   constructor(stageName) {
     this.frames = 0;
     this.worlds = {};
-    for (const k of IDS) this.worlds[k] = makeWorld(stageName, { id: +k });
+    for (const k of IDS) { this.worlds[k] = makeWorld(stageName, { id: +k }); this.worlds[k].bump = false; }   // 봇은 한 명씩 움직인다 — 서 있는 셋이 길을 막지 않게 사람 충돌은 끈다 (충돌은 coop.mjs 가 따로 본다)
     this.host = this.worlds['1'];
     // 서로를 안다 — 이름표, 왕복 시간 (핑은 안 돌린다: 재 봤다고 친다)
     for (const k of IDS) {
@@ -128,20 +128,6 @@ class NetSim {
     return null;
   }
   releaseMates(mates) { for (const m of mates) delete this.held[m]; }
-  /// 손잡기 — by 의 세상에서 action → 말이 중계되어 who 의 세상 사람이 올라선다.
-  pull(who, by) {
-    const bw = this.worlds[by], ww = this.worlds[who];
-    const before = this.at(who);
-    coop.action(bw);
-    if (!(bw.player.pulling > 0)) { const q = this.at(who), me = this.at(by); return `손이 안 닿는다 — ${who}번은 ${((q.fy - me.fy) / T).toFixed(2)}칸 아래 ${(Math.abs(q.x - me.x) / T).toFixed(2)}칸 옆`; }
-    for (let f = 0; f < LAG * 2 + 8; f++) this.step(bw, {});
-    const q = this.at(who), me = this.at(by);
-    if (Math.abs(q.fy - before.fy) < 1 && Math.abs(q.x - before.x) < 1) return `손잡기 말이 ${who}번에게 닿지 않았다 (자리 그대로 ${col(q.x)},${row(q.fy)})`;
-    for (let f = 0; f < 30 && !ww.player.grounded; f++) this.step(bw, {});
-    const q2 = this.at(who);
-    if (Math.abs(q2.fy - me.fy) > 16) return `끌어올린 ${who}번이 설 바닥이 없다 — (${col(q2.x)},${row(q2.fy)}) 로 떨어졌다`;
-    return null;
-  }
 }
 
 say(`열네 판 — 넷이 각자 세상에서, 꾸러미 지연 ${LAG}프레임(${Math.round(LAG * 1000 / 60)}ms 편도)`);

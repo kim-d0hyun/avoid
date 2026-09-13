@@ -344,27 +344,6 @@ say('밟힌 사람 — 뛰지 못하고, 걸으면 위 사람이 같이 가고, 
   ok('그 사람 머리 위에 올라서지 않았다', w3.player.grounded && Math.abs(w3.player.air - air3) < 2);
 }
 
-say('손잡기 — 세 칸 아래 사람을 끌어올린다');
-{
-  const world = make('탑', { mp: true, host: true });
-  const o = other(world, 2, 9, 56);         // 나는 위(3층 단)에 있고 상대는 셋 아래
-  setPos(world, 8, 53); world.player.grounded = true;
-  coop.action(world);
-  const sent = world.sent.find((s) => s.m.k === 'pull');
-  ok('끌어올리는 말을 보낸다', !!sent && sent.m.to === 2);
-  check('당사자에게만', sent.to, 2);
-  // 손님이 받으면 올라선다
-  const guest = make('탑', { mp: true, host: false });
-  setPos(guest, 9, 56);
-  coop.message(guest, 1, { k: 'pull', to: 2, x: sent.m.x, air: sent.m.air });
-  check('끌려 올라갔다', feetRow(guest), 53);
-  // 너무 멀면 안 된다
-  const w2 = make('탑', { mp: true, host: true });
-  other(w2, 2, 9, 56); setPos(w2, 8, 50);
-  coop.action(w2);
-  ok('네 칸 아래는 못 잡는다', !w2.sent.some((s) => s.m.k === 'pull'));
-}
-
 say('출구 — 「넷」 판은 넷이 다, 「한 명」 판은 하나면');
 {
   const world = make('표지판', { mp: true });   // all
@@ -588,20 +567,6 @@ say('네모 — 공중인지는 높이가 아니라 「섰나」로 본다');
   ok('남: 떨어지는 중이면 공중', inAir({ vyDraw: -200, air: 300 }) === true);
 }
 
-say('손잡기 — 올라선 자리에 바닥이 있는 쪽을 고른다');
-{
-  const world = make('탑', { mp: true, host: true });   // 2층 바닥 47줄 (x 1~34)
-  const b = world.bag;
-  // 3층 단 위(53줄, 28~34칸) 왼쪽 끝에 서고 상대는 밑 27칸에 — 상대 쪽(왼쪽)은 허공, 오른쫀은 단
-  setPos(world, 28, 53); world.player.grounded = true;
-  other(world, 2, 27, 56);
-  coop.action(world);
-  const sent = world.sent.find((s) => s.m.k === 'pull');
-  ok('끌어올린다', !!sent);
-  ok('허공(왼쪽)이 아니라 단 위(오른쪽)에 세운다', sent.m.x > world.player.x);
-}
-
-
 say('떨어지는 것 — 상자·통이 빨라져도 바닥을 뚫지 않는다');
 {
   // 3층 창고: 2층 틈(52) 으로 떨어진 상자는 아홉 칸 아래 1층(27줄)에 앉아야 한다. 한 프레임에 19px 씩 갈 때다.
@@ -704,6 +669,44 @@ say('사람끼리 부딪힘 — 같은 높이면 막고, 뒤에서 밀면 앞 �
   const x0 = w3.player.x;
   tick(w3, 20, {});
   ok('밟고 선 사람은 가로로 안 밀어낸다', Math.abs(w3.player.x - x0) < 6);
+}
+
+
+say('스위치로 나오는 발판 n — a 를 밟으면 solid, 아니면 통과');
+{
+  const world = make('표지판');
+  const b = world.bag;
+  b.rows[10][40] = 'n';                       // 아무 데나 하나
+  ok('처음엔 발판이 없다 (통과)', !coopMod.solidTile(b, 'n'));
+  b.latched = true;
+  ok('스위치를 밟으면 발판이 나온다 (solid)', coopMod.solidTile(b, 'n'));
+  ok('나온 발판을 딛는다', coopMod.floorBelow(world, 40.5 * T, 10 * T, 10 * T + 20) === 10 * T);
+}
+
+say('누름판으로 나오는 발판 M — p 를 밟는 동안만');
+{
+  const world = make('표지판');
+  const b = world.bag;
+  ok('안 밟으면 없다', !coopMod.solidTile(b, 'M'));
+  b.plates.p = true;
+  ok('p 를 밟으면 나온다', coopMod.solidTile(b, 'M'));
+}
+
+
+say('나오는 발판 위에 서 있는데 누름판이 풀리면 — 떨어진다');
+{
+  const world = make('3층 창고');                    // (106,7) 이 m, (102,8) 이 q
+  const b = world.bag;
+  const holder = other(world, 2, 102, 8);          // 2 가 누름판 q 를 밟고 있다
+  tick(world, 3, {});
+  ok('남이 밟아도 누름판이 눌린다', b.plates.q === true);
+  setPos(world, 106, 6); world.player.grounded = true;   // 나는 발판 m 위
+  tick(world, 10, {});
+  check('발판이 받쳐 준다', feetRow(world), 6);
+  holder.x = 104.5 * T; holder.baseX = holder.x;   // 2 가 내려선다
+  tick(world, 60, {});
+  ok('누름판이 풀렸다', b.plates.q === false);
+  check('발판이 사라져 3층 바닥까지 떨어졌다', feetRow(world), 8);
 }
 
 done('넷이서');

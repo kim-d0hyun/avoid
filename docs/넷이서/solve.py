@@ -29,6 +29,9 @@ class Run:
         if ch == '#': return True
         if ch in 'RYB': return ch.lower() not in self.opened
         if ch == 'A': return 'a' not in self.latched
+        if ch == 'n': return 'a' in self.latched          # 스위치로 나오는 발판
+        if ch == 'M': return self.plate_held('p')          # 누름판으로 나오는 발판
+        if ch == 'm': return self.plate_held('q')
         if ch in 'PQ': return not self.plate_held(ch.lower())
         return self.box_at(x, y)
     def support(self, x, y):
@@ -178,12 +181,13 @@ class Run:
     def switch(self, who):
         x, y = self.p[who]
         if self.g.get(x, y) != 'a': raise Bad(f'{who} 가 스위치 위에 없다 ({x},{y})')
-        self.latched.add('a'); self.say(who, '스위치를 밟는다 → 셔터 A 가 열린 채 남는다')
+        self.latched.add('a'); self.say(who, '스위치를 밟는다 → ' + ('셔터 A 가 열린 채 남는다' if self.g.find('A') else '발판 n 이 나온 채 남는다'))
 
     def need_plate(self, tag):
         if not self.plate_held(tag): raise Bad(f'누름판 {tag} 위에 아무것도 없다')
         held_by = [w for w, pos in self.p.items() if pos in self.g.find(tag)]
-        self.say('', f'누름판 {tag} 가 눌려 셔터 {tag.upper()} 가 열려 있다' + (f' ({"·".join(held_by)} 가 밟고 있다)' if held_by else ' (상자)'))
+        what = ('셔터 ' + tag.upper() + ' 가 열려 있다') if self.g.find(tag.upper()) else ('발판 ' + ('M' if tag == 'p' else 'm') + ' 이 나와 있다')
+        self.say('', f'누름판 {tag} 가 눌려 {what}' + (f' ({"·".join(held_by)} 가 밟고 있다)' if held_by else ' (상자)'))
 
     def spring(self, who, x1, y1):
         x, y = self.p[who]
@@ -191,23 +195,6 @@ class Run:
         if y - y1 > SPRING_UP or abs(x1 - x) > JUMP_ACROSS: raise Bad('스프링으로 못 닿는다')
         if not self.standable(x1, y1): raise Bad(f'스프링 착지 ({x1},{y1})에 설 수 없다')
         self.p[who] = (x1, y1); self.say(who, f'스프링으로 ({x1},{y1})까지')
-
-    def pull(self, who, by_whom):
-        """위에 선 사람이 손을 내밀어 끌어올린다. 세 칸 아래까지, 바로 옆 칸이어야 한다."""
-        x, y = self.p[who]; ux, uy = self.p[by_whom]
-        if abs(ux - x) > 1: raise Bad(f'{by_whom} 가 {who} 바로 위쫀에 없다 ({ux},{uy}) vs ({x},{y})')
-        if not (0 < y - uy <= 3): raise Bad(f'{by_whom} 가 {who} 보다 1~3칸 위에 있어야 한다 ({y-uy})')
-        if not self.standable(ux, uy): raise Bad(f'{by_whom} 가 설 자리가 아니다')
-        # 엔진은 손 닿는 데(옆 한 칸 · 아래 세 칸) 있는 사람 중 **가장 가까운** 사람을 끌어올린다. 다른 사람이 그 안에 서 있으면 그쪽이 끌려온다.
-        for o, (ox, oy) in self.p.items():
-            if o in (who, by_whom): continue
-            if abs(ox - ux) <= 1 and 0 < oy - uy <= 3: raise Bad(f'{by_whom} 손 닿는 자리에 {o} 도 있다 ({ox},{oy}) — {who} 대신 끌려올 수 있다. 비켜 서야 한다')
-        # 끌어올린 사람은 끌어 준 사람 옆에 선다 (같은 칸이면 그 칸)
-        land = None
-        for lx in (ux + (1 if ux >= x else -1), ux, ux - (1 if ux >= x else -1)):
-            if self.standable(lx, uy): land = lx; break
-        if land is None: raise Bad(f'{who} 가 올라설 자리가 없다 ({ux},{uy}) 근처')
-        self.p[who] = (land, uy); self.say(by_whom, f'{who} 의 손을 잡아 ({land},{uy})로 끌어올린다')
 
     def stairs(self, who, x1, y1, on):
         """사람 계단. on 에 적힌 사람들이 웅크린 채 층층이 걸쳐 앉아 있고, who 가 그 위를 밟고 올라가 뛴다.

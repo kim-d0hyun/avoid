@@ -132,17 +132,4 @@ export class PuppetSim {
     for (const m of mates) { const o = world.mp.others.get(+m); if (o) o.vx = 0; this.place(m, world.player.x - dir * (2 * HALF + 4), world.groundY - world.player.air); }
     for (let f = 0; f < 6; f++) this.step(world, {});
   }
-  /// 손잡기 — 방장 세상에서 action 을 부르고, 보낸 말을 인형에 적용한다.
-  pull(who, by) {
-    const world = this.host;
-    world.sent = [];
-    coop.action(world);
-    const msg = world.sent.find((s) => s.m.k === 'pull' && s.m.to === +who);
-    if (!msg) { const q = this.at(who), me = this.at(by); return `손이 안 닿는다 — ${who}번은 ${((q.fy - me.fy) / T).toFixed(2)}칸 아래 ${(Math.abs(q.x - me.x) / T).toFixed(2)}칸 옆 · 보낸 것=${JSON.stringify(world.sent.map((s) => s.m))}`; }
-    this.place(who, msg.m.x, world.groundY - msg.m.air);
-    const err = this.settle();
-    const q = this.at(who), me = this.at(by);
-    if (!err && Math.abs(q.fy - me.fy) > 16) return `끌어올린 ${who}번이 설 바닥이 없다 (${col(q.x)},${row(q.fy)}) — 세운 자리 x=${msg.m.x} air=${msg.m.air}`;
-    return err;
-  }
 }

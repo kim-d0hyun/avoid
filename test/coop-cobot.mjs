@@ -197,10 +197,6 @@ function* mBoost(quad, stage, who, x1, y1, on) {
   for (let j = 0; j < on.length; j++) { const edge = j < on.length - 1 ? -lay.lean * 20 : 0; yield* one(who, gjump(quad.W(who), lay.base + lay.lean * 14 * j + edge, me0.fy - HEAD * (j + 1))); }
   yield* one(who, gjump(quad.W(who), px(x1), pfy(y1)));
 }
-function* mPull(quad, who, by) {
-  coop.action(quad.W(by));                                // 위 사람이 손을 내린다
-  for (let f = 0; f < LAG * 2 + 40; f++) yield {};        // 말이 오가 당사자가 올라올 때까지
-}
 function* mTake(quad, who, color) { const g = gwalk(quad.W(who), quad.W(who).player.x, { frames: 8 }); for (let f = 0; f < 60 && !quad.host.bag.opened.has(color); f++) yield {}; }
 function* mSwitch(quad) { for (let f = 0; f < 30 && !quad.host.bag.latched; f++) yield {}; }
 function* mNeedPlate(quad, tag) { for (let f = 0; f < 40 && !quad.host.bag.plates[tag]; f++) yield {}; }
@@ -219,7 +215,6 @@ function makeGen(quad, stage, move) {
     case 'spring': return one(who, gspring(quad.W(who), a[1], a[2]));
     case 'push': return mPush(quad, stage, a[0], a[1], a[2]);
     case 'boost': case 'stairs': return mBoost(quad, stage, a[0], a[1], a[2], a[3]);
-    case 'pull': return mPull(quad, a[0], a[1]);
     case 'take': return mTake(quad, a[0], a[1]);
     case 'switch': return mSwitch(quad);
     case 'need_plate': return mNeedPlate(quad, a[0]);
@@ -233,7 +228,6 @@ function actorsOf(m) {
   const [v, ...a] = m;
   if (v === 'boost' || v === 'stairs') return { actors: [a[0], ...a[3]], barrier: true };
   if (v === 'push') return { actors: a[2].slice(), barrier: true };
-  if (v === 'pull') return { actors: [a[0], a[1]], barrier: true };
   if (v === 'take' || v === 'switch') return { actors: [a[0] ?? '1'], barrier: true };
   if (v === 'need_plate' || v === 'ride' || v === 'box_portal') return { actors: [], barrier: true };
   return { actors: [a[0]], barrier: false };
