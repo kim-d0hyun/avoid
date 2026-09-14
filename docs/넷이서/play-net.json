@@ -1,0 +1,156 @@
+[
+ {
+  "no": "1-1",
+  "name": "표지판",
+  "world": "뒷마당",
+  "ok": false,
+  "steps": 79,
+  "seconds": 5.9,
+  "parallel": 3.7,
+  "limit": 0,
+  "fail": "5/79 need_plate p: 1번이 가만히 있다가 죽었다 (43,20)"
+ },
+ {
+  "no": "1-2",
+  "name": "상자 계단",
+  "world": "뒷마당",
+  "ok": false,
+  "steps": 71,
+  "seconds": 37.9,
+  "parallel": 12.4,
+  "limit": 0,
+  "fail": "35/71 push X0 28 1·2: X0 를 28칸까지 못 밀었다 — 28칸에서 멈춤 ((29,10))"
+ },
+ {
+  "no": "1-3",
+  "name": "두 열쇠",
+  "world": "뒷마당",
+  "ok": false,
+  "steps": 55,
+  "seconds": 3.3,
+  "parallel": 2.2,
+  "limit": 0,
+  "fail": "5/55 boost 4 8 13 1·2·3: 3번 어깨 서기: 머리 1 에 올라서기: 점프 착지 (9,16) 를 노렸는데 (9,15) — 발이 15.62줄"
+ },
+ {
+  "no": "1-4",
+  "name": "지키는 사람",
+  "world": "뒷마당",
+  "ok": true,
+  "steps": 47,
+  "seconds": 81.8,
+  "parallel": 25.6,
+  "limit": 0,
+  "fail": null
+ },
+ {
+  "no": "2-1",
+  "name": "두 길",
+  "world": "학교",
+  "ok": false,
+  "steps": 59,
+  "seconds": 76.4,
+  "parallel": 25.3,
+  "limit": 0,
+  "fail": "47/59 push X0 70 2·3: X0 를 70칸까지 못 밀었다 — 70칸에서 멈춤 ((69,18))"
+ },
+ {
+  "no": "2-2",
+  "name": "엘리베이터",
+  "world": "학교",
+  "ok": false,
+  "steps": 139,
+  "seconds": 26.2,
+  "parallel": 8.9,
+  "limit": 0,
+  "fail": "15/139 push X0 16 1·2: X0 를 16칸까지 못 밀었다 — 16칸에서 멈춤 ((17,29))"
+ },
+ {
+  "no": "2-3",
+  "name": "움직이는 발판",
+  "world": "학교",
+  "ok": true,
+  "steps": 99,
+  "seconds": 217.6,
+  "parallel": 57.8,
+  "limit": 0,
+  "fail": null
+ },
+ {
+  "no": "2-4",
+  "name": "되돌아오기",
+  "world": "학교",
+  "ok": false,
+  "steps": 127,
+  "seconds": 11.5,
+  "parallel": 2.5,
+  "limit": 0,
+  "fail": "9/127 walk 1 37: 걷기 (8,7)→37칸: 8칸 구멍"
+ },
+ {
+  "no": "3-1",
+  "name": "탑",
+  "world": "도시",
+  "ok": true,
+  "steps": 129,
+  "seconds": 186.5,
+  "parallel": 56.8,
+  "limit": 0,
+  "fail": null
+ },
+ {
+  "no": "3-2",
+  "name": "3층 창고",
+  "world": "도시",
+  "ok": false,
+  "steps": 70,
+  "seconds": 26.6,
+  "parallel": 6.3,
+  "limit": 180,
+  "fail": "9/70 walk 1 44: 걷기 (30,14)→44칸: 8칸 구멍"
+ },
+ {
+  "no": "3-3",
+  "name": "동시에",
+  "world": "도시",
+  "ok": true,
+  "steps": 80,
+  "seconds": 139.2,
+  "parallel": 34,
+  "limit": 160,
+  "fail": null
+ },
+ {
+  "no": "3-4",
+  "name": "옥상",
+  "world": "도시",
+  "ok": false,
+  "steps": 104,
+  "seconds": 7.8,
+  "parallel": 6.3,
+  "limit": 170,
+  "fail": "3/104 push X0 22 1·2: X0 를 22칸까지 못 밀었다 — 22칸에서 멈춤 ((21,26))"
+ },
+ {
+  "no": "4-1",
+  "name": "무빙워크",
+  "world": "지하철",
+  "ok": false,
+  "steps": 88,
+  "seconds": 18.7,
+  "parallel": 4.6,
+  "limit": 150,
+  "fail": "11/88 boost 1 35 15 2: 머리 0 에 올라서기: 점프 착지 (34,17) 를 노렸는데 (33,18) — 발이 19.00줄"
+ },
+ {
+  "no": "4-2",
+  "name": "종점",
+  "world": "지하철",
+  "ok": false,
+  "steps": 80,
+  "seconds": 7.2,
+  "parallel": 6,
+  "limit": 180,
+  "fail": "3/80 push X1 20 1·2: X1 를 20칸까지 못 밀었다 — 20칸에서 멈춤 ((19,26))"
+ }
+]

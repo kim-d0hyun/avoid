@@ -1,8 +1,9 @@
-// 넷이서 — 넷이 **동시에** 논다. 4세상(방장 1 + 손님 3)을 프레임마다 넷의 입력으로 함께 굴리고,
-// 화면 하나(넷을 다 담는 카메라)로 렌더한다. 걷기·점프·사다리는 서로 겹쳐 동시에, 어깨·손잡기·밀기
+// 협동 — 다 같이 **동시에** 논다. 사람 수만큼의 세상(방장 1 + 손님들)을 프레임마다 모두의 입력으로 함께 굴리고,
+// 화면 하나(전원을 다 담는 카메라)로 렌더한다. 걷기·점프·사다리는 서로 겹쳐 동시에, 어깨·손잡기·밀기
 // 같은 협동 마디는 그 순간만 낀 사람끼리 — 그래서 "여러 명이 같이 노는" 것처럼 보이면서 규칙이 안 어긋난다.
 //
-//   node test/coop-cobot.mjs             # 열네 판 → ~/Downloads/몰겜-넷이서-동시/ (+ 전체 하나)
+//   node test/coop-cobot.mjs             # 넷이서 열네 판 → ~/Downloads/몰겜-넷이서-동시/ (+ 전체 하나)
+//   GAME=trio node test/coop-cobot.mjs   # 셋이서 열두 판 → ~/Downloads/몰겜-셋이서-동시/
 //   STAGE=상자 계단 node test/coop-cobot.mjs
 //
 // 움직임은 coop-bot 의 물리 그대로 (제너레이터가 프레임마다 입력을 내보낸다). 충돌·손잡기 실제 엔진.
@@ -16,7 +17,7 @@ for (const fam of ['Apple SD Gothic Neo', 'Gothic A1', 'IBM Plex Sans KR', 'IBM 
   try { registerFont('/System/Library/Fonts/Supplemental/AppleGothic.ttf', { family: fam }); } catch {}
 
 import {
-  w, coop, coopMod, T, DT, IDS, HALF, BLOCK_H, HEAD, RUN, G, JUMP_V, FRICTION_G, FRICTION_A,
+  w, coop, coopMod, T, DT, IDS, GUESTS, GAME, HALF, BLOCK_H, HEAD, RUN, G, JUMP_V, FRICTION_G, FRICTION_A,
   STAGES, MOVES, WORLD_NAMES, col, row, makeWorld, puppet,
   floorAt, floorBelow, bodyBlocked, trackNear, trackCenterAfter, boxIndex, stackLayout,
 } from './coop-bot.mjs';
@@ -26,7 +27,7 @@ const netjs = await import(new URL('../src/game/net.js', import.meta.url).href);
 const tile = coopMod.tile, shirtColor = ink.shirtColor;
 
 const LAG = Math.max(0, +(process.env.LAG ?? 2) | 0);
-const OUTDIR = process.env.OUT || `${homedir()}/Downloads/몰겜-넷이서-동시`;
+const OUTDIR = process.env.OUT || `${homedir()}/Downloads/몰겜-${coop.name}-동시`;
 const ONLY = process.env.STAGE;
 const W = 960, H = 560, STEP = 3;
 const NOVID = !!process.env.NOVID;                       // 진단용 — 그림을 안 그린다
@@ -55,11 +56,11 @@ class Quad {
     for (const k of IDS) Object.assign(this.worlds[k].input, blank, inputs[k] ?? {});
     for (const k of IDS) w.update(this.worlds[k], DT);
     if (process.env.TRACE2 && this.frames >= +process.env.TRACE2 && this.frames < +process.env.TRACE2 + 40) { const k = process.env.TRACE2_WHO || '2', q = this.worlds[k], p = q.player; console.log(`f${this.frames} ${k}: x=${(p.x / T).toFixed(2)} fy=${((q.groundY - p.air) / T).toFixed(2)} vx=${p.vx.toFixed(0)} g=${p.grounded ? 1 : 0} load=${p.load} dead=${p.dead ? 1 : 0} in=${JSON.stringify(inputs[k] ?? {})} knock=${(p.knock ?? 0).toFixed(0)} stun=${(p.stun ?? 0).toFixed(2)} ahead=${floorAt(q, p.x + 25, q.groundY - p.air, true)} track=${trackNear(q, p.x + 25, q.groundY - p.air) ? 'Y' : 'n'} tracks=${q.bag.tracks.length} boxes=${q.bag.boxes.map((x) => (x.x / T).toFixed(1)).join('/')}`); }
-    for (const k of ['2', '3', '4']) this.queue.push({ due: this.frames + LAG, to: '1', from: +k, msg: this.packetOf(this.worlds[k]) });
+    for (const k of GUESTS) this.queue.push({ due: this.frames + LAG, to: '1', from: +k, msg: this.packetOf(this.worlds[k]) });
     const host = this.host, mp = host.mp, players = [[1, ...this.packetOf(host).slice(1)]];
     for (const o of mp.others.values()) players.push([o.id, o.baseX, o.vx, o.baseAir, o.vy, o.tcrouch, o.facing, o.state ?? 0, o.grabbing, o.escapes, o.dodged ?? 0, Math.round(o.age * 1000) / 1000]);
     const snap = JSON.stringify({ t: 's', ms: Math.round(host.elapsed * 1000), st: host.state, r: mp.round, pl: players, vw: Math.round(host.w), vh: Math.round(host.h), g: host.gameId, h: 1, x: coop.pack(host) });
-    for (const k of ['2', '3', '4']) this.queue.push({ due: this.frames + LAG, to: k, from: 1, msg: snap });
+    for (const k of GUESTS) this.queue.push({ due: this.frames + LAG, to: k, from: 1, msg: snap });
     const rest = []; for (const it of this.queue) { if (it.due > this.frames) { rest.push(it); continue; } netjs.handleMessage(this.worlds[it.to], this.shell, it.from, typeof it.msg === 'string' ? JSON.parse(it.msg) : it.msg, this.api); }
     this.queue = rest; this.frames++; FR.n = this.frames;
   }
@@ -352,7 +353,7 @@ function renderFrame(ctx, quad) {
 function renderStage(stage) {
   renderFrame.cam = null;
   const quad = new Quad(stage.name);
-  const dir = `/private/tmp/cobot-${stage.name}`; rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
+  const dir = `/private/tmp/cobot-${GAME}-${stage.name}`; rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
   const canvas = createCanvas(W, H), ctx = canvas.getContext('2d');
   let shot = 0;
   const onFrame = () => { if (NOVID) return; renderFrame(ctx, quad); execWrite(canvas, `${dir}/f${String(shot++).padStart(5, '0')}.png`); };
@@ -379,7 +380,7 @@ for (const st of STAGES) {
 if (!ONLY && made.length) {
   const list = `${OUTDIR}/.concat.txt`;
   writeFileSync(list, made.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join('\n') + '\n');
-  const all = `${homedir()}/Downloads/몰겜-넷이서-동시-전체.mp4`;
+  const all = `${homedir()}/Downloads/몰겜-${coop.name}-동시-전체.mp4`;
   execFileSync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', all], { stdio: 'ignore' });
   rmSync(list, { force: true });
   console.log(`전체 → ${all}`);

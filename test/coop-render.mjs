@@ -1,10 +1,11 @@
-// 넷이서 — 봇 재생을 **실제 그림으로** 렌더해 판마다 mp4 를 만든다.
+// 협동 — 봇 재생을 **실제 그림으로** 렌더해 판마다 mp4 를 만든다. 기본은 넷이서, `GAME=trio` 면 셋이서.
 //
-// coop-play.mjs 의 인형 세상(방장 하나에 나머지 셋을 세운다)이 열네 판을 다 깬다. 여기서는 그 재생을
+// coop-play.mjs 의 인형 세상(방장 하나에 나머지를 세운다)이 판을 다 깬다. 여기서는 그 재생을
 // node-canvas 로 게임 그림 그대로 그려 프레임을 뽑고, ffmpeg 로 판마다 영상을 만든다. 그림은 앱과 같은
 // 코드(coop.draw · block.js · ink.js)를 쓴다 — 창을 띄우지 않고도 실제로 보이는 대로 나온다.
 //
-//   node test/coop-render.mjs            # 열네 판 다
+//   node test/coop-render.mjs            # 넷이서 열네 판 다
+//   GAME=trio node test/coop-render.mjs  # 셋이서 열두 판
 //   STAGE=옥상 node test/coop-render.mjs  # 한 판만
 //   OUT=~/Downloads/... 로 폴더 지정
 
@@ -20,15 +21,15 @@ for (const fam of ['Apple SD Gothic Neo', 'Gothic A1', 'IBM Plex Sans KR', 'IBM 
 
 const R = new URL('../src/', import.meta.url).href;
 const world = await import(R + 'game/world.js');
-const coopMod = await import(R + 'games/coop.js');
-const coop = coopMod.default;
 const ink = await import(R + 'draw/ink.js');
 const block = await import(R + 'draw/block.js');
-const { T, STAGES } = coopMod;
 const bot = await import('./coop-bot.mjs');
+const coopMod = bot.coopMod;                  // 어느 게임인지는 coop-bot 이 GAME 으로 고른다
+const coop = bot.coop;
+const { T, STAGES } = bot;
 const { PuppetSim } = await import('./coop-play-sim.mjs');
 
-const OUTDIR = process.env.OUT || `${homedir()}/Downloads/몰겜-넷이서-상황`;
+const OUTDIR = process.env.OUT || `${homedir()}/Downloads/몰겜-${coop.name}-상황`;
 const ONLY = process.env.STAGE;
 const W = 900, H = 540;                       // 영상 크기
 const VIEW_TILES = 22;                        // 가로로 보이는 칸 수
@@ -69,7 +70,7 @@ function renderFrame(ctx, sim, time) {
 
 function renderStage(stage) {
   const sim = new PuppetSim(stage.name);
-  const dir = `/private/tmp/coop-render-${stage.name}`;
+  const dir = `/private/tmp/coop-render-${bot.GAME}-${stage.name}`;
   rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
   const ctx = createCanvas(W, H).getContext('2d');
   let shot = 0, tick = 0;

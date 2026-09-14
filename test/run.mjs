@@ -19,6 +19,8 @@ const SUITES = [
   ['edge2.mjs', '경우의 수 ⑮~㉖', '동시에 붙잡기 · 한 편이 통째로 나가기 · 오래 굴리기'],
   ['coop.mjs', '넷이서', '타일 · 점프 · 사다리 · 상자 · 열쇠 · 누름판 · 포탈 · 출구 · 카메라 · 꾸러미'],
   ['coop-play.mjs', '넷이서 실전', '판마다 풀이 그대로 키를 눌러 넷이 실제로 깬다'],
+  ['trio.mjs', '셋이서', '판 열둘 · 시작 자리 셋 · 셋이어야 시작 · 출구 · 세계 색 · 게임 갈아 끼우기'],
+  ['coop-play.mjs', '셋이서 실전', '판마다 풀이 그대로 키를 눌러 셋이 실제로 깬다', { GAME: 'trio' }],
 ];
 
 // 경로에 한글이 들어 있다. URL 의 pathname 은 %E3%84%B7 로 감싸져 있어서 그대로는 못 쓴다.
@@ -29,8 +31,9 @@ let cases = 0;
 let bad = 0;
 const report = [];
 
-for (const [file, name, what] of SUITES) {
-  const run = spawnSync(process.execPath, [file], { cwd: here, encoding: 'utf8' });
+for (const [file, name, what, env] of SUITES) {
+  // 같은 파일을 다른 게임으로 한 번 더 돌리기도 한다 (넷이서 실전 / 셋이서 실전).
+  const run = spawnSync(process.execPath, [file], { cwd: here, encoding: 'utf8', env: { ...process.env, ...env } });
   const lines = (run.stdout + run.stderr).split('\n');
   const tally = lines.find((l) => l.startsWith('::결과'));
   // 이름에 빈칸이 들어 있다 (「판 안의 규칙」). 숫자는 맨 뒤 한 토막이다.

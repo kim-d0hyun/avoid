@@ -86,29 +86,19 @@
 테트라포드에서 바다 쪽으로 내려가면 갇히는 자리다. 2-3 의 무거운 상자는 둘이 붙는 순간
 누름판이 비어 셔터가 닫힌다.
 
-## 6. 엔진이 셋을 받으려면
+## 6. 엔진 — 구현됐다 (v3.8.0)
 
-넷이서 판을 돌리는 코드는 `src/games/coop.js` 다. 아래는 확인한 사실만 적는다. 아무것도 고치지 않았다.
+`src/games/coop.js` 를 인원 수 매개변수 팩토리 `makeCoop({ id, name, crew, crewWord, stages, worlds, themes, … })` 로
+바꾸고, 넷이서(`coop`, crew 4)와 셋이서(`trio`, crew 3, `src/games/trio.js`)를 같은 팩토리로 세웠다. 물리 상수·
+타일 규칙은 공유하고, 모듈 수준의 가변 상태는 없다(게임마다 자기 살림살이). 시작 자리는 인원 수만큼 읽고,
+`blocked()` 는 「셋이어야 시작한다」, 출구는 접속 인원(구경하는 사람 제외)에서 나온다. 세 세계의 색은 `trio.js`
+의 THEME(놀이공원·유령 저택·항구, 통 이름 팝콘통·술통·드럼통). 판은 `docs/셋이서/export.py` 가
+`src/games/trio-stages.js` 와 `test/trio-moves.json` 으로 내보낸다 — 넷이서 파일은 건드리지 않는다.
+봇(`test/coop-bot.mjs` 와 그 위의 실전·넷 세상·동시 시뮬)은 `GAME=trio` 로 인원 셋을 읽는다.
+규약 11 (새 게임 이름을 옛 앱이 모른다).
 
-- 시작 자리 — `coop.js:66` 이 `b.spawn = [null,null,null,null]` 로 네 칸을 잡고,
-  `coop.js:73` 이 `'1'`~`'4'` 만 시작 자리로 읽는다. 1~3 만 있는 판도 파싱은 되지만
-  네 번째 칸이 비어 `coop.js:95` 의 `b.spawn.find(Boolean)` 가 1번 자리로 떨어진다.
-  판 묶음마다 인원 수를 들고 다니게 하는 편이 안전하다.
-- 출구 조건 — `coop.js:723` 의 `need` 는 이미 접속 인원에서 나온다:
-  `b.end === 'one' ? 1 : Math.max(2, playing + 1)`. 셋이 붙으면 3 이 된다. **고칠 것이 없다.**
-- 입장 제한 — `coop.js:1019` 의 `blocked()` 만 넷을 못 박는다. `n !== 4` 로 막고
-  문구도 "넷이서 하는 게임이다"다. 셋 판에서는 3 을 받아야 한다. 여기가 유일한 하드코딩이다.
-- 풀이 재생 봇 — `test/coop-bot.mjs:29` 의 `IDS = ['1','2','3','4']`. 셋 판을 실제 엔진에서
-  굴려 보려면 이 명단을 판 묶음에서 읽어야 한다. `test/coop-cobot.mjs` `coop-net.mjs`
-  `coop-play-sim.mjs` 가 전부 이 상수를 가져다 쓴다.
-- 세계 색 — `coop.js:42` 의 `THEME` 은 세계 이름이 키다. 놀이공원·유령 저택·항구 항목이 없으면
-  `coop.js:764` 의 `?? THEME['도시']` 때문에 셋 다 도시 팔레트로 그려진다. 색과 통 이름
-  (`barrel`)은 세계마다 새로 주는 것이 좋다.
-- 내보내기 — `docs/넷이서/export.py` 는 `src/games/coop-stages.js` 와 `test/coop-moves.json` 에
-  덮어쓴다. 셋이서는 반드시 다른 경로로 내보내야 넷이서 판이 지워지지 않는다. (이번 작업에서
-  export 는 만들지 않았고 돌리지도 않았다.)
-- 풀이 검사기 — `docs/셋이서/solve.py` 는 `CREW = '123'` 과 `HELP_MAX = 2` 만 다르다.
-  `boost` 와 `stairs` 에 인원 상한 검사를 넣어 어깨가 셋이 되는 풀이를 막았다.
+확인: `docs/셋이서/run.py` 12판 475걸음 · `GAME=trio node test/coop-play.mjs` 12/12(엔진) ·
+`GAME=trio NOVID=1 node test/coop-cobot.mjs` 12/12(셋이 동시에) · `npm test` 602.
 
 ## 7. 새 타일 제안 (판에는 쓰지 않았다)
 

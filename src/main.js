@@ -142,7 +142,7 @@ window.__ddongFade = (value) => { world.fade = value; };
 shell.setGames?.(games.map((game) => ({ id: game.id, name: game.name })));
 /// 개발용 판 번호. pickGame 뒤에 world.stage 를 덮어쓰고 다시 연다.
 const applyDebugStage = () => {
-  if (window.__ddongStageAt === undefined || gameOf(world).id !== 'coop') return;
+  if (window.__ddongStageAt === undefined || !gameOf(world).staged) return;
   world.stage = window.__ddongStageAt; world.bagResets = 0;
   restart(world);
   window.__ddongStageAt = undefined;

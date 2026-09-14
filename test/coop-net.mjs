@@ -1,6 +1,7 @@
-// 넷이서 — 넷이 **각자 세상**에서 깬다. 방장 1 + 손님 3, 세상 넷, 꾸러미는 지연을 두고 오간다.
+// 협동 — 각자 **자기 세상**에서 깬다. 방장 1 + 손님들, 사람 수만큼 세상, 꾸러미는 지연을 두고 오간다.
+// 기본은 넷이서, `GAME=trio` 면 셋이서 (명단은 게임에서 온다).
 //
-// coop-play.mjs 는 방장 세상 하나에 인형 셋을 세운다 — 빠르지만 손님 쪽은 안 본다. 여기서는 사람마다 세상이 있다:
+// coop-play.mjs 는 방장 세상 하나에 나머지를 인형으로 세운다 — 빠르지만 손님 쪽은 안 본다. 여기서는 사람마다 세상이 있다:
 //   · 손님은 자기 물리로 걷고 뛰고 무빙워크에 실려 간다. 상자·누름판·열쇠·삭은 발판은 방장 스냅샷(pack/unpack)으로 받는다.
 //   · 자리 꾸러미는 손님 → 방장, 방장 스냅샷은 방장 → 손님. LAG 프레임 뒤에 닿는다 (기본 3 = 50ms 편도).
 //   · 손잡기·밀기·출구 부탁은 게임 말(gm)로 오간다 — 방장이 중계한다. net.js 의 handleMessage 를 그대로 탄다.
@@ -11,7 +12,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { check, ok, say, note, done } from './check.mjs';
-import { w, netjs, coop, coopMod, T, DT, IDS, HALF, HEAD, col, row, where,
+import { w, netjs, coop, coopMod, T, DT, IDS, GUESTS, GAME, STAGES, HALF, HEAD, col, row, where,
          makeWorld, puppet, walkTo, jumpTo, hopChain, runAll } from './coop-bot.mjs';
 
 const LAG = Math.max(0, +(process.env.LAG ?? 3) | 0);
@@ -65,7 +66,7 @@ class NetSim {
       const state = p.dead ? (wk.mp.waiting ? 2 : 1) : 0;
       return ['p', r1(p.x), r1(p.vx), r1(p.air), r1(p.vy), Math.round(p.crouch * 100) / 100, p.facing, state, p.grabbing, p.escapes, wk.dodged];
     };
-    for (const k of ['2', '3', '4']) this.queue.push({ due: this.frames + LAG, to: '1', from: +k, msg: packetOf(this.worlds[k]) });
+    for (const k of GUESTS) this.queue.push({ due: this.frames + LAG, to: '1', from: +k, msg: packetOf(this.worlds[k]) });
     // 방장 스냅샷 — 방장 → 손님 (net.js 의 pump 와 같은 모양: 내 자리 + 남들에게서 받은 그대로 + 게임 꾸러미)
     const host = this.host, mp = host.mp;
     const players = [[1, ...packetOf(host).slice(1)]];
@@ -75,7 +76,7 @@ class NetSim {
     const snapshot = { t: 's', ms: Math.round(host.elapsed * 1000), st: host.state, r: mp.round, pl: players,
                        vw: Math.round(host.w), vh: Math.round(host.h), g: host.gameId, h: 1, x: coop.pack(host) };
     const frozen = JSON.stringify(snapshot);
-    for (const k of ['2', '3', '4']) this.queue.push({ due: this.frames + LAG, to: k, from: 1, msg: frozen });
+    for (const k of GUESTS) this.queue.push({ due: this.frames + LAG, to: k, from: 1, msg: frozen });
     // 닿을 때가 된 것을 넘긴다
     const rest = [];
     for (const item of this.queue) {
@@ -130,7 +131,10 @@ class NetSim {
   releaseMates(mates) { for (const m of mates) delete this.held[m]; }
 }
 
-say(`열네 판 — 넷이 각자 세상에서, 꾸러미 지연 ${LAG}프레임(${Math.round(LAG * 1000 / 60)}ms 편도)`);
+say(`${STAGES.length}판 — ${coop.crew}명이 각자 세상에서, 꾸러미 지연 ${LAG}프레임(${Math.round(LAG * 1000 / 60)}ms 편도)`);
 const results = runAll((name) => new NetSim(name), { ok, note });
-if (!process.env.STAGE && !process.env.LAG) writeFileSync(new URL('../docs/넷이서/play-net.json', import.meta.url), JSON.stringify(results, null, 1));
-done('넷이서 넷');
+if (!process.env.STAGE && !process.env.LAG) {
+  const dir = GAME === 'trio' ? '셋이서' : '넷이서';
+  writeFileSync(new URL(`../docs/${dir}/play-net.json`, import.meta.url), JSON.stringify(results, null, 1));
+}
+done(`${coop.name} 각자`);

@@ -1,9 +1,12 @@
-// 넷이서 봇 — 풀이(test/coop-moves.json)를 **키를 눌러** 실제 엔진에서 해 보는 공통 부분.
+// 협동 봇 — 풀이(test/coop-moves.json · test/trio-moves.json)를 **키를 눌러** 실제 엔진에서 해 보는 공통 부분.
 //
 // 두 가지 세상에서 돈다:
-//   coop-play.mjs  인형 — 방장 세상 하나. 움직이는 한 명만 진짜 물리, 나머지 셋은 그 자리에 세운 남. 빠르고 결정적이다.
-//   coop-net.mjs   넷 — 방장 1 + 손님 3, 세상 넷. 자리 꾸러미와 방장 스냅샷을 지연을 두고 주고받는다. 손님 물리·
+//   coop-play.mjs  인형 — 방장 세상 하나. 움직이는 한 명만 진짜 물리, 나머지는 그 자리에 세운 남. 빠르고 결정적이다.
+//   coop-net.mjs   여럿 — 방장 1 + 손님들, 세상도 그만큼. 자리 꾸러미와 방장 스냅샷을 지연을 두고 주고받는다. 손님 물리·
 //                  꾸러미·중계(손잡기·밀기·출구 부탁)·남의 자리 예측이 전부 진짜다.
+//
+// **어느 게임인지는 GAME 이 정한다** — 기본은 넷이서(coop), `GAME=trio` 면 셋이서. 명단(IDS)·판 묶음·
+// 풀이 파일이 전부 그 게임에서 나온다. 물리는 둘이 같은 것을 쓴다 (coop.js 의 makeCoop).
 //
 // 걸음(verb)은 solve.py 와 같다: walk jump hop climb boost stairs push ride take switch need_plate portal box_portal spring.
 
@@ -11,13 +14,14 @@ import './dom-stub.mjs';
 import { readFileSync } from 'node:fs';
 import { note } from './check.mjs';
 const R = new URL('../src/', import.meta.url).href;
+export const GAME = process.env.GAME === 'trio' ? 'trio' : 'coop';
 export const w = await import(R + 'game/world.js');
 export const netjs = await import(R + 'game/net.js');
-export const coopMod = await import(R + 'games/coop.js');
+export const coopMod = await import(R + `games/${GAME}.js`);
 export const coop = coopMod.default;
 export const { T, STAGES, exitState, blinkOn, tile, floorBelow, bodyBlocked } = coopMod;
 
-export const MOVES = JSON.parse(readFileSync(new URL('coop-moves.json', import.meta.url), 'utf8'));
+export const MOVES = JSON.parse(readFileSync(new URL(`${GAME}-moves.json`, import.meta.url), 'utf8'));
 export const TRACE = process.env.TRACE === '1';
 const TRACE2 = process.env.TRACE === '2';
 
@@ -26,8 +30,10 @@ export const HALF = 17, BLOCK_H = 50, HEAD = BLOCK_H + 3;    // 머리 꼭대기
 export const RUN = 290, G = 1700, JUMP_V = 568;
 export const FRICTION_G = 2600, FRICTION_A = 2600 * 0.35;
 export const DT = 1 / 60;
-export const IDS = ['1', '2', '3', '4'];
-export const WORLD_NAMES = ['뒷마당', '학교', '도시', '지하철'];
+// 명단과 세계 이름은 판 묶음에서 읽는다 — 넷이서면 넷, 셋이서면 셋.
+export const IDS = Array.from({ length: coop.crew }, (_, i) => String(i + 1));
+export const GUESTS = IDS.slice(1);                          // 방장(1) 말고
+export const WORLD_NAMES = coopMod.WORLDS.map((v) => v.name);
 
 export const col = (x) => Math.floor(x / T);
 export const row = (fy) => Math.floor((fy - 1) / T);
@@ -35,7 +41,7 @@ export const where = (world) => { const p = world.player; return `(${col(p.x)},$
 
 /// 세상 하나 — id 번 사람의 것. 방장(1)이거나 손님.
 export function makeWorld(stageName, { id = 1 } = {}) {
-  const world = w.createWorld({ ms: 0, dodged: 0 }, 'coop');
+  const world = w.createWorld({ ms: 0, dodged: 0 }, GAME);
   world.debug = true;
   world.onRecord = () => {}; world.onGameOver = (r) => { world.ended = r; };
   world.sent = []; world.send = (m, to) => world.sent.push({ m, to });
@@ -302,7 +308,7 @@ export function play(stage, moves, sim) {
   const host = sim.host, b = host.bag;
   const px = (tx) => (tx + 0.5) * T, pfy = (ty) => (ty + 1) * T;
   const trace = (s) => { if (TRACE) console.log('      ' + s); };
-  const per = { 1: 0, 2: 0, 3: 0, 4: 0, 판: 0 };
+  const per = Object.fromEntries([...IDS.map((k) => [k, 0]), ['판', 0]]);
   const dump = (world, err, i, label) => {
     const p = world.player, fy = world.groundY - p.air, cx = col(p.x), cy = row(fy);
     const around = [];
@@ -411,8 +417,12 @@ export function play(stage, moves, sim) {
         const [who, tag] = a;
         err = go(who); if (err) break;
         const to = b.portals[tag === tag.toLowerCase() ? tag.toUpperCase() : tag.toLowerCase()];
-        for (let f = 0; f < 120 && !(col(world.player.x) === to.x && world.player.grounded); f++) sim.step(world, {});
-        if (col(world.player.x) !== to.x) err = `포탈 ${tag} 를 못 지났다 ${where(world)}`;
+        // 저편 포탈 **한 칸 안**에 서면 지난 것이다. 딱 그 칸이어야 한다고 보면, 들어갈 때 남은 속도로
+        // 몇 픽셀 미끄러진 사람이 못 지난 것으로 읽힌다 (뛰면서 포탈에 들어가면 늘 그렇다).
+        const toX = (to.x + 0.5) * T;
+        const there = () => Math.abs(world.player.x - toX) < T && world.player.grounded;
+        for (let f = 0; f < 120 && !there(); f++) sim.step(world, {});
+        if (!there()) err = `포탈 ${tag} 를 못 지났다 ${where(world)}`;
         break;
       }
       case 'box_portal': {
@@ -481,7 +491,7 @@ export function play(stage, moves, sim) {
   return { ok: true, per };
 }
 
-/// 열네 판을 돈다. makeSim(stageName) 이 세상을 만든다. 결과를 돌려준다 (기록은 부르는 쪽이).
+/// 판을 처음부터 끝까지 돈다. makeSim(stageName) 이 세상을 만든다. 결과를 돌려준다 (기록은 부르는 쪽이).
 export function runAll(makeSim, { only = process.env.STAGE, ok, note: noteFn } = {}) {
   const results = [];
   for (const m of MOVES) {
@@ -492,8 +502,8 @@ export function runAll(makeSim, { only = process.env.STAGE, ok, note: noteFn } =
     const seconds = sim.frames / 60;
     const idx = STAGES.indexOf(stage);
     const no = `${WORLD_NAMES.indexOf(stage.world) + 1}-${STAGES.filter((s, i) => s.world === stage.world && i <= idx).length}`;
-    // 넷이 동시에 움직이면 걸리는 시간의 어림 — 가장 많이 움직인 사람의 시간 + 아무도 안 움직인 시간
-    const par = Math.max(r.per[1], r.per[2], r.per[3], r.per[4]) + r.per['판'];
+    // 다 같이 동시에 움직이면 걸리는 시간의 어림 — 가장 많이 움직인 사람의 시간 + 아무도 안 움직인 시간
+    const par = Math.max(...IDS.map((k) => r.per[k])) + r.per['판'];
     if (r.ok) ok(`${no} ${m.name} — ${m.moves.length}걸음 · 한 명씩 ${seconds.toFixed(0)}초 · 동시에 ≈${(par / 60).toFixed(0)}초${stage.limit ? ` (제한 ${stage.limit})` : ''}`, true);
     else { ok(`${no} ${m.name} — ${r.label}`, false); noteFn(r.err); }
     results.push({ no, name: m.name, world: stage.world, ok: r.ok, steps: m.moves.length, seconds: Math.round(seconds * 10) / 10,

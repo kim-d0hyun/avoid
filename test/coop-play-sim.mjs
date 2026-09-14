@@ -1,5 +1,6 @@
-// 넷이서 인형 세상 — 방장 세상 하나에 나머지 셋을 세운다. 움직이는 한 명만 진짜 물리,
+// 협동 인형 세상 — 방장 세상 하나에 나머지를 세운다. 움직이는 한 명만 진짜 물리,
 // 나머지는 그 자리에 선 남. coop-play.mjs(실전 시험)와 coop-render.mjs(영상)가 같이 쓴다.
+// 명단(IDS)은 게임에서 온다 — 넷이서면 넷, 셋이서면 셋.
 
 import { w, coop, T, G, floorBelow, bodyBlocked, HALF, BLOCK_H, HEAD, DT, IDS, col, row,
          makeWorld, puppet } from './coop-bot.mjs';
@@ -11,7 +12,7 @@ export class PuppetSim {
     this.host.bump = false;                     // 봇은 한 명씩 — 정지 인형끼리 충돌 끈다
     const b = this.host.bag;
     this.pos = {};
-    for (let i = 0; i < 4; i++) this.pos[String(i + 1)] = { x: (b.spawn[i].x + 0.5) * T, fy: (b.spawn[i].y + 1) * T, ladder: false };
+    IDS.forEach((k, i) => { this.pos[k] = { x: (b.spawn[i].x + 0.5) * T, fy: (b.spawn[i].y + 1) * T, ladder: false }; });
     this.active = null;
     this.settleActive = false;
     this.mates = null;
@@ -31,14 +32,17 @@ export class PuppetSim {
     const world = this.host, p = world.player;
     if (this.active === who) return world;
     if (this.active) {
-      // 사다리·리프트에 매달린 채 차례를 넘기면 그대로 매달려 있다 (자리표에 적어 둔다)
-      this.pos[this.active] = { x: p.x, fy: world.groundY - p.air, ladder: !!p.onLadder };
+      // 사다리·리프트에 매달린 채 차례를 넘기면 그대로 매달려 있다 (자리표에 적어 둔다).
+      // 포탈 칸에 서 있는지도 사람마다 따로 적는다 — 세상 하나에 world.player 를 갈아 끼우는 구조라
+      // 안 적어 두면 포탈에서 나와 서 있던 사람이 차례를 돌려받는 순간 도로 저편으로 빨려 간다.
+      this.pos[this.active] = { x: p.x, fy: world.groundY - p.air, ladder: !!p.onLadder, onPortal: !!p.onPortal };
       world.mp.others.set(+this.active, puppet(world, +this.active, p.x, world.groundY - p.air));
     }
     world.mp.others.delete(+who);
     const at = this.pos[who];
     p.x = at.x; p.air = world.groundY - at.fy; p.vx = 0; p.vy = 0; p.grounded = !at.ladder; p.onLadder = !!at.ladder;
     p.crouch = 0; p.dead = false; p.stun = 0; p.knock = 0; p.jumpHeld = false; p.rideId = null; p.load = 0;
+    p.onPortal = !!at.onPortal;
     this.active = who;
     this.settleActive = true;
     for (const k of IDS) {
@@ -62,7 +66,7 @@ export class PuppetSim {
   }
   place(who, x, fy) {
     const world = this.host;
-    this.pos[who] = { x, fy, ladder: false };
+    this.pos[who] = { x, fy, ladder: false, onPortal: !!this.pos[who]?.onPortal };
     if (who === this.active) { world.player.x = x; world.player.air = world.groundY - fy; return; }
     const o = world.mp.others.get(+who);
     if (!o) { world.mp.others.set(+who, puppet(world, +who, x, fy)); return; }

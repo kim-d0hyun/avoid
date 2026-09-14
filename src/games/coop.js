@@ -1,11 +1,15 @@
-// 넷이서 — 협동.
+// 협동 — 넷이서·셋이서 공통 엔진.
 //
-// 넷이 열쇠를 찾아 출구 포탈에 모이면 다음 판. 판마다 「한 명만 닿으면」/「넷이 다 모여야」가 다르다.
-// 혼자서는 못 하게 만든 판 열둘 — 세 칸 턱(어깨 → 손), 한 칸 굴(웅크리기), 무거운 상자(둘이 민다),
+// 여럿이 열쇠를 찾아 출구 포탈에 모이면 다음 판. 판마다 「한 명만 닿으면」/「다 모여야」가 다르다.
+// 혼자서는 못 하게 만든 판들 — 세 칸 턱(어깨 → 손), 한 칸 굴(웅크리기), 무거운 상자(둘이 민다),
 // 누름판(밟는 동안만), 색 열쇠(집으면 그 색 블록이 사라진다 — 발밑까지), 포탈, 깜빡이는 다리.
 //
 // 이 파일은 **타일 위의 물리와 규칙**만 갖는다. 사람의 자리·이름·방·순위는 world.js 와 net.js 것이고,
-// 판의 글자 그림은 coop-stages.js(docs/넷이서/stages.py 가 만든다)에 있다.
+// 판의 글자 그림은 coop-stages.js(docs/넷이서/stages.py)와 trio-stages.js(docs/셋이서/stages.py)에 있다.
+//
+// **인원은 판 묶음이 들고 다닌다.** makeCoop 이 게임 하나를 찍어 내고, 몇 명이어야 하는지·판이 무엇인지·
+// 세계 색이 무엇인지는 전부 fresh() 가 world.bag 에 넣어 준다 — 모듈에 게임별로 남는 값이 없어야
+// 넷이서를 하다 셋이서로 갈아 끼워도 앞 게임의 판·색이 따라오지 않는다.
 //
 // 누가 무엇을 정하나 — 배구의 공과 같다. **방장이 정한다**: 상자·통·누름판·셔터·열쇠·판 번호·되감기.
 // 내 걷기·점프·사다리·카메라는 각자 계산한다. 어긋나면 방장 말이 맞고 되돌아간다.
@@ -39,6 +43,7 @@ const NEXT_FADE = 0.6;                     // 판 사이 어두워지는 시간
 const SHIRTS = ['#2f6fb0', '#3f8f56', '#d97b1f', '#8a5bb5'];
 const KEY_COLOR = { r: '#d02f22', y: '#c9a200', b: '#2f6fb0' };
 const BLOCK_COLOR = { R: '#d02f22', Y: '#c9a200', B: '#2f6fb0' };
+/// 넷이서의 세계 색. 셋이서 것은 trio.js 에 있다.
 const THEME = {
   '뒷마당': { ground: '#c9a86a', edge: '#3f8f56', hatch: '#8a6a3a', barrel: '통' },
   '학교':   { ground: '#b8912a', edge: null,      hatch: '#7a6020', barrel: '가방' },
@@ -50,7 +55,7 @@ const THEME = {
 
 function loadStage(world, index) {
   const b = world.bag;
-  const s = STAGES[Math.max(0, Math.min(STAGES.length - 1, index))];
+  const s = b.stages[Math.max(0, Math.min(b.stages.length - 1, index))];
   b.stage = index;
   b.def = s;
   b.w = s.w; b.h = s.h;
@@ -63,14 +68,15 @@ function loadStage(world, index) {
   b.plates = { p: false, q: false };
   b.boxes = []; b.barrels = []; b.chutes = []; b.tracks = []; b.keys = {}; b.portals = {};
   b.rot = new Map();                       // 삭은 발판 — 'tx,ty' → { t: 밟은 시간, gone: 부서져 있는 남은 시간 }
-  b.spawn = [null, null, null, null];
+  b.spawn = new Array(b.crew).fill(null);  // 시작 자리는 인원 수만큼. 넷이서는 넷, 셋이서는 셋.
+  b.theme = b.themes[s.world] ?? b.fallbackTheme;   // 세계 색은 판을 열 때 한 번만 찾는다
   b.exit = null;
   b.done = 0;                              // 다음 판으로 넘어가는 중이면 남은 시간
   b.portalCool = 0;
   b.cam = null;
   for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
     const ch = b.rows[y][x];
-    if (ch >= '1' && ch <= '4') { b.spawn[+ch - 1] = { x, y }; b.rows[y][x] = '.'; }
+    if (ch >= '1' && +ch <= b.crew) { b.spawn[+ch - 1] = { x, y }; b.rows[y][x] = '.'; }
     else if (ch === 'x' || ch === 'X') { b.boxes.push({ x: (x + 0.5) * T, y: (y + 1) * T, vx: 0, vy: 0, weight: ch === 'X' ? 2 : 1, on: false }); b.rows[y][x] = '.'; }
     else if (ch === 'r' || ch === 'y' || ch === 'b') { b.keys[ch] = { x, y, taken: false }; }
     else if (ch === '{' || ch === '}') { b.chutes.push({ x, y, dir: ch === '{' ? -1 : 1, t: 1.5 }); }
@@ -92,7 +98,7 @@ function loadStage(world, index) {
 /// 시작 자리에 세운다. slot 은 번호 순서 (방장 0).
 function placeAt(world, p, slot) {
   const b = world.bag;
-  const sp = b.spawn[Math.max(0, Math.min(3, slot))] ?? b.spawn.find(Boolean) ?? { x: 2, y: b.h - 3 };
+  const sp = b.spawn[Math.max(0, Math.min(b.crew - 1, slot))] ?? b.spawn.find(Boolean) ?? { x: 2, y: b.h - 3 };
   p.x = (sp.x + 0.5) * T;
   p.air = world.groundY - (sp.y + 1) * T;
   p.vx = 0; p.vy = 0; p.knock = 0; p.crouch = 0; p.onLadder = false; p.stun = 0;
@@ -501,6 +507,9 @@ export function move(world, dt) {
       const other = b.portals[ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()];
       if (other) {
         p.x = (other.x + 0.5) * T; p.air = world.groundY - (other.y + 1) * T; p.grounded = false;
+        // 오르던 속도는 버린다 — 뛰어 들어온 사람이 저편에서 그 기세로 칸 위로 튀어 올랐다 도로 떨어지며
+        // 다시 타고 되돌아갔다. 포탈에서는 떨어져 나온다.
+        p.vy = Math.min(p.vy, 0);
         b.portalCool = PORTAL_COOL; b.flash = { x: p.x, y: world.groundY - p.air - h / 2, t: 0.4 };
         p.onPortal = true;                   // 저편 포탈 칸에 서 있는 것으로 친다
       }
@@ -733,8 +742,8 @@ function meAtExit(world) {
 
 function nextStage(world) {
   const b = world.bag;
-  if (b.stage + 1 >= STAGES.length) {
-    world.onGameOver?.({ name: '넷이서', side: 0, rows: [] });
+  if (b.stage + 1 >= b.stages.length) {
+    world.onGameOver?.({ name: b.gameName, side: 0, rows: [] });
     return;
   }
   world.stage = b.stage + 1;
@@ -747,13 +756,14 @@ function nextStage(world) {
   if (world.mp.on && world.mp.role === 'host') {
     for (const [id, o] of world.mp.others) { world.mp.roster?.add(id); world.mp.alive.set(id, true); o.waiting = false; o.dead = false; o.state = 0; }
   }
-  say(world, `${STAGES[b.stage].world} ${stageNo(b.stage)} · ${STAGES[b.stage].name}`);
+  say(world, `${b.stages[b.stage].world} ${stageNo(b, b.stage)} · ${b.stages[b.stage].name}`);
 }
 
-function stageNo(index) {
-  const s = STAGES[index];
-  const wi = WORLDS.findIndex((w) => w.name === s.world);
-  const si = STAGES.filter((t, i) => t.world === s.world && i <= index).length;
+/// 「1-3」 같은 판 번호. 세계 순서와 그 세계에서 몇 번째인지. 판 묶음은 bag 이 들고 있다.
+function stageNo(b, index) {
+  const s = b.stages[index];
+  const wi = b.worlds.findIndex((w) => w.name === s.world);
+  const si = b.stages.filter((t, i) => t.world === s.world && i <= index).length;
   return `${wi + 1}-${si}`;
 }
 
@@ -761,7 +771,7 @@ function stageNo(index) {
 
 function drawTiles(ctx, world, time, boil) {
   const b = world.bag;
-  const theme = THEME[b.def.world] ?? THEME['도시'];
+  const theme = b.theme;
   const cam = b.cam ?? { x: 0, y: 0, w: world.w, h: world.h };
   const tx0 = Math.max(0, Math.floor(cam.x / T) - 1), tx1 = Math.min(b.w - 1, Math.floor((cam.x + cam.w) / T) + 1);
   const ty0 = Math.max(0, Math.floor(cam.y / T) - 1), ty1 = Math.min(b.h - 1, Math.floor((cam.y + cam.h) / T) + 1);
@@ -985,20 +995,36 @@ function drawBarrel(ctx, br, seed) {
 
 // ── 게임 모듈 ───────────────────────────────────────────────────────────────
 
-export default {
-  id: 'coop',
-  name: '넷이서',
-  line: '넷이 열쇠를 찾아 포탈에 모인다. 혼자서는 아무것도 못 하게 만든 판 열둘.',
+/// 게임 하나를 찍어 낸다. 판 묶음·인원·세계 색만 다르고 물리와 규칙은 같다.
+///
+///   id/name/line  게임 이름표
+///   crew          몇 명이어야 하나 (넷이서 4 · 셋이서 3)
+///   crewWord      「넷」/「셋」 — 「셋이어야 시작한다」, 「셋이 다 모여야 끝」에 쓴다
+///   inviteWord    방을 열어 몇을 더 불러야 하나 (넷이서 「셋」 · 셋이서 「둘」)
+///   stages/worlds 판 묶음 (coop-stages.js · trio-stages.js)
+///   themes        세계 이름 → 색. 판 묶음의 세계가 전부 있어야 한다
+///   fallbackTheme 그래도 없을 때. 이 게임 안의 색이어야 한다 — 남의 게임 팔레트로 새지 않게
+export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, worlds, themes, fallbackTheme }) {
+  return {
+  id,
+  name,
+  line,
+  /// 몇 명이어야 하나. 봇과 시험이 명단을 여기서 읽는다.
+  crew,
   keys: [['⌥ ← →', '걷기 (상자는 걸어가서 민다)'], ['⌥ ↑', '점프 · 사다리 오르기 · 포탈에서 다음 판'],
          ['⌥ ↓', '웅크리기 (한 칸 굴) · 사다리 내리기'],
          ['⌥ R', '판 되감기 (방장만)']],
   noGrab: true, noClock: true, noResults: true, noGround: true,
   /// ⌥R 은 판 도중에도 먹는다 — 방장이 되감는다. 다른 게임은 판이 끝난 뒤에만.
   rewindable: true,
+  /// 판이 여럿인 게임. 개발용 판 번호(DDONG_STAGE)가 이걸 보고 먹는다.
+  staged: true,
   figure: drawBlock,
   tally: () => '',
 
-  fresh: () => ({ rows: null, stage: 0, deaths: 0, resets: 0 }),
+  // 판 묶음·인원·색은 살림살이에 얹어 둔다 — 모듈에 남겨 두면 게임을 갈아 끼울 때 앞 게임 것이 따라온다.
+  fresh: () => ({ rows: null, stage: 0, deaths: 0, resets: 0,
+                  stages, worlds, crew, themes, fallbackTheme, gameName: name, crewWord }),
 
   /// 판을 연다. 처음이거나 되감을 때. 판 번호는 world.stage 에 남는다 (restart 가 지켜 준다).
   begin(world) {
@@ -1015,11 +1041,11 @@ export default {
     if (world.bag?.rows) { world.w = world.bag.w * T; world.h = world.bag.h * T; world.groundY = world.bag.h * T; }
   },
 
-  /// 넷이어야 시작한다. 혼자는 개발용(DDONG_DEBUG)에서만.
+  /// 인원이 맞아야 시작한다. 혼자는 개발용(DDONG_DEBUG)에서만.
   blocked(world) {
     const n = world.mp.on ? world.mp.others.size + 1 : 1;
-    if (!world.mp.on) return world.debug ? null : '넷이서 하는 게임이다 — 방을 열어 셋을 더 부른다';
-    if (n !== 4) return `넷이어야 시작한다 — 지금 ${n}명`;
+    if (!world.mp.on) return world.debug ? null : `${name} 하는 게임이다 — 방을 열어 ${inviteWord}을 더 부른다`;
+    if (n !== crew) return `${crewWord}이어야 시작한다 — 지금 ${n}명`;
     return null;
   },
 
@@ -1038,7 +1064,7 @@ export default {
       if (b.beat >= 1) {
         b.beat = 0;
         const i = world.input;
-        world.log?.(`넷이서 ${stageNo(b.stage)} ${world.state} x=${Math.round(p.x)} air=${Math.round(p.air)} g=${p.grounded ? 1 : 0}`
+        world.log?.(`${b.gameName} ${stageNo(b, b.stage)} ${world.state} x=${Math.round(p.x)} air=${Math.round(p.air)} g=${p.grounded ? 1 : 0}`
           + ` 키=${['left','right','jump','duck'].filter((k) => i[k]).join('+') || '-'} 시계=${b.clock.toFixed(1)}`);
       }
     }
@@ -1116,8 +1142,8 @@ export default {
     if (!b?.rows || world.state === 'pick') return;
     const def = b.def;
     // 왼쪽 위 — 판
-    const label = `${stageNo(b.stage)} ${def.name}`;
-    const sub = `${def.world} · 되감기 ${b.resets} · ${b.end === 'one' ? '한 명만 닿으면 끝' : '넷이 다 모여야 끝'}${b.limit ? ` · ${Math.max(0, Math.ceil(b.limit - b.clock))}초` : ''}`;
+    const label = `${stageNo(b, b.stage)} ${def.name}`;
+    const sub = `${def.world} · 되감기 ${b.resets} · ${b.end === 'one' ? '한 명만 닿으면 끝' : `${b.crewWord}이 다 모여야 끝`}${b.limit ? ` · ${Math.max(0, Math.ceil(b.limit - b.clock))}초` : ''}`;
     ctx.font = '600 11px "Apple SD Gothic Neo", sans-serif';
     const w = Math.max(150, ctx.measureText(sub).width + 30);
     paperScrap(ctx, 24, 16, w, 50, 3);
@@ -1179,7 +1205,7 @@ export default {
     const b = world.bag;
     if (!b || !d || typeof d !== 'object') return;
     if (typeof d.st === 'number' && (d.st !== b.stage || !b.rows || d.rs !== b.resets)) {
-      const stage = Math.max(0, Math.min(STAGES.length - 1, d.st | 0));
+      const stage = Math.max(0, Math.min(b.stages.length - 1, d.st | 0));
       const wasStage = b.stage;
       world.stage = stage;
       loadStage(world, stage);
@@ -1232,7 +1258,17 @@ export default {
       return;
     }
   },
-};
+  };
+}
+
+/// 넷이서 — 판 열넷, 네 명. docs/넷이서/stages.py 가 만든 판 묶음을 쓴다.
+export default makeCoop({
+  id: 'coop',
+  name: '넷이서',
+  line: '넷이 열쇠를 찾아 포탈에 모인다. 혼자서는 아무것도 못 하게 만든 판 열넷.',
+  crew: 4, crewWord: '넷', inviteWord: '셋',
+  stages: STAGES, worlds: WORLDS, themes: THEME, fallbackTheme: THEME['도시'],
+});
 
 /// 방장이 판을 되감는다 (⌥R 이나 시간 초과). 상자·블록·사람 전부 처음 자리로.
 export function rewind(world, why) {
@@ -1246,4 +1282,4 @@ export function rewind(world, why) {
   say(world, why ? `${why} — 판을 되감았다` : '판을 되감았다', 2.5);
 }
 
-export { loadStage, placeAt, exitState, stepObjects, blinkOn, tile, solidTile, floorBelow, bodyBlocked, STAGES };
+export { loadStage, placeAt, exitState, stepObjects, blinkOn, tile, solidTile, floorBelow, bodyBlocked, stageNo, STAGES, WORLDS };
