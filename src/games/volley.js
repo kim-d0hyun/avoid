@@ -12,7 +12,7 @@
 // 그래서 공은 방장 것이다. 방장이 굴리고 60Hz 로 자리와 속도를 뿌린다. 손님은 받은
 // 속도로 사이를 메워 그리고, 어긋난 만큼은 사람한테 쓰는 것과 같은 방식으로 녹인다.
 
-import { INK, RED, PENCIL, stroke, circle, text } from '../draw/ink.js';
+import { INK, RED, PENCIL, stroke, circle, text, PAPER } from '../draw/ink.js';
 import { BODY_H, SWING_TIME } from '../draw/stickman.js';
 import { startSlide, SLIDE_COOL } from '../game/world.js';
 
@@ -589,15 +589,20 @@ export default {
     const netX = world.w / 2;
     const netTop = world.groundY - NET_H;
 
-    // 네트. 기둥 한 줄에 그물 빗금.
-    stroke(ctx, [[netX, netTop], [netX, world.groundY]],
-           { width: 3.4, color: INK, seed: 61, amp: 1.1 });
-    for (let y = netTop + 8; y < world.groundY - 4; y += 15) {
-      stroke(ctx, [[netX - 11, y], [netX + 11, y + 9]],
-             { width: 1.3, color: PENCIL, seed: y | 0, amp: 0.5, halo: false, alpha: 0.65 });
+    // 네트. 이 앱은 업무 화면 위에 반투명으로 뜨니, 가는 연필 빗금은 바탕 글자에 묻혀 안 보였다 —
+    // 기둥 둘 사이에 그물을 **종이 후광을 깐 잉크 격자**로 짠다. 높이(NET_H)는 그대로다.
+    const half = 14;
+    ctx.save(); ctx.globalAlpha = 0.85; ctx.fillStyle = PAPER;
+    ctx.fillRect(netX - half - 3, netTop - 4, half * 2 + 6, world.groundY - netTop + 4); ctx.restore();   // 그물 뒤 종이
+    for (let y = netTop + 6; y < world.groundY - 3; y += 11) {                                          // 가로줄
+      stroke(ctx, [[netX - half, y], [netX + half, y]], { width: 1.5, color: INK, seed: 90 + (y | 0), amp: 0.4, halo: false, alpha: 0.7 });
     }
-    stroke(ctx, [[netX - 13, netTop], [netX + 13, netTop]],
-           { width: 3, color: INK, seed: 62, amp: 0.8 });
+    for (let x = netX - half + 5; x < netX + half; x += 9) {                                           // 세로줄
+      stroke(ctx, [[x, netTop + 3], [x, world.groundY]], { width: 1.5, color: INK, seed: 120 + (x | 0), amp: 0.4, halo: false, alpha: 0.7 });
+    }
+    stroke(ctx, [[netX - half, netTop], [netX - half, world.groundY]], { width: 3.6, color: INK, seed: 61, amp: 1.0 });   // 기둥 둘
+    stroke(ctx, [[netX + half, netTop], [netX + half, world.groundY]], { width: 3.6, color: INK, seed: 64, amp: 1.0 });
+    stroke(ctx, [[netX - half - 4, netTop], [netX + half + 4, netTop]], { width: 4.2, color: INK, seed: 62, amp: 0.8 });   // 윗줄(테이프)
 
     // 지나온 자리. 뒤로 갈수록 옅어지고 작아진다.
     (b.tail ?? []).forEach(([tx, ty], i) => {
