@@ -61,6 +61,17 @@ world.onMenu = (action) => {
     shell.menu?.('host');
     return;
   }
+  // **방장이 하던 중에 게임을 바꾼다.** 게임을 갈아 끼우고 시작 전 화면으로. 손님은 다음 스냅샷의 게임 이름을 보고
+  // 따라온다. 지난 게임의 순위표·구경 표시는 지운다 — 새 게임 시작 화면에 남아 있으면 안 된다.
+  if (action.startsWith('game:')) {
+    const id = action.slice(5);
+    if (id === world.gameId) return;
+    pickGame(world, id);
+    spread(world);
+    world.mp.results = null; world.mp.winner = null; world.mp.waiting = false;
+    shell.log?.(`게임 바꾸기 → ${gameOf(world).name}`);
+    return;
+  }
   // 창 크기와 자리도 창이 하는 일이다. 판은 그대로 돌고 창만 작아진다.
   if (action.startsWith('size:')) {
     shell.setSize?.(Number(action.slice(5)));

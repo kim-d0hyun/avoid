@@ -92,7 +92,7 @@ say('같이 하기 — 방 안에서는 코드 복사와 닫기');
   tap(w, 'menu');
   check('방 이름이 옆에 뜬다', menuItems(w)[1].note, '방 K3P9 · 1명');
   into(w, 'together');
-  check('고를 것', labels(w), ['이름 바꾸기', '코드 복사', '방 깨기 — 모두 홈으로']);
+  check('고를 것', labels(w), ['이름 바꾸기', '코드 복사', '게임 바꾸기', '방 깨기 — 모두 홈으로']);   // 방장은 게임도 바꾼다
   check('코드가 옆에', menuItems(w)[1].note, 'K3P9');
   w.mp.role = 'guest';
   check('손님은 나가기', labels(w)[2], '방에서 나가기');
@@ -104,11 +104,29 @@ say('이름 바꾸기 — 메뉴에 있다');
   tap(w, 'menu');
   into(w, 'together');
   check('혼자일 때도 고칠 수 있다', labels(w), ['방 만들기', '코드로 입장', '이름 바꾸기']);
-
   while (menuItems(w)[w.menu.index].id !== 'name') tap(w, 'duck');
   tap(w, 'right');
   check('셸이 이름 묻는 창을 연다', w.picked, ['name']);
   check('메뉴는 닫힌다', w.menu.open, false);
+}
+
+say('방장은 하던 중에도 게임을 바꾼다 — 같이 하기 ▸ 게임 바꾸기');
+{
+  const w = make([]);
+  w.mp.on = true; w.mp.role = 'host'; w.mp.myId = 1; w.mp.code = 'K3P9';
+  tap(w, 'menu'); into(w, 'together');
+  check('방장 메뉴에 게임 바꾸기가 있다', labels(w).includes('게임 바꾸기'), true);
+  into(w, 'game');
+  check('게임 셋을 고른다', labels(w), ['똥피하기', '배구', '넷이서']);
+  check('처음 짚는 것은 하던 게임', w.menu.index, 0);
+  tap(w, 'duck'); tap(w, 'right');
+  check('고르면 game: 으로 알린다', w.picked, ['game:volley']);
+  check('메뉴가 닫힌다', w.menu.open, false);
+  // 손님 메뉴에는 없다
+  const g = make([]); g.mp.on = true; g.mp.role = 'guest'; g.mp.myId = 2;
+  tap(g, 'menu'); into(g, 'together');
+  check('손님 메뉴에는 게임 바꾸기가 없다', labels(g).includes('게임 바꾸기'), false);
+
 }
 
 say('내보내기 — 방장만, 그 자리에서');
@@ -119,9 +137,8 @@ say('내보내기 — 방장만, 그 자리에서');
   w.mp.others.set(3, { id: 3, name: '잠수', waiting: true, dead: true });
   tap(w, 'menu');
   into(w, 'together');
-  check('방장에게는 내보내기가 있다', labels(w),
-        ['이름 바꾸기', '코드 복사', '내보내기', '방 깨기 — 모두 홈으로']);
-  check('몇 명인지 옆에', menuItems(w)[2].note, '2명');
+  check('방장에게는 내보내기가 있다', labels(w), ['이름 바꾸기', '코드 복사', '게임 바꾸기', '내보내기', '방 깨기 — 모두 홈으로']);
+  check('몇 명인지 옆에', menuItems(w).find((i) => i.id === 'kick').note, '2명');
 
   into(w, 'kick');
   check('사람 목록', labels(w), ['범창', '잠수']);
@@ -134,7 +151,7 @@ say('내보내기 — 방장만, 그 자리에서');
 
   w.mp.others.delete(3);                             // 셸이 끊고 알려 준다
   w.mp.others.delete(2);
-  check('다 내보내면 한 겹 나온다', labels(w), ['이름 바꾸기', '코드 복사', '방 깨기 — 모두 홈으로']);
+  check('다 내보내면 한 겹 나온다', labels(w), ['이름 바꾸기', '코드 복사', '게임 바꾸기', '방 깨기 — 모두 홈으로']);
   check('길도 나왔다', w.menu.path, ['together']);
 }
 

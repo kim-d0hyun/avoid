@@ -506,6 +506,11 @@ function togetherItems(world) {
   }
   const rows = [{ id: 'name', label: '이름 바꾸기', note: mp.myName || '' },
                 { id: 'copy', label: '코드 복사', note: mp.code ?? '' }];
+  // **방장은 하던 중에도 게임을 바꾼다.** 배구를 하다가 똥피하기로 — 방 전체가 따라간다 (손님은 방장 스냅샷의
+  // 게임 이름을 보고 갈아탄다). 바꾸면 시작 전 화면으로 돌아가고, 방장이 방향키로 다시 연다.
+  if (mp.role === 'host') {
+    rows.push({ id: 'game', into: 'game', label: '게임 바꾸기', note: gameById(world.gameId).name });
+  }
   // **방장만 내보낼 수 있다.** 들어와 놓고 잠수하면 판이 안 열린다 —
   // 배구는 한쪽 편이 비면 안 열리고, 협동은 넷이 다 움직여야 한다.
   if (mp.role === 'host' && mp.others.size) {
@@ -576,6 +581,9 @@ export function menuItems(world) {
     }
     case 'together/host':
       return games.map((game) => ({ id: `host:${game.id}`, label: game.name }));
+    case 'together/game':
+      return games.map((game) => ({ id: `game:${game.id}`, label: game.name,
+                                    note: game.id === world.gameId ? '지금 이것' : '', mark: game.id === world.gameId }));
     case 'screen': return screenItems(world);
     case 'screen/size':
       return SIZES.map(([value, name]) => ({
@@ -631,6 +639,7 @@ function openMenu(world, open) {
 /// 한 겹 들어갈 때 처음 짚을 줄. 지금 쓰고 있는 값에 손가락을 올려 준다.
 function firstIndex(world, at) {
   if (at === 'team') return world.team ?? 0;
+  if (at === 'together/game') return Math.max(0, games.findIndex((g) => g.id === world.gameId));
   if (at === 'screen/size') {
     return Math.max(0, SIZES.findIndex(([v]) => Math.abs(v - (world.size ?? 1)) < 0.02));
   }

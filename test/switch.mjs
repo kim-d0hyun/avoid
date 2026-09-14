@@ -45,4 +45,26 @@ check('공이 움직인다', Number.isFinite(world.bag.ball.x) && world.bag.ball
 check('바로 판을 본다 (구경)', world.state, 'play');
 check('이번 판에는 안 낀다', [world.mp.waiting, world.player.dead], [true, true]);
 
+// 방장이 배구를 하던 중 ⌥M → 같이 하기 → 게임 바꾸기 → 똥피하기. 방장 쪽은 main.js 가 pickGame 을 부르고 결과를 지운다.
+// 그 다음 스냅샷에 새 게임 이름이 실려 가고, 손님은 그걸 보고 갈아탄다.
+say('방장이 하던 중에 게임을 바꾸면 손님도 따라간다');
+{
+  const host = w.createWorld({ ms: 0, dodged: 0 });
+  host.onRecord = () => {}; host.onGameOver = () => {};
+  w.resize(host, 1512, 944);
+  w.pickGame(host, 'volley');
+  const sent = []; const hshell = { net: { send: (m) => sent.push(m) }, log() {} };
+  net.roleChanged(host, 'host', 'ZR95', 0, '방장');
+  host.state = 'play';
+  w.pickGame(host, 'dodge'); host.mp.results = null; host.mp.winner = null; host.mp.waiting = false;   // = onMenu('game:dodge')
+  for (let i = 0; i < 4; i++) net.pump(host, 1 / 60, hshell);
+  const snap = sent.filter((m) => m.t === 's').pop();
+  check('방장 꾸러미에 새 게임 이름', snap?.g, 'dodge');
+  check('방장은 시작 전 화면', snap?.st, 'ready');
+  net.handleMessage(world, shell, 0, snap, { restart: w.restart, setSize: (a, b) => w.resize(world, a ?? 1512, b ?? 944) });
+  check('손님도 똥피하기로 갈아탔다', world.gameId, 'dodge');
+  check('손님도 시작 전 화면', world.state, 'ready');
+  check('공은 사라졌다', world.bag.ball, undefined);
+}
+
 done('게임 갈아 끼우기');
