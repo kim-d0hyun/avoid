@@ -466,11 +466,11 @@ function layoutItems(world) {
 /// 줄이 열한 개까지 늘어나면 그건 메뉴가 아니라 목록이다. 「지금 판에 쓰는 것」만 첫 화면에
 /// 세우고 나머지는 한 겹 안으로 넣는다 — 같이 하기, 화면. 게임기 메뉴가 그렇게 생겼다.
 ///
-///   []                  이어서 · 다시 시작 · 편 고르기 · 같이 하기 ▸ · 화면 ▸ · 홈으로 · 숨기기 · 끝내기
+///   []                  이어서 · 다시 시작 · 편 고르기 · 같이 하기 ▸ · 설정 ▸ · 홈으로 · 숨기기 · 끝내기
 ///   together            방 만들기 ▸ · 코드로 입장  (방 안이면: 코드 복사 · 닫기/나가기)
 ///   together/host       무슨 게임으로 방을 열까 — 게임 목록
-///   screen              창 크기 ▸ · 창 위치 ▸ · 투명도 ▸ · 띄울 화면 ▸
-///   screen/size · spot · fade · where     값 고르기
+///   settings            화면 크기 ▸ · 창 위치 ▸ · 화면 투명도 ▸ · 키 설정 ▸ · 모니터 설정 ▸ · 스크린샷
+///   settings/size · spot · fade · keys · where     값 고르기·토글
 ///   team                편 고르기
 ///
 /// `into` 가 있는 줄은 한 겹 들어가는 문이고, 없는 줄은 그 자리에서 무언가를 한다.
@@ -491,7 +491,7 @@ function rootItems(world) {
     id: 'together', into: 'together', label: '같이 하기',
     note: world.mp.on ? `방 ${world.mp.code ?? ''} · ${world.mp.others.size + 1}명` : '혼자 하는 중',
   });
-  items.push({ id: 'screen', into: 'screen', label: '화면', note: screenNote(world) });
+  items.push({ id: 'settings', into: 'settings', label: '설정', note: screenNote(world) });
   // **판을 접고 게임 고르는 화면으로 나간다.** 다른 게임을 하려면 여기로 나와서 고른다.
   if (!home) items.push({ id: 'pick', label: '홈으로 나가기', note: game.name });
   items.push({ id: 'hide', label: '화면 숨기기' });
@@ -545,35 +545,39 @@ function togetherItems(world) {
   return rows;
 }
 
-function screenItems(world) {
+// 설정 — 다섯 갈래(화면 크기·창 위치·화면 투명도·키 설정·모니터 설정)와 스크린샷 토글.
+function settingsItems(world) {
   const rows = [
-    { id: 'size', into: 'size', label: '창 크기', note: sizeName(world.size ?? 1) },
+    { id: 'size', into: 'size', label: '화면 크기', note: sizeName(world.size ?? 1) },
   ];
-  // 화면 전체면 놓을 자리가 하나뿐이다. 고를 게 없는 줄은 안 세운다.
+  // 화면 전체면 놓을 자리가 하나뿐이다. 작게 띄웠을 때만 「창 위치」를 세운다.
   if ((world.size ?? 1) < 0.999) {
     rows.push({ id: 'spot', into: 'spot', label: '창 위치', note: spotName(world.spot ?? 'c') });
   }
-  rows.push({ id: 'fade', into: 'fade', label: '투명도',
+  rows.push({ id: 'fade', into: 'fade', label: '화면 투명도',
               note: world.fade >= 0.99 ? '그대로' : `${Math.round(world.fade * 100)}%` });
-  // 켜고 끄는 한 줄. 한 겹 들어가 봐야 둘 중 하나라 그 자리에서 뒤집는다.
-  const peek = world.optionHide !== false;
-  rows.push({ id: `peek:${peek ? 0 : 1}`, label: '⌥ 떼면 숨기기',
-              note: peek ? '켜짐' : '꺼짐', mark: peek });
-  // ⌥ 고정. 켜 두면 방향키·Space 가 ⌥ 없이 게임에 간다 (보이는 동안만). ⌥H·⌥M·⌥R·⌥P 는 그대로.
-  // 단축키는 ⌥P 다 — 이 줄은 지금 상태를 보여 주고, 급하면 여기서도 뒤집을 수 있게 둔다.
-  const bare = !!world.bare;
-  rows.push({ id: `bare:${bare ? 0 : 1}`, label: '⌥ 고정 — 방향키만으로 (⌥P)',
-              note: bare ? '켜짐' : '꺼짐', mark: bare });
+  // 키 설정 — ⌥ 고정·⌥ 떼면 숨기기, 그리고 키 안내. 한 겹 안에.
+  rows.push({ id: 'keys', into: 'keys', label: '키 설정',
+              note: world.bare ? '⌥ 고정 켜짐' : '⌥ 로 조작' });
+  // 모니터 설정 — 여러 대면 어느 화면에 띄울지. 한 대뿐이어도 줄은 둔다(들어가면 알려 준다).
+  const here = world.screens.find((screen) => screen.current);
+  rows.push({ id: 'where', into: 'where', label: '모니터 설정',
+              note: world.screens.length > 1 ? (here?.name ?? '') : '한 대' });
   // 스크린샷·화면 공유에 잡히나. 평소엔 안 잡힌다 — 회의 중에 띄워도 남에게 안 보이는 게 이 창의
   // 존재 이유다. 그런데 그러면 버그를 스크린샷으로 보여 줄 수가 없다. 필요할 때만 켠다.
   const capture = !!world.capture;
   rows.push({ id: `capture:${capture ? 0 : 1}`, label: '스크린샷에 잡히기',
               note: capture ? '켜짐 — 화면 공유에도 보인다' : '꺼짐', mark: capture });
-  if (world.screens.length > 1) {
-    const here = world.screens.find((screen) => screen.current);
-    rows.push({ id: 'where', into: 'where', label: '띄울 화면', note: here?.name ?? '' });
-  }
   return rows;
+}
+// 키 설정 — 켜고 끄는 두 줄과, 지금 키가 어떻게 되는지 보여 주는 안내.
+function keysItems(world) {
+  const peek = world.optionHide !== false, bare = !!world.bare;
+  return [
+    { id: `bare:${bare ? 0 : 1}`, label: '⌥ 고정 — 방향키만으로 (⌥P)', note: bare ? '켜짐' : '꺼짐', mark: bare },
+    { id: `peek:${peek ? 0 : 1}`, label: '⌥ 떼면 숨기기', note: peek ? '켜짐' : '꺼짐', mark: peek },
+    { id: 'keyinfo', label: bare ? '지금: 방향키·Space 만으로' : '지금: ⌥ 와 방향키·Space', note: '⌥H 숨김 · ⌥M 메뉴', info: true },
+  ];
 }
 
 /// 메뉴에 세울 것들. 상황에 따라 달라지므로 그릴 때와 고를 때가 같은 함수를 본다.
@@ -624,19 +628,20 @@ export function menuItems(world) {
         };
       });
     }
-    case 'screen': return screenItems(world);
-    case 'screen/size':
+    case 'settings': return settingsItems(world);
+    case 'settings/keys': return keysItems(world);
+    case 'settings/size':
       return SIZES.map(([value, name]) => ({
         id: `size:${value}`,
         label: name,
         note: value === 1 ? '지금까지와 같다' : `${Math.round(value * 100)}%`,
         mark: Math.abs(value - (world.size ?? 1)) < 0.02,
       }));
-    case 'screen/spot':
+    case 'settings/spot':
       return SPOTS.map(([id, name]) => ({
         id: `spot:${id}`, label: name, mark: id === (world.spot ?? 'c'),
       }));
-    case 'screen/fade':
+    case 'settings/fade':
       return FADES.map((f) => ({
         id: `fade:${f}`,
         label: f === 1 ? '그대로' : `${Math.round(f * 100)}%`,
@@ -644,7 +649,7 @@ export function menuItems(world) {
         mark: Math.abs(f - world.fade) < 0.02,
       }));
     // 보던 중에 모니터를 뽑아 한 대만 남으면 고를 것이 없으니 그냥 첫 화면으로 돌아간다.
-    case 'screen/where':
+    case 'settings/where':
       if (world.screens.length > 1) {
         return world.screens.map((screen) => ({
           id: `screen:${screen.number}`,
@@ -653,9 +658,7 @@ export function menuItems(world) {
           mark: !!screen.current,
         }));
       }
-      world.menu.path = ['screen'];
-      world.menu.index = 0;
-      return screenItems(world);
+      return [{ id: 'onescreen', label: '모니터가 하나뿐이에요', note: '연결하면 여기 나온다', info: true }];
     default: return rootItems(world);
   }
 }
@@ -680,14 +683,14 @@ function openMenu(world, open) {
 function firstIndex(world, at) {
   if (at === 'team') return world.team ?? 0;
   if (at === 'together/game') return Math.max(0, games.findIndex((g) => g.id === world.gameId));
-  if (at === 'screen/size') {
+  if (at === 'settings/size') {
     return Math.max(0, SIZES.findIndex(([v]) => Math.abs(v - (world.size ?? 1)) < 0.02));
   }
-  if (at === 'screen/spot') return Math.max(0, SPOTS.findIndex(([v]) => v === (world.spot ?? 'c')));
-  if (at === 'screen/fade') {
+  if (at === 'settings/spot') return Math.max(0, SPOTS.findIndex(([v]) => v === (world.spot ?? 'c')));
+  if (at === 'settings/fade') {
     return Math.max(0, FADES.findIndex((f) => Math.abs(f - world.fade) < 0.02));
   }
-  if (at === 'screen/where') {
+  if (at === 'settings/where') {
     return Math.max(0, world.screens.findIndex((screen) => screen.current));
   }
   if (at === 'together/host') return Math.max(0, games.findIndex((g) => g.id === world.gameId));
@@ -724,6 +727,7 @@ function chooseMenu(world) {
     return;
   }
 
+  if (picked.info) return;   // 안내만 하는 줄 (키 안내·모니터 없음)
   // 판 고르기. 잠긴 판은 못 고른다 (아무 일도 안 일어난다). 고르면 그 판을 연다.
   if (picked.id.startsWith('stage:')) {
     if (picked.locked) return;
@@ -742,7 +746,10 @@ function chooseMenu(world) {
       world.menu.index = 1; // 기본 선택은 「아니」 — 손이 미끄러져 꺼지면 안 된다
       return;
     case 'pick':
-      goHome(world);
+      // 방 안에서 홈으로 나가면 **방을 떠난다.** 방장이면 방이 깨져 방 코드가 폐기되고 모두 시작화면으로,
+      // 손님이면 자기만 나간다. (셸이 방을 정리하고 역할이 off 로 바뀌면 그때 홈으로 간다.)
+      if (world.mp.on) { openMenu(world, false); world.onMenu?.('leave'); }
+      else goHome(world);
       return;
     case 'again':
       openMenu(world, false);
@@ -873,7 +880,12 @@ export function press(world, action, down) {
     if (!down) return;
     if (action === 'jump') world.pick = (world.pick + games.length - 1) % games.length;
     if (action === 'duck') world.pick = (world.pick + 1) % games.length;
-    if (action === 'right' || action === 'restart') pickGame(world, games[world.pick].id);
+    if (action === 'right' || action === 'restart') {
+      const g = games[world.pick];
+      // 넷이서·셋이서는 혼자 못 한다 — 고르는 순간 방을 연다. 나머지는 그냥 그 게임으로.
+      if (g.waitsForCrew && !world.mp.on) world.onMenu?.('host:' + g.id);
+      else pickGame(world, g.id);
+    }
     if (action === 'menu') openMenu(world, true);
     return;
   }

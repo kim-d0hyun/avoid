@@ -38,7 +38,7 @@ say('메뉴 — 첫 화면은 여섯 줄이다');
   const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
   tap(w, 'menu');
   check('항목', labels(w),
-        ['이어서 하기', '같이 하기', '화면', '홈으로 나가기', '화면 숨기기', '게임 끝내기']);
+        ['이어서 하기', '같이 하기', '설정', '홈으로 나가기', '화면 숨기기', '게임 끝내기']);
   check('지금 혼자인지 옆에 적는다', menuItems(w)[1].note, '혼자 하는 중');
   check('창을 어떻게 띄워 뒀는지도', menuItems(w)[2].note, '화면 전체');
   check('무슨 게임 중인지도', menuItems(w)[3].note, '똥피하기');
@@ -64,7 +64,7 @@ say('메뉴 — 게임 도중 홈으로 나간다');
   check('고르는 줄은 하던 게임에 가 있다', w.pick, 0);
   // 홈에서는 「홈으로 나가기」와 「다시 시작」이 없다
   tap(w, 'menu');
-  check('홈 메뉴', labels(w), ['고르던 데로', '같이 하기', '화면', '화면 숨기기', '게임 끝내기']);
+  check('홈 메뉴', labels(w), ['고르던 데로', '같이 하기', '설정', '화면 숨기기', '게임 끝내기']);
 }
 
 say('같이 하기 — 방을 열 때 무슨 게임인지부터 고른다');
@@ -166,28 +166,28 @@ say('내보내기 — 손님은 못 한다');
   check('나가기만 있다', labels(w), ['이름 바꾸기', '코드 복사', '방에서 나가기']);
 }
 
-say('화면 — 크기·자리·투명도·띄울 화면이 한 겹 안에 모인다');
+say('설정 — 화면 크기·창 위치·투명도·키·모니터로 갈린다');
 {
   const w = make([{ number: 1, name: '노트북', w: 1512, h: 982, current: true }]);
   tap(w, 'menu');
-  into(w, 'screen');
-  check('화면 전체면 「창 위치」가 없다', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기', '⌥ 고정 — 방향키만으로 (⌥P)', '스크린샷에 잡히기']);
+  into(w, 'settings');
+  check('화면 전체면 「창 위치」가 없다 (한 대라 모니터 설정은 「한 대」)', labels(w), ['화면 크기', '화면 투명도', '키 설정', '모니터 설정', '스크린샷에 잡히기']);
 
   into(w, 'size');
-  check('두 겹 안', w.menu.path, ['screen', 'size']);
+  check('두 겹 안', w.menu.path, ['settings', 'size']);
   check('고를 것들', labels(w), ['화면 전체', '3/4', '절반', '작게', '아주 작게']);
   check('지금 것에 점', menuItems(w).map((i) => !!i.mark), [true, false, false, false, false]);
 
   tap(w, 'duck'); tap(w, 'duck');                    // 절반
   tap(w, 'right');
   check('셸로 넘어간 것', w.picked, ['size:0.55']);
-  check('고르고도 열려 있다', [w.menu.open, w.menu.path], [true, ['screen', 'size']]);
+  check('고르고도 열려 있다', [w.menu.open, w.menu.path], [true, ['settings', 'size']]);
 
   w.size = 0.55;                                     // 셸이 줄이고 알려 준다
   tap(w, 'left');
-  check('한 겹 뒤로', w.menu.path, ['screen']);
+  check('한 겹 뒤로', w.menu.path, ['settings']);
   check('줄이고 나면 「창 위치」가 생긴다', labels(w),
-        ['창 크기', '창 위치', '투명도', '⌥ 떼면 숨기기', '⌥ 고정 — 방향키만으로 (⌥P)', '스크린샷에 잡히기']);
+        ['화면 크기', '창 위치', '화면 투명도', '키 설정', '모니터 설정', '스크린샷에 잡히기']);
   check('첫 줄 옆에 지금 상태', menuItems(w).find((i) => i.id === 'size').note, '절반');
 
   into(w, 'spot');
@@ -206,14 +206,14 @@ say('⌥ 떼면 숨기기 — 그 자리에서 켜고 끈다');
 {
   const w = make([]);
   tap(w, 'menu');
-  into(w, 'screen');
+  into(w, 'settings'); into(w, 'keys');
   const row = () => menuItems(w).find((i) => i.id.startsWith('peek:'));
   check('처음엔 켜져 있다', [row().note, !!row().mark], ['켜짐', true]);
 
   while (!menuItems(w)[w.menu.index].id.startsWith('peek:')) tap(w, 'duck');
   tap(w, 'right');
   check('셸로 넘어간 것', w.picked, ['peek:0']);
-  check('메뉴는 그대로 열려 있다', [w.menu.open, w.menu.path], [true, ['screen']]);
+  check('메뉴는 그대로 열려 있다', [w.menu.open, w.menu.path], [true, ['settings', 'keys']]);
 
   w.optionHide = false;                              // 셸이 끄고 알려 준다
   check('꺼진 것이 보인다', [row().note, !!row().mark], ['꺼짐', false]);
@@ -221,14 +221,12 @@ say('⌥ 떼면 숨기기 — 그 자리에서 켜고 끈다');
   check('다시 켜는 값이 넘어간다', w.picked, ['peek:0', 'peek:1']);
 }
 
-say('화면 — 모니터가 여럿이면 「띄울 화면」이 생긴다');
+say('설정 — 모니터가 여럿이면 「모니터 설정」에 목록이 뜬다');
 {
   const w = make(THREE);
   tap(w, 'menu');
-  into(w, 'screen');
-  check('여섯 줄', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기', '⌥ 고정 — 방향키만으로 (⌥P)', '스크린샷에 잡히기', '띄울 화면']);
-  check('지금 어디에 떠 있는지 옆에 적는다',
-        menuItems(w).find((i) => i.id === 'where').note, 'Built-in Retina Display');
+  into(w, 'settings');
+  check('모니터 설정 옆에 지금 화면', menuItems(w).find((i) => i.id === 'where').note, 'Built-in Retina Display');
 
   into(w, 'where');
   check('목록', labels(w), ['Built-in Retina Display', 'DELL U2723QE', 'LG UltraFine']);
@@ -239,25 +237,26 @@ say('화면 — 모니터가 여럿이면 「띄울 화면」이 생긴다');
   tap(w, 'duck');
   tap(w, 'right');
   check('셸로 넘어간 것', w.picked, ['screen:2']);
-  check('고르고도 메뉴는 열려 있다', [w.menu.open, w.menu.path], [true, ['screen', 'where']]);
+  check('고르고도 메뉴는 열려 있다', [w.menu.open, w.menu.path], [true, ['settings', 'where']]);
 }
 
-say('화면 — 고르는 중에 모니터를 뽑으면 한 겹 나온다');
+say('모니터 설정 — 고르는 중에 모니터를 뽑으면 「하나뿐」 안내가 뜬다');
 {
   const w = make(THREE);
   tap(w, 'menu');
-  into(w, 'screen');
+  into(w, 'settings');
   into(w, 'where');
   w.screens = [THREE[0]];
-  check('목록이 아니라 화면 설정으로', labels(w), ['창 크기', '투명도', '⌥ 떼면 숨기기', '⌥ 고정 — 방향키만으로 (⌥P)', '스크린샷에 잡히기']);
-  check('길도 한 겹 나왔다', w.menu.path, ['screen']);
+  check('한 대뿐이라 안내 한 줄', labels(w), ['모니터가 하나뿐이에요']);
+  tap(w, 'right');                          // 안내 줄은 골라도 아무 일 없다
+  check('안 터진다', w.menu.open, true);
 }
 
 say('투명도 — 화면 안에서 고르고 셸로 넘어간다');
 {
   const w = make([]);
   tap(w, 'menu');
-  into(w, 'screen');
+  into(w, 'settings');
   into(w, 'fade');
   check('목록', labels(w), ['그대로', '85%', '70%', '55%', '40%']);
   tap(w, 'duck'); tap(w, 'duck');
@@ -563,6 +562,49 @@ say('판 고르기 · 대기방 — 판이 없는 게임(똥피하기·배구)�
   w.mp.on = true; w.mp.role = 'host'; w.mp.myId = 1; w.mp.code = 'K3P9';
   tap(w, 'menu'); into(w, 'together');
   check('똥피하기 방장 메뉴에 판 고르기가 없다', labels(w).includes('판 고르기'), false);
+}
+
+
+say('넷이서·셋이서는 고르는 순간 방이 열린다 (혼자 못 한다)');
+{
+  const w = make([]);           // 고르는 화면, 방 없음
+  w.picked = []; w.onMenu = (a) => w.picked.push(a);
+  press(w, 'right', true); press(w, 'right', false);   // 첫 게임(똥피하기) 고름 — 방 안 연다
+  check('똥피하기는 방 없이', w.picked.some((a) => String(a).startsWith('host:')), false);
+  // 넷이서로 커서를 옮겨 고른다
+  w.state = 'pick';
+  while (games[w.pick].id !== 'coop') press(w, 'duck', true), press(w, 'duck', false);
+  w.picked = [];
+  press(w, 'right', true); press(w, 'right', false);
+  check('넷이서를 고르면 방을 연다', w.picked, ['host:coop']);
+  // 셋이서도
+  w.state = 'pick'; while (games[w.pick].id !== 'trio') press(w, 'duck', true), press(w, 'duck', false);
+  w.picked = [];
+  press(w, 'right', true); press(w, 'right', false);
+  check('셋이서도 방을 연다', w.picked, ['host:trio']);
+  // 이미 방에 있으면 다시 안 연다
+  const g = make([]); g.state = 'pick'; g.mp.on = true; g.mp.role = 'host';
+  while (games[g.pick].id !== 'coop') tap(g, 'duck');
+  g.picked = []; g.onMenu = (a) => g.picked.push(a);
+  tap(g, 'right');
+  check('이미 방이면 host: 안 보낸다', g.picked.some((a) => String(a).startsWith('host:')), false);
+}
+
+say('홈으로 나가기 — 방 안이면 방을 떠난다 (방장이면 방이 깨진다)');
+{
+  const w = make([]); w.state = 'play';
+  w.mp.on = true; w.mp.role = 'host'; w.mp.code = 'K3P9';
+  w.picked = []; w.onMenu = (a) => w.picked.push(a);
+  tap(w, 'menu');
+  while (menuItems(w)[w.menu.index].id !== 'pick') tap(w, 'duck');
+  tap(w, 'right');
+  check('방을 떠나라고 셸에 알린다', w.picked, ['leave']);
+  check('메뉴는 닫힌다', w.menu.open, false);
+  // 혼자면 그냥 홈으로 (방 안 떠남)
+  const s = make([]); s.state = 'play'; s.picked = []; s.onMenu = (a) => s.picked.push(a);
+  tap(s, 'menu'); while (menuItems(s)[s.menu.index].id !== 'pick') tap(s, 'duck'); tap(s, 'right');
+  check('혼자면 leave 안 보낸다', s.picked, []);
+  check('혼자면 홈으로', s.state, 'pick');
 }
 
 done('판 안의 규칙');

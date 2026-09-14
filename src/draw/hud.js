@@ -529,11 +529,12 @@ const MENU_TITLES = {
   'together': '같이 하기',
   'together/host': '무슨 게임으로 방을 열까?',
   'together/stage': '어느 판부터?',
-  'screen': '화면',
-  'screen/size': '창을 얼마나 크게?',
-  'screen/spot': '창을 어디에?',
-  'screen/fade': '얼마나 흐리게?',
-  'screen/where': '어느 화면에 띄울까?',
+  'settings': '설정',
+  'settings/size': '창을 얼마나 크게?',
+  'settings/spot': '창을 어디에?',
+  'settings/fade': '얼마나 흐리게?',
+  'settings/keys': '키를 어떻게?',
+  'settings/where': '어느 화면에 띄울까?',
 };
 
 /// 잠긴 줄 옆의 작은 자물쇠. 손으로 그린다 — 폰트에 기대면 이모지로 떨어져 색이 튄다.
@@ -547,7 +548,7 @@ function lockMark(ctx, cx, cy) {
 export function drawMenu(ctx, world) {
   const items = menuItems(world);
   const at = world.menu.path.join('/');
-  const picking = at === 'screen/where' && world.screens.length > 1;
+  const picking = at === 'settings/where' && world.screens.length > 1;
   // 모니터 이름은 「DELL U2723QE」처럼 길다. 그 화면에서만 종이를 넓게 쓴다.
   const w = picking ? 400 : 300;
   const foot = world.mp.on ? 52 : 34;
