@@ -27,6 +27,18 @@ function mk() {
 }
 const tap = (world, a) => { w.press(world, a, true); w.press(world, a, false); };
 
+say('네트 — 공은 그물 면에서 튄다 (사람이 멈추는 자리와 같은 폭)');
+{
+  const world = mk();
+  world.state = 'play';
+  const b = world.bag, netX = world.w / 2;
+  b.ball.x = netX - 200; b.ball.y = world.groundY - 50; b.ball.vx = 900; b.ball.vy = 0;
+  let bounced = false;
+  for (let i = 0; i < 60 && !bounced; i++) { w.update(world, 1 / 60); bounced = b.ball.vx < 0; }
+  check('되돌아왔다', bounced, true);
+  check('그물 면(가운데에서 14px)에 공 가장자리가 닿는 자리에서 튀었다', Math.round(netX - b.ball.x), 20 + 14);
+}
+
 say('편 — 네트를 넘어갈 수 없다');
 {
   const world = mk();

@@ -551,8 +551,9 @@ export default {
     // 네트. 꼭대기는 넘어가고, 몸통에 맞으면 되돌아온다.
     const netX = world.w / 2;
     const netTop = world.groundY - NET_H;
-    if (Math.abs(ball.x - netX) < BALL_R + 3 && ball.y > netTop) {
-      ball.x = netX + Math.sign(ball.x - netX || 1) * (BALL_R + 3);
+    // 공은 그물 **면**에서 튄다 — 사람이 닿아 멈추는 자리(NET_GAP)와 같은 폭. 가운데 선에서 튀면 그물을 11px 파고든 뒤 튀어 보였다.
+    if (Math.abs(ball.x - netX) < BALL_R + NET_GAP && ball.y > netTop) {
+      ball.x = netX + Math.sign(ball.x - netX || 1) * (BALL_R + NET_GAP);
       ball.vx = -ball.vx * 0.55;
     }
 
