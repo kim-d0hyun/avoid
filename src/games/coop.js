@@ -717,8 +717,10 @@ function exitState(world) {
   let inside = 0;
   // 세로로는 한 칸 반 — 포탈 앞에 넷이 몰리면 누가 누구 머리 위에 서게 된다(머리 53px). 그것도 안에 있는 것이다.
   for (const q of everyone(world)) if (Math.abs(q.x - cx) < T * 2.5 && q.fy <= top + T * 0.6 && q.fy > top - T * 1.5) inside++;
-  // 「넷」 판은 방에 있는 사람 전부 (넷이어야 시작하니 넷). 혼자 남았어도 둘은 되어야 — 혼자서 끝내는 판이 아니다.
-  const need = b.end === 'one' ? 1 : (world.mp.on ? Math.max(2, world.mp.others.size + 1) : 1);
+  // 「넷」 판은 **이번 판에 몸이 있는** 사람 전부. 판 도중에 들어와 구경하는 사람은 세지 않는다 — 세면 셋이
+  // 출구에 다 모여도 「1명 더」가 영영 뜬다. 혼자 남았어도 둘은 되어야 — 혼자서 끝내는 판이 아니다.
+  const playing = [...world.mp.others.values()].filter((o) => !o.waiting).length;
+  const need = b.end === 'one' ? 1 : (world.mp.on ? Math.max(2, playing + 1) : 1);
   return { inside, need, ready: inside >= need };
 }
 
@@ -740,6 +742,11 @@ function nextStage(world) {
   loadStage(world, world.stage);
   b.deaths = deaths; b.resets = resets;
   placeAt(world, world.player, mySlot(world));
+  // 판 도중에 들어와 구경하던 사람은 **다음 판부터** 낀다 — 여기가 그 다음 판이다. 명단에 올리고 살려 둔다.
+  // 그 사람 화면은 unpack 에서 판이 바뀐 걸 보고 구경을 끝낸다.
+  if (world.mp.on && world.mp.role === 'host') {
+    for (const [id, o] of world.mp.others) { world.mp.roster?.add(id); world.mp.alive.set(id, true); o.waiting = false; o.dead = false; o.state = 0; }
+  }
   say(world, `${STAGES[b.stage].world} ${stageNo(b.stage)} · ${STAGES[b.stage].name}`);
 }
 
@@ -1173,10 +1180,13 @@ export default {
     if (!b || !d || typeof d !== 'object') return;
     if (typeof d.st === 'number' && (d.st !== b.stage || !b.rows || d.rs !== b.resets)) {
       const stage = Math.max(0, Math.min(STAGES.length - 1, d.st | 0));
+      const wasStage = b.stage;
       world.stage = stage;
       loadStage(world, stage);
       b.resets = d.rs | 0;
       placeAt(world, world.player, mySlot(world));
+      // 구경하며 들어왔는데 판이 다음으로 넘어갔다 — 이제부터 낀다 (방장도 같은 순간에 명단에 올린다).
+      if (world.mp.waiting && b.rows && stage !== wasStage) { world.mp.waiting = false; world.player.dead = false; world.player.deadFor = 0; }
     }
     if (!b.rows) return;
     if (typeof d.ck === 'number') b.clock = d.ck;

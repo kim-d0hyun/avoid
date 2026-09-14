@@ -729,4 +729,29 @@ say('포탈 — 저편에 내려선 채 가만히 있어도 되돌아가지 않�
   check('다시 들어오면 다시 탄다 (u 로)', Math.floor(p.x / T), 62);
 }
 
+
+say('판 도중에 들어온 사람 — 출구 인원에 안 세고, 다음 판부터 낀다');
+{
+  const world = make('표지판', { mp: true, host: true });
+  world.mp.round = 1; world.mp.roster = new Set([2, 3, 4]);
+  const b = world.bag, cx = b.exit.x, cy = b.exit.y;
+  setPos(world, cx, cy); world.player.grounded = true;
+  for (const id of [2, 3, 4]) other(world, id, cx + (id - 3), cy);
+  const late = other(world, 5, 3, 18); late.waiting = true; late.dead = true;          // 판 도중 들어와 구경 중
+  const ex = coopMod.exitState(world);
+  check('넷이 모이면 된다 — 구경하는 다섯째는 안 센다', ex.need, 4);
+  ok('출구가 켜진다', ex.ready);
+  // 다음 판으로 넘어가면 그 사람도 낀다
+  world.bag.done = 0.01; world.input.jump = true;
+  tick(world, 3, { jump: true });
+  ok('다음 판으로 갔다', b.stage === 1);
+  ok('방장 명단에 올랐다', world.mp.roster.has(5) && world.mp.alive.get(5) === true);
+  ok('몸이 생겼다', !late.waiting && !late.dead);
+  // 손님(구경 중) 쪽 — 판이 바뀐 스냅샷을 받으면 구경을 끝낸다
+  const guest = make('표지판', { mp: true, host: false });
+  guest.mp.waiting = true; guest.player.dead = true;
+  coop.unpack(guest, { st: 1, rs: 0, ck: 0, ks: '', la: false, pl: [false, false], bx: [], br: [], tr: [], rt: [], dn: 0 });
+  ok('손님도 구경을 끝내고 판에 낀다', !guest.mp.waiting && !guest.player.dead && guest.bag.stage === 1);
+}
+
 done('넷이서');
