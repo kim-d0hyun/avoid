@@ -444,20 +444,18 @@ export function move(world, dt) {
   // 봇 검증(한 명씩 움직이며 나머지는 정지 인형)에서는 끈다 — 정지 인형이 길을 막아 버린다.
   // 누름판·스위치를 밟고 선 사람은 **밀리지 않는다** — 지나가던 동료가 스치는 바람에 다리가 사라져 위 사람이 떨어지면
   // 안 된다. 그 사람은 벽처럼 막는다 — 뛰어넘는다.
-  const planted = grounded && 'pqa'.includes(tile(b, Math.floor(p.x / T), Math.floor((fy - 6) / T)));   // 발이 선 칸 (누름판·스위치는 몸이 있는 칸에 있다)
-  if (world.bump !== false && !planted) for (const o of world.mp.others.values()) {
+  // 사람끼리는 **통과하지 못한다.** 내 진행 방향에 선 동료에게 걸어 들어가면 몸이 닿는 자리에서 멈춘다 —
+  // 앞으로 가던 것을 줄일 뿐, 뒤로는 절대 안 밀린다. 그래서 앞뒤로 서서 상자를 같이 밀어도(기차놀이) 뒷사람이
+  // 뒤로 밀리거나 겹쳐 엉키지 않는다. 무거운 상자는 사람이 서로를 미는 게 아니라 등 뒤 사슬을 세어(countPushers)
+  // 함께 민다. 머리 위/밑(계단·어깨)은 세로라 안 막고, 누름판·스위치를 밟고 선 사람은 벽처럼 버틴다(안 밀린다).
+  const inputDir = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
+  if (world.bump !== false && inputDir !== 0) for (const o of world.mp.others.values()) {
     if (o.dead || o.waiting) continue;
-    const ofy = o.groundY - o.air;
-    if (Math.abs(ofy - fy) > BLOCK_H * 0.6) continue;          // 층이 다르거나 머리 위/밑이면 통과
-    const dx = p.x - o.x, gap = Math.abs(dx);
-    if (gap >= BUMP_AT) continue;
-    const overlap = (BUMP_AT - gap) / BUMP_AT;
-    const dir = gap < 0.5 ? (world.mp.myId < o.id ? -1 : 1) : Math.sign(dx);
-    const step = dir * BUMP_SEP * overlap * dt;
-    // 벽 쪽으로도, **발밑이 비는 데로도** 안 밀린다 — 서 있는 사람이 동료에게 떠밀려 가시 구멍에 떨어지면 안 된다.
-    // 떨어지는 건 제 발로 걸어 나갈 때만이다. (벼랑 끝에 선 사람은 벽처럼 막는다 — 뛰어넘는다.)
-    if (!bodyBlocked(world, p.x + step, fy - 1, h) && (!grounded || floorBelow(world, p.x + step, fy - 2, fy + 2, HALF - 6, { people: false }) !== null)) p.x += step;
-    if (dir === -Math.sign(p.vx || dir)) p.vx *= 0.6;          // 남을 향해 밀고 있으면 속도를 깎아 「막힌」 느낌
+    if (Math.abs((o.groundY - o.air) - fy) > BLOCK_H * 0.6) continue;   // 다른 층·머리 위면 통과
+    if (Math.sign(o.x - p.x) !== inputDir) continue;                    // 내 앞(걸어 들어가는 쪽)에 있는 동료만
+    if (Math.abs(p.x - o.x) >= BUMP_AT) continue;
+    const stopAt = o.x - inputDir * BUMP_AT;                            // 몸이 닿는 자리
+    if (inputDir > 0 ? p.x > stopAt : p.x < stopAt) { p.x = stopAt; p.vx = 0; }
   }
   if (p.knock !== 0) { p.knock *= Math.exp(-dt / 0.17); if (Math.abs(p.knock) < 8) p.knock = 0; }
 

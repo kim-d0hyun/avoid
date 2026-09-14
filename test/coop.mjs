@@ -657,21 +657,23 @@ say('사람끼리 부딪힘 — 같은 높이면 막고, 뒤에서 밀면 앞 �
   ok('접촉해서 멈춘다 (몸 폭 안)', o.x - world.player.x < BUMP_W + 4);
   note(`나 ${(world.player.x/T).toFixed(2)}칸, 앞 사람 ${(o.x/T).toFixed(2)}칸`);
 
-  // ② 밀기 — 뒤(1)가 오른쪽으로 밀면 앞(2)이 밀려난다. 두 세상이 서로를 보고 각자 계산한다.
+  // ② 사람은 물리로 밀지 못한다 — 걸어 들어가면 접촉에서 멈추고, 가만한 동료는 밀려나지 않는다.
+  // (무거운 상자는 사람을 미는 게 아니라 등 뒤 사슬을 세어 함께 민다 — 위 「기차놀이」.)
   const A = make('상자 계단'); A.bump = true; A.bag.boxes = [];
   const B = make('상자 계단'); B.bump = true; B.bag.boxes = [];
   A.mp.myId = 1; B.mp.myId = 2;
-  setPos(A, 6, 18); setPos(B, 8, 18);               // A 뒤, B 앞
+  setPos(A, 6, 18); setPos(B, 8, 18);               // A 뒤(걸어 들어감), B 앞(가만)
   const mirror = () => {
     A.mp.others.clear(); B.mp.others.clear();
     other(A, 2, 0, 18); const oa = A.mp.others.get(2); oa.x = oa.baseX = B.player.x; oa.air = oa.baseAir = B.player.air;
     other(B, 1, 0, 18); const ob = B.mp.others.get(1); ob.x = ob.baseX = A.player.x; ob.air = ob.baseAir = A.player.air;
   };
-  const bx0 = B.player.x;
+  const bx0 = B.player.x, ax0 = A.player.x;
   for (let i = 0; i < 120; i++) { mirror(); Object.assign(A.input, { left:false, right:true, jump:false, duck:false }); Object.assign(B.input, { left:false, right:false, jump:false, duck:false }); w.update(A, 1/60); w.update(B, 1/60); }
-  ok('가만있던 앞 사람이 밀려 나아갔다', B.player.x > bx0 + 40);
-  ok('뒤 사람은 여전히 뒤에 있다', A.player.x < B.player.x);
-  note(`앞 사람이 ${((B.player.x - bx0)/T).toFixed(2)}칸 밀렸다`);
+  ok('가만한 앞 사람은 밀려나지 않는다', Math.abs(B.player.x - bx0) < 2);
+  ok('걸어온 뒤 사람은 접촉에서 멈춘다 (뚫지 않는다)', A.player.x < B.player.x && B.player.x - A.player.x <= BUMP_W + 2);
+  ok('뒤 사람이 앞으로 나아가긴 했다', A.player.x > ax0 + 20);
+  note(`앞 ${((B.player.x-bx0)/T).toFixed(2)}칸, 뒤 ${((A.player.x-ax0)/T).toFixed(2)}칸, 사이 ${(B.player.x-A.player.x).toFixed(0)}px`);
 
   // ③ 머리 위/밑(계단·어깨)은 가로로 안 민다 — 세로 관계다
   const w3 = make('상자 계단'); w3.bump = true; w3.bag.boxes = [];
