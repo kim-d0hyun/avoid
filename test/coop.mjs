@@ -765,7 +765,8 @@ say('포탈 — 저편에 내려선 채 가만히 있어도 되돌아가지 않�
   setPos(world, 78, 11); p.grounded = true; tick(world, 5, {});
   check('다시 들어오면 다시 탄다 (u 로)', Math.floor(p.x / T), 62);
   // 뛰어 오르는 중에 들어가도 저편에서 튀어 올랐다 되돌아가지 않는다 — 오르던 속도는 포탈에서 버린다
-  setPos(world, 62, 16); p.grounded = false; p.vy = 500; tick(world, 12, {});   // 오르며 포탈 칸에 들어간다
+  // (어깨에서 뛴 것처럼) 몸 가운데가 포탈 칸 바로 아래에서 오르는 중 — 다음 프레임에 포탈 칸으로 들어간다
+  b.portalCool = 0; p.x = 62.5 * T; p.air = world.groundY - 700; p.grounded = false; p.vx = 0; p.vy = 468; p.onPortal = false; tick(world, 6, {});
   check('뛰어 들어가도 저편(U)에 나온다', Math.floor(p.x / T), 78);
   tick(world, 90, {});
   check('1.5초 뒤에도 저편에 그대로 (되돌아가지 않았다)', Math.floor(p.x / T), 78);
