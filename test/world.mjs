@@ -3,8 +3,9 @@
 // 고칠 때마다 `npm test` 로 전부 돌린다. 결과는 test/결과.md 에 남는다.
 
 import './dom-stub.mjs';
-const { createWorld, resize, press, menuItems, update, restart } = await import(new URL('../src/game/world.js', import.meta.url));
+const { createWorld, resize, press, menuItems, update, restart, clearedStage } = await import(new URL('../src/game/world.js', import.meta.url));
 const { interpolate } = await import(new URL('../src/game/net.js', import.meta.url));
+const { games } = await import(new URL('../src/games/index.js', import.meta.url));
 
 import { check, say, done } from './check.mjs';
 
@@ -480,6 +481,88 @@ say('안내 종이 — 한 번 놀아 본 게임은 기억한다');
   restart(w);
   check('다시 시작해도 기억한다', w.seen?.dodge, true);
   check('다른 게임은 아직', !!w.seen?.volley, false);
+}
+
+// ── 열린 판 · 판 고르기 · 대기방
+
+/// 협동 게임을 방 안 시작 전 화면(ready)에 세운다.
+function coopRoom(progress = {}) {
+  const w = createWorld({ ms: 0, dodged: 0 }, 'coop');
+  resize(w, 1512, 982);
+  restart(w);                       // coop begin 이 첫 판을 연다
+  w.state = 'ready';
+  w.mp.on = true; w.mp.role = 'host'; w.mp.myId = 1; w.mp.code = 'K3P9';
+  w.progress = progress;
+  w.picked = [];
+  // main.js 의 stage: 처리와 같은 길 — 고른 판을 다시 연다.
+  w.onMenu = (a) => {
+    w.picked.push(a);
+    if (a.startsWith('stage:')) { w.stage = Number(a.slice(6)); w.bagResets = 0; restart(w); }
+  };
+  return w;
+}
+
+say('열린 판 — 판을 깨면 다음 판까지 열리고, 셸에 남긴다');
+{
+  const w = createWorld({ ms: 0, dodged: 0 }, 'coop');
+  const saved = [];
+  w.saveProgress = (id, i) => saved.push([id, i]);
+  check('처음엔 아무것도 안 열려 있다', w.progress.coop ?? 0, 0);
+  clearedStage(w, 'coop', 0, 13);           // 1판(index 0)을 깼다
+  check('둘째 판까지 열린다', w.progress.coop, 1);
+  check('셸에 남겼다', saved, [['coop', 1]]);
+  clearedStage(w, 'coop', 0, 13);           // 같은 판을 또 깨도 안 내려간다
+  check('되돌아가지 않는다', w.progress.coop, 1);
+  clearedStage(w, 'coop', 4, 13);           // 5판을 깼다 — 뛰어오른다
+  check('여섯째 판까지', w.progress.coop, 5);
+  clearedStage(w, 'coop', 13, 13);          // 마지막 판을 깼다
+  check('마지막 판은 열린 채로 (그 위로는 안 간다)', w.progress.coop, 13);
+  check('저장은 올라간 때만 불렀다', saved, [['coop', 1], ['coop', 5], ['coop', 13]]);
+}
+
+say('판 고르기 — 방장은 판을 골라 바로 그 판부터 한다');
+{
+  const w = coopRoom({ coop: 2 });          // 3판까지 열려 있다 (index 0·1·2)
+  tap(w, 'menu');
+  into(w, 'together');
+  check('방장 메뉴에 판 고르기가 있다', labels(w).includes('판 고르기'), true);
+  into(w, 'stage');
+  check('열넷 다 목록에 있다', menuItems(w).length, 14);
+  check('라벨은 월드 번호 · 이름', menuItems(w)[0].label, '1-1 · 표지판');
+  const locked = menuItems(w).map((i) => !!i.locked);
+  check('셋까지 열리고 넷째부터 잠긴다', [locked[0], locked[2], locked[3], locked[13]], [false, false, true, true]);
+  check('처음 짚는 것은 지금 판(0)', w.menu.index, 0);
+  check('지금 판에 점', menuItems(w)[0].mark, true);
+
+  // 잠긴 판은 못 고른다
+  w.menu.index = menuItems(w).findIndex((i) => i.id === 'stage:6');
+  tap(w, 'right');
+  check('잠긴 판은 안 넘어간다', w.picked, []);
+  check('메뉴도 그대로 열려 있다', [w.menu.open, w.menu.path], [true, ['together', 'stage']]);
+
+  // 열린 판(3판 = index 2)을 고른다
+  w.menu.index = menuItems(w).findIndex((i) => i.id === 'stage:2');
+  tap(w, 'right');
+  check('셸로 넘어간 것', w.picked, ['stage:2']);
+  check('메뉴가 닫힌다', w.menu.open, false);
+  check('그 판을 world.stage 에 앉힌다', w.stage, 2);
+  check('그 판을 다시 열었다', w.bag.stage, 2);
+  check('시작 전 화면이다 (바로 시작하지 않는다)', w.state, 'ready');
+}
+
+say('판 고르기 · 대기방 — 판이 없는 게임(똥피하기·배구)에는 없다');
+{
+  const dodge = games.find((g) => g.id === 'dodge');
+  const volley = games.find((g) => g.id === 'volley');
+  check('똥피하기는 판이 없다', !!dodge.staged, false);
+  check('배구는 판이 없다', !!volley.staged, false);
+  check('똥피하기는 대기방 없음', !!dodge.waitsForCrew, false);
+  check('배구는 대기방 없음', !!volley.waitsForCrew, false);
+  // 메뉴에도 안 뜬다
+  const w = make([]);                       // 똥피하기
+  w.mp.on = true; w.mp.role = 'host'; w.mp.myId = 1; w.mp.code = 'K3P9';
+  tap(w, 'menu'); into(w, 'together');
+  check('똥피하기 방장 메뉴에 판 고르기가 없다', labels(w).includes('판 고르기'), false);
 }
 
 done('판 안의 규칙');

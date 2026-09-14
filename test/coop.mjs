@@ -892,4 +892,65 @@ say('부딪힘 — 누름판을 밟고 선 사람은 동료가 밀어도 안 밀
   ok('누름판에서 밀려나지 않았다', Math.floor(world.player.x / T) === px && b.plates.p === true);
 }
 
+say('열린 판 — 방장이 판을 깨면 다음 판까지 열리고 셸에 남는다');
+{
+  const world = make('표지판', { mp: true, host: true });
+  const saved = [];
+  world.progress = {};
+  world.saveProgress = (id, i) => saved.push([id, i]);
+  world.mp.round = 1; world.mp.roster = new Set([2, 3, 4]);
+  const b = world.bag;
+  for (const id of [2, 3, 4]) other(world, id, b.exit.x + (id - 3), b.exit.y);
+  setPos(world, b.exit.x, b.exit.y); world.player.grounded = true;
+  ok('넷이 출구에 모였다', exitState(world).ready);
+  tick(world, 2, { jump: true }); tick(world, 60, {});
+  check('다음 판이 열렸다', b.stage, 1);
+  check('열린 판이 1까지', world.progress.coop, 1);
+  check('셸에도 남겼다', saved, [['coop', 1]]);
+}
+
+say('대기방 — 인원이 다 안 차면 뜬다 (인원으로 막는 게임에만)');
+{
+  check('넷이서는 인원을 기다리는 게임', coop.waitsForCrew, true);
+  const world = make('표지판', { mp: true, host: true, debug: false });
+  const notFull = () => !!coop.waitsForCrew && (world.mp.others.size + 1) < coop.crew;
+  ok('혼자면 대기방이 뜬다', notFull());
+  other(world, 2, 4, 18); other(world, 3, 4, 18);
+  ok('셋이어도 아직 대기방', notFull());
+  other(world, 4, 4, 18);
+  ok('넷이 차면 대기방이 사라진다', !notFull());
+  check('그때 blocked 도 풀린다', coop.blocked(world), null);
+}
+
+say('판 고르기 — 손님이 방장이 고른 판으로 시작 전 화면에서 따라온다');
+{
+  const host = make('표지판', { mp: true, host: true });
+  host.state = 'ready';
+  const sent = []; const hshell = { net: { send: (m) => sent.push(JSON.parse(JSON.stringify(m))) }, log() {} };
+  const guest = make('표지판', { mp: true, host: false });
+  guest.state = 'ready';
+  const gapi = { restart: w.restart, setSize() {} };
+  const relay = () => {
+    for (let i = 0; i < 3; i++) net.pump(host, 1 / 60, hshell);
+    const s = sent.filter((m) => m.t === 's').pop();
+    net.handleMessage(guest, hshell, 0, s, gapi);
+    return s;
+  };
+  // 방장이 6판(index 5)을 고른다 = main.js 의 onMenu('stage:5')
+  host.stage = 5; host.bagResets = 0; w.restart(host);
+  check('방장이 그 판을 연다', host.bag.stage, 5);
+  check('방장은 시작 전 화면', host.state, 'ready');
+  const s = relay();
+  check('스냅샷에 판 번호가 실린다 (새 칸 없이)', s.x.st, 5);
+  check('손님도 그 판으로 따라온다', guest.bag.stage, 5);
+  check('손님도 시작 전 화면 (바로 시작하지 않는다)', guest.state, 'ready');
+  // 방장이 판을 연다 → go 가 가고 둘 다 그 판에서 시작
+  for (const id of [2, 3, 4]) other(host, id, 4, 18);         // 넷을 채워 blocked 를 푼다
+  net.startRound(host, hshell, { restart: w.restart });
+  check('방장이 그 판에서 시작', [host.state, host.bag.stage], ['play', 5]);
+  const go = sent.filter((m) => m.t === 'go').pop();
+  net.handleMessage(guest, hshell, 0, go, gapi);
+  check('손님도 그 판에서 시작', [guest.state, guest.bag.stage], ['play', 5]);
+}
+
 done('넷이서');

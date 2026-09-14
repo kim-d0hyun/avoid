@@ -14,6 +14,9 @@ import { pump, handleMessage, peerChanged, roleChanged, reportDeath, startRound,
 const shell = window.ddong ?? {
   best: { ms: 0, dodged: 0 },
   saveBest() {},
+  // 게임마다 열린 판. 셸이 없으면(브라우저·시험) 전부 0 — 처음부터 차례로만 연다.
+  progress: {},
+  saveProgress() {},
   onInput() {},
   onVisible() {},
   screens: [],
@@ -31,6 +34,15 @@ const world = createWorld(shell.best);
 world.mp.myName = shell.net.name;
 world.onRecord = (record) => shell.saveBest(record);
 world.onDeath = (record) => reportDeath(world, shell, record);
+// 게임마다 열린 판. 셸(main.swift)이 UserDefaults 에서 읽어 넣어 준 것을 숫자만 추려 담는다.
+world.progress = {};
+if (shell.progress && typeof shell.progress === 'object') {
+  for (const [id, value] of Object.entries(shell.progress)) {
+    if (Number.isFinite(value)) world.progress[id] = value | 0;
+  }
+}
+// 판을 깨면 셸에 알려 UserDefaults 에 남긴다 (최고 기록과 같은 길).
+world.saveProgress = (gameId, index) => shell.saveProgress?.(gameId, index);
 
 // 게임 안 메뉴에서 고른 것. 방을 열고 닫는 일은 셸이 해야 해서 이름만 넘긴다.
 const SHELL_ACTIONS = { host: 'host', join: 'join', leave: 'leave', hide: 'hide',
@@ -70,6 +82,17 @@ world.onMenu = (action) => {
     spread(world);
     world.mp.results = null; world.mp.winner = null; world.mp.waiting = false;
     shell.log?.(`게임 바꾸기 → ${gameOf(world).name}`);
+    return;
+  }
+  // **방장이 어느 판부터 할지 고른다.** 고른 판을 시작 전 화면(ready)에서 다시 연다 —
+  // 바로 시작하지 않는다. 방장이 방향키·⌥R 로 판을 연다. 손님은 방장 스냅샷의 판 번호(pack.st)를
+  // 보고 같은 판으로 따라온다 (net.js unpack → 게임 바꾸기·되감기와 같은 길, 새 칸 없음).
+  if (action.startsWith('stage:')) {
+    const index = Number(action.slice(6));
+    if (!Number.isFinite(index)) return;
+    world.stage = index;
+    world.bagResets = 0;
+    restart(world);        // 고른 판을 ready 로 다시 연다 (spread 까지 restart 안에서 한다)
     return;
   }
   // 창 크기와 자리도 창이 하는 일이다. 판은 그대로 돌고 창만 작아진다.

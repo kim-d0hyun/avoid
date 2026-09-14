@@ -74,7 +74,93 @@ function fitCenter(ctx, world, w, h) {
   ctx.translate(-world.w / 2, -world.h / 2);
 }
 
+/// 인원이 다 차기를 기다리는 방. 방 코드 · 지금 온 사람들 · 「N명 더 오면 시작」.
+///
+/// 「방장이 시작하기를 기다리는 중」 한 줄로는 왜 안 시작하는지, 누가 왔는지 알 수가 없었다.
+/// 실제 게임의 로비처럼 — 코드를 불러 부르고, 들어오는 사람이 목록에 쌓이는 게 보이게 한다.
+function drawWaitingRoom(ctx, world, time) {
+  const mp = world.mp;
+  const game = gameOf(world);
+  const crew = game.crew;
+  const ids = [mp.myId, ...mp.others.keys()].sort((a, b) => a - b);
+  const present = ids.length;
+  const need = Math.max(0, crew - present);
+  const hostId = mp.role === 'host' ? mp.myId : mp.hostId;
+  const nameOf = (id) => id === mp.myId
+    ? (mp.myName || '나')
+    : (mp.names.get(id) || mp.others.get(id)?.name || '누군가');
+  const code = mp.code ?? '····';
+  const bigLine = `${need}명 더 오면 시작`;
+
+  // 폭은 제일 긴 줄에 맞춘다. 종이가 글자를 자르면 안 된다.
+  ctx.font = `800 17px ${HAN}`;
+  let widest = ctx.measureText(bigLine).width;
+  ctx.font = `600 16px ${HAN}`;
+  for (const id of ids) widest = Math.max(widest, ctx.measureText(`♔ ${nameOf(id)}   나`).width);
+  ctx.font = `500 26px ${MONO}`;
+  widest = Math.max(widest, ctx.measureText(code).width + 60);
+
+  const cw = Math.max(240, widest + 56);
+  const rows = crew;                        // 온 사람 + 빈자리 = 정원
+  const ch = 84 + rows * 30 + 34;
+  const top = 30;
+  const left = Math.round((world.w - cw) / 2);
+  const x = left + 26;
+
+  // 작은 창에서도 다 보이게 통째로 줄인다 (안내 종이와 같은 방식).
+  const fit = Math.min(1, (world.w - 24) / cw, (world.h * 0.82) / ch);
+  ctx.save();
+  if (fit < 1) {
+    ctx.translate(left + cw / 2, top);
+    ctx.scale(fit, fit);
+    ctx.translate(-(left + cw / 2), -top);
+  }
+
+  paperScrap(ctx, left, top, cw, ch, 13);
+
+  // 제목 — 대기방. 밑에 빨간 볼펜.
+  text(ctx, '대기방', x, top + 36, { font: `800 20px ${HAN}`, color: INK, halo: 0 });
+  stroke(ctx, [[x, top + 44], [x + 58, top + 44]],
+         { width: 2.4, color: RED, seed: 91, amp: 1, halo: false });
+  // 방 코드 — 오른쪽 위. 불러 주라고 있는 것이라 크게.
+  text(ctx, code, left + cw - 26, top + 34, { font: `500 26px ${MONO}`, color: INK, align: 'right', halo: 0 });
+  text(ctx, '방 코드', left + cw - 26, top + 50, { font: `600 10px ${HAN}`, color: PENCIL, align: 'right', halo: 0 });
+
+  // 온 사람들 — 방장은 ♔, 나는 「나」.
+  let ly = top + 82;
+  for (const id of ids) {
+    const isHost = id === hostId;
+    const me = id === mp.myId;
+    if (isHost) text(ctx, '♔', x, ly, { font: `700 15px ${KEYS}`, color: RED, halo: 0 });
+    text(ctx, nameOf(id), x + 24, ly, {
+      font: `${me ? 800 : 600} 16px ${HAN}`, color: me ? INK : PENCIL, halo: 0,
+    });
+    if (me) text(ctx, '나', left + cw - 26, ly, { font: `700 12px ${HAN}`, color: RED, align: 'right', halo: 0 });
+    ly += 30;
+  }
+  // 아직 빈 자리 — 점선 대신 옅은 「…」 한 줄씩. 몇 자리 남았는지 눈에 보인다.
+  for (let k = 0; k < need; k++) {
+    stroke(ctx, [[x, ly - 5], [x + cw - 52, ly - 5]],
+           { width: 1.2, color: PENCIL, seed: 200 + k, amp: 0.5, halo: false, alpha: 0.35 });
+    text(ctx, '오는 중…', x + 24, ly, { font: `600 14px ${HAN}`, color: PENCIL, alpha: 0.5, halo: 0 });
+    ly += 30;
+  }
+
+  // 큰 줄 — 몇 명 더 와야 하나. 화면에서 유일하게 깜빡이는 글자다.
+  const pulse = 0.72 + 0.28 * Math.sin(time * 3.4);
+  text(ctx, bigLine, left + cw / 2, top + ch - 20,
+       { font: `800 17px ${HAN}`, color: RED, align: 'center', alpha: pulse, halo: 0 });
+  ctx.restore();
+}
+
 export function drawIntro(ctx, world, time) {
+  // **인원이 다 안 차면 대기방.** 인원으로 시작을 막는 게임(넷이서·셋이서)에서, 아직 자리가
+  // 빌 때만. 방장도 손님도 같은 대기방을 본다. 다 차면 사라지고 여느 시작 화면이 뜬다.
+  const g = gameOf(world);
+  if (world.mp.on && g.waitsForCrew && (world.mp.others.size + 1) < g.crew) {
+    drawWaitingRoom(ctx, world, time);
+    return;
+  }
   // ⌥M 은 한 줄로 족하다. 게임마다 메뉴에서 하는 일이 달라 그 일을 적어 준다 —
   // 배구가 제 목록에 ⌥M 을 또 넣어서 같은 키가 두 줄로 서 있었다.
   const menuDoes = gameOf(world).teamNames ? '메뉴 · 편 고르기' : '메뉴 · 게임 바꾸기';
@@ -442,12 +528,21 @@ const MENU_TITLES = {
   'team': '어느 편으로?',
   'together': '같이 하기',
   'together/host': '무슨 게임으로 방을 열까?',
+  'together/stage': '어느 판부터?',
   'screen': '화면',
   'screen/size': '창을 얼마나 크게?',
   'screen/spot': '창을 어디에?',
   'screen/fade': '얼마나 흐리게?',
   'screen/where': '어느 화면에 띄울까?',
 };
+
+/// 잠긴 줄 옆의 작은 자물쇠. 손으로 그린다 — 폰트에 기대면 이모지로 떨어져 색이 튄다.
+function lockMark(ctx, cx, cy) {
+  stroke(ctx, [[cx - 5, cy - 2], [cx + 5, cy - 2], [cx + 5, cy + 6], [cx - 5, cy + 6]],
+         { width: 1.6, color: PENCIL, seed: 88, amp: 0.3, close: true, sharp: true, halo: false, alpha: 0.7 });
+  stroke(ctx, [[cx - 3, cy - 2], [cx - 3, cy - 6], [cx + 3, cy - 6], [cx + 3, cy - 2]],
+         { width: 1.6, color: PENCIL, seed: 89, amp: 0.3, halo: false, alpha: 0.7 });
+}
 
 export function drawMenu(ctx, world) {
   const items = menuItems(world);
@@ -485,8 +580,12 @@ export function drawMenu(ctx, world) {
     if (item.mark) {
       text(ctx, '●', x + w - 34, iy, { font: `700 11px ${KEYS}`, color: RED, align: 'right', halo: 0 });
     }
+    // 잠긴 줄(아직 못 여는 판)은 자물쇠를 달고 흐리게 — 골라도 아무 일이 안 일어난다.
+    // 「아직」 글자 왼쪽에 둔다 (겹치지 않게).
+    if (item.locked) lockMark(ctx, x + w - 62, iy - 4);
     text(ctx, item.label, x + 26, iy, {
       font: `${picked ? 700 : 600} 16px ${HAN}`, color: picked ? INK : PENCIL, halo: 0,
+      alpha: item.locked ? 0.45 : 1,
     });
     if (item.note) {
       const font = `500 12px ${MONO}`;

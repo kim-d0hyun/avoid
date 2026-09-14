@@ -15,6 +15,8 @@ private let webScheme = "ddong"
 private let showNotification = Notification.Name("dev.turban.ddong-dodge.show")
 private let bestMsKey = "bestMs"
 private let bestDodgedKey = "bestDodged"
+/// 게임마다 열린 판. 게임 아이디 → 지금까지 연 제일 높은 판 번호. JSON 한 덩이로 담아 게임이 늘어도 그대로다.
+private let progressKey = "stageProgress"
 private let screenKey = "screenNumber"
 private let fadeKey = "windowFade"
 private let sizeKey = "windowSize"
@@ -308,6 +310,24 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         set { store.set(newValue, forKey: bestDodgedKey) }
     }
 
+    /// 게임마다 열린 판. 최고 기록과 같은 서랍(store)에 산다 — DDONG_DEBUG 시험은 자기 서랍만.
+    private func loadProgress() -> [String: Int] {
+        guard let raw = store.dictionary(forKey: progressKey) else { return [:] }
+        return raw.compactMapValues { ($0 as? NSNumber)?.intValue }
+    }
+    /// 부팅 때 페이지에 넣어 줄 JSON. 못 읽으면 빈 것 — 그러면 처음부터 차례로만 연다.
+    private func progressJSON() -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: loadProgress()),
+              let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }
+    /// 판을 깼다고 웹이 알려 오면 남긴다. **올리기만 한다** — 최고 기록과 같은 규칙이다.
+    private func saveProgress(gameId: String, index: Int) {
+        guard index >= 0 else { return }
+        var dict = loadProgress()
+        if index > (dict[gameId] ?? 0) { dict[gameId] = index; store.set(dict, forKey: progressKey) }
+    }
+
     // MARK: 시작
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -550,6 +570,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
           best: { ms: \(bestMs), dodged: \(bestDodged) },
           saveBest: (b) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'best', ms: b.ms, dodged: b.dodged,
+          }),
+          // 게임마다 열린 판. 「판 고르기」가 이걸 보고 잠금을 푼다. 깨면 saveProgress 로 남긴다.
+          progress: \(progressJSON()),
+          saveProgress: (gameId, index) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'progress', gameId, index,
           }),
           log: (text) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'log', text: String(text),
@@ -1328,6 +1353,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             if let ms = body["ms"] as? Int, ms > bestMs { bestMs = ms }
             if let dodged = body["dodged"] as? Int, dodged > bestDodged { bestDodged = dodged }
             refreshMenu()
+        case "progress":
+            // 판을 깼다. 게임마다 제일 높은 판 번호만 남긴다 (올리기만).
+            if let gameId = body["gameId"] as? String, let index = body["index"] as? Int {
+                saveProgress(gameId: gameId, index: index)
+            }
         default:
             break
         }

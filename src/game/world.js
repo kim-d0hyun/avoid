@@ -91,6 +91,9 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
     elapsed: 0,          // 초
     dodged: 0,
     best: { ms: best.ms | 0, dodged: best.dodged | 0 },
+    /// 게임마다 열린 판. { coop: 지금까지 연 제일 높은 판 번호, trio: ... }. 셸이 부팅 때 채워 준다.
+    /// 없으면 전부 0 — 판을 처음부터 차례로만 열 수 있다.
+    progress: {},
     newRecord: false,
     frozen: 0,           // 다시 보일 때 주는 준비 시간
     overFor: 0,
@@ -180,11 +183,11 @@ export function restart(world) {
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
           mp, menu, screens, gameId, pick, fade, size, spot, optionHide, bare, capture, toast,
-          team, debug, log, send, stage, bagResets, seen } = world;
+          team, debug, log, send, stage, bagResets, seen, progress, saveProgress } = world;
   Object.assign(world, createWorld(best, gameId),
                 { w, h, input, onRecord, onDeath, onMenu, onGameOver,
                   mp, menu, screens, pick, fade, size, spot, optionHide, bare, capture, toast,
-                  team, debug, log, send, stage, bagResets, seen });
+                  team, debug, log, send, stage, bagResets, seen, progress, saveProgress });
   world.state = 'ready';
   // 혼자 할 때도 우승 표시가 남는다 (배구). 안 지우면 세리머니가 다음 판까지 따라와서
   // 사람들이 화면에서 사라진 채로 판이 돈다.
@@ -208,6 +211,19 @@ export function spread(world) {
   world.player.x = (world.w * (slot + 1)) / (ids.length + 1);
   world.player.vx = 0;
   gameOf(world).stand?.(world, slot, ids.length);
+}
+
+/// 판 하나를 깼다 — 그 게임의 열린 판을 `beaten + 1` 까지 올린다 (마지막 판은 넘어서지 않는다).
+///
+/// 배구의 최고 기록처럼 앱을 껐다 켜도 남는다. 방장의 깸이 방 전체를 다음 판으로 옮기지만,
+/// **열린 판은 각자 자기 것을 센다** — 실제로 지나온 판까지만. 그래야 나중에 혼자 방을 열어도
+/// 자기가 깬 데까지 바로 고를 수 있다. 셸이 없으면(브라우저·시험) 조용히 넘어간다.
+export function clearedStage(world, gameId, beaten, lastIndex) {
+  const now = world.progress?.[gameId] ?? 0;
+  const unlocked = Math.min(lastIndex, Math.max(now, (beaten | 0) + 1));
+  if (unlocked <= now) return;
+  (world.progress ??= {})[gameId] = unlocked;
+  world.saveProgress?.(gameId, unlocked);
 }
 
 
@@ -511,6 +527,13 @@ function togetherItems(world) {
   // 게임 이름을 보고 갈아탄다). 바꾸면 시작 전 화면으로 돌아가고, 방장이 방향키로 다시 연다.
   if (mp.role === 'host') {
     rows.push({ id: 'game', into: 'game', label: '게임 바꾸기', note: gameById(world.gameId).name });
+    // **판이 여럿인 게임은 어느 판부터 할지 고른다.** 방장만 — 방 전체가 그 판으로 간다.
+    // 깬 데까지 열려 있고, 그 너머는 잠겨 있다 (아직).
+    const game = gameById(world.gameId);
+    if (game.staged && game.stageList) {
+      rows.push({ id: 'stage', into: 'stage', label: '판 고르기',
+                  note: game.stageList()[world.stage ?? 0]?.no ?? '' });
+    }
   }
   // **방장만 내보낼 수 있다.** 들어와 놓고 잠수하면 판이 안 열린다 —
   // 배구는 한쪽 편이 비면 안 열리고, 협동은 넷이 다 움직여야 한다.
@@ -585,6 +608,22 @@ export function menuItems(world) {
     case 'together/game':
       return games.map((game) => ({ id: `game:${game.id}`, label: game.name,
                                     note: game.id === world.gameId ? '지금 이것' : '', mark: game.id === world.gameId }));
+    // 판 고르기. 깬 데까지 열려 있고, 그 너머는 잠겨 있다. 지금 판에는 점을 찍는다.
+    case 'together/stage': {
+      const game = gameById(world.gameId);
+      const list = game.stageList?.() ?? [];
+      const unlocked = world.progress?.[world.gameId] ?? 0;
+      return list.map((s) => {
+        const locked = s.index > unlocked;
+        return {
+          id: `stage:${s.index}`,
+          label: `${s.no} · ${s.name}`,
+          note: locked ? '아직' : (s.index === (world.stage ?? 0) ? '지금 여기' : ''),
+          mark: !locked && s.index === (world.stage ?? 0),
+          locked,
+        };
+      });
+    }
     case 'screen': return screenItems(world);
     case 'screen/size':
       return SIZES.map(([value, name]) => ({
@@ -652,6 +691,8 @@ function firstIndex(world, at) {
     return Math.max(0, world.screens.findIndex((screen) => screen.current));
   }
   if (at === 'together/host') return Math.max(0, games.findIndex((g) => g.id === world.gameId));
+  // 판 고르기는 지금 판에 손가락을 올려 준다.
+  if (at === 'together/stage') return Math.max(0, world.stage ?? 0);
   return 0;
 }
 
@@ -680,6 +721,14 @@ function chooseMenu(world) {
   if (picked.into) {
     world.menu.path.push(picked.into);
     world.menu.index = firstIndex(world, world.menu.path.join('/'));
+    return;
+  }
+
+  // 판 고르기. 잠긴 판은 못 고른다 (아무 일도 안 일어난다). 고르면 그 판을 연다.
+  if (picked.id.startsWith('stage:')) {
+    if (picked.locked) return;
+    openMenu(world, false);
+    world.onMenu?.(picked.id);
     return;
   }
 
