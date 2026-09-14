@@ -17,7 +17,7 @@
 import { INK, RED, PENCIL, PAPER_SOLID, stroke, circle, text, paperScrap } from '../draw/ink.js';
 import { drawBlock, blockSize, BLOCK_W, BLOCK_H, CROUCH_H } from '../draw/block.js';
 import { STAGES, WORLDS } from './coop-stages.js';
-import { say } from '../game/world.js';
+import { say, clearedStage } from '../game/world.js';
 
 export const T = 42;                       // 한 칸
 const HALF = BLOCK_W / 2;                  // 몸 반 폭 17
@@ -759,6 +759,8 @@ function meAtExit(world) {
 
 function nextStage(world) {
   const b = world.bag;
+  // 이 판을 깼다 — 다음 판까지 열어 둔다 (마지막 판이면 그 판이 열린 채로). 앱을 껐다 켜도 남는다.
+  clearedStage(world, world.gameId, b.stage, b.stages.length - 1);
   if (b.stage + 1 >= b.stages.length) {
     world.onGameOver?.({ name: b.gameName, side: 0, rows: [] });
     return;
@@ -1022,6 +1024,13 @@ function drawBarrel(ctx, br, seed) {
 ///   themes        세계 이름 → 색. 판 묶음의 세계가 전부 있어야 한다
 ///   fallbackTheme 그래도 없을 때. 이 게임 안의 색이어야 한다 — 남의 게임 팔레트로 새지 않게
 export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, worlds, themes, fallbackTheme }) {
+  // 「1-3」 같은 판 번호 — 판 묶음(closure)만으로 낸다. hud 의 stageNo(b, i) 와 같은 값이다.
+  const stageNoAt = (index) => {
+    const s = stages[index];
+    const wi = worlds.findIndex((w) => w.name === s.world);
+    const si = stages.filter((t, i) => t.world === s.world && i <= index).length;
+    return `${wi + 1}-${si}`;
+  };
   return {
   id,
   name,
@@ -1035,10 +1044,16 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
   noGrab: true, noClock: true, noResults: true, noGround: true,
   /// ⌥R 은 판 도중에도 먹는다 — 방장이 되감는다. 다른 게임은 판이 끝난 뒤에만.
   rewindable: true,
-  /// 판이 여럿인 게임. 개발용 판 번호(DDONG_STAGE)가 이걸 보고 먹는다.
+  /// 판이 여럿인 게임. 개발용 판 번호(DDONG_STAGE)가 이걸 보고 먹고, 「판 고르기」 메뉴도 이걸 본다.
   staged: true,
+  /// 인원이 다 차야 시작하는 게임. 안 차면 시작 안내 대신 대기방을 보여 준다 (hud.js drawIntro).
+  /// blocked() 가 인원으로 막는 게임에만 붙인다 — 배구는 편이 비어 막히지 인원으로 막히지 않는다.
+  waitsForCrew: true,
   figure: drawBlock,
   tally: () => '',
+
+  /// 「판 고르기」 메뉴가 읽는 판 목록. { index, no('1-3'), name, world }. 열렸는지는 world.progress 가 정한다.
+  stageList: () => stages.map((s, i) => ({ index: i, no: stageNoAt(i), name: s.name, world: s.world })),
 
   // 판 묶음·인원·색은 살림살이에 얹어 둔다 — 모듈에 남겨 두면 게임을 갈아 끼울 때 앞 게임 것이 따라온다.
   fresh: () => ({ rows: null, stage: 0, deaths: 0, resets: 0,
@@ -1227,12 +1242,18 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
     if (typeof d.st === 'number' && (d.st !== b.stage || !b.rows || d.rs !== b.resets)) {
       const stage = Math.max(0, Math.min(b.stages.length - 1, d.st | 0));
       const wasStage = b.stage;
+      const wasWaiting = world.mp.waiting;
       world.stage = stage;
       loadStage(world, stage);
       b.resets = d.rs | 0;
       placeAt(world, world.player, mySlot(world));
       // 구경하며 들어왔는데 판이 다음으로 넘어갔다 — 이제부터 낀다 (방장도 같은 순간에 명단에 올린다).
       if (world.mp.waiting && b.rows && stage !== wasStage) { world.mp.waiting = false; world.player.dead = false; world.player.deadFor = 0; }
+      // **손님도 자기가 지나온 판은 기억한다.** 판 도중에 한 칸 넘어간 것만 — 구경 중이었거나
+      // (방장이 판 고르기로) 시작 전에 건너뛴 것은 「깬 것」이 아니다.
+      if (world.state === 'play' && !wasWaiting && stage === wasStage + 1) {
+        clearedStage(world, world.gameId, wasStage, b.stages.length - 1);
+      }
     }
     if (!b.rows) return;
     if (typeof d.ck === 'number') b.clock = d.ck;
