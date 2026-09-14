@@ -6,6 +6,7 @@ import './dom-stub.mjs';
 const R = new URL('../src/', import.meta.url).href;
 const w = await import(R + 'game/world.js');
 const net = await import(R + 'game/net.js');
+const coop = (await import(R + 'games/coop.js')).default;
 
 import { check, say, done } from './check.mjs';
 
@@ -88,24 +89,34 @@ say('방장이 홈으로 나가면 손님은 시작 화면에서 기다리고, �
   check('구경 표시가 아니다', guest.mp.waiting, false);
 }
 
-say('판 도중에 들어온 사람은 이번 판에 몸이 없다 — 방장 세상에서도, 손님들 화면에서도 구경하는 사람');
+say('판 도중에 들어온 사람은 스스로 「구경」을 보고한다 — 방장은 그대로 전하고, 멀쩡한 사람은 안 덮는다');
 {
   const host = w.createWorld({ ms: 0, dodged: 0 }); host.onRecord = () => {}; host.onGameOver = () => {}; w.resize(host, 1512, 944);
   const sent = []; const hshell = { net: { send: (m) => sent.push(JSON.parse(JSON.stringify(m))) }, log() {} };
   w.pickGame(host, 'coop'); net.roleChanged(host, 'host', 'ZR95', 0, '방장');
   for (const id of [1, 2, 3]) net.peerChanged(host, hshell, id, `손${id}`, true, { spread: w.spread });
-  net.startRound(host, hshell, { restart: w.restart });          // 넷이 시작 — 명단 {1,2,3}
+  net.startRound(host, hshell, { restart: w.restart });
   check('판이 열렸다', host.state, 'play');
-  net.handleMessage(host, hshell, 1, ['p', 300, 0, 0, 0, 0, 1, 0, -1, 0, 0], { restart: w.restart, setSize() {} });   // 명단에 있는 1 은 살아서 움직인다
-  net.peerChanged(host, hshell, 4, '새손님', true, { spread: w.spread });
-  net.handleMessage(host, hshell, 4, ['p', 756, 0, 0, 0, 0, 1, 0, -1, 0, 0], { restart: w.restart, setSize() {} });   // 살아 있다고 보내온다
+  // 판 도중에 들어온 손님(4)은 자기 세상에서 mp.waiting=true 이므로 스스로 state 2 를 보낸다 (myPacket)
+  const late = w.createWorld({ ms: 0, dodged: 0 }); late.onRecord = () => {}; late.onGameOver = () => {}; w.resize(late, 1512, 944);
+  w.pickGame(late, 'coop'); net.roleChanged(late, 'guest', 'ZR95', 4, '새손님');
+  net.handleMessage(late, { net: { send() {} }, log() {} }, 0,
+    { t: 's', ms: 0, st: 'play', r: 1, pl: [[0, 300, 0, 0, 0, 0, 1, 0, -1, 0, 0]], vw: 1512, vh: 944, g: 'coop', h: 0, x: coop.pack(host) },
+    { restart: w.restart, setSize() {} });
+  check('들어온 손님은 스스로 구경 상태', late.mp.waiting, true);
+  let lateSent = null; const lshell = { net: { send: (m) => { if (Array.isArray(m)) lateSent = m; } }, log() {} };
+  for (let i = 0; i < 3; i++) net.pump(late, 1 / 60, lshell);
+  check('손님이 스스로 구경(2)으로 보고한다', lateSent[7], 2);
+  // 방장이 그걸 받아 그대로 전한다
+  net.handleMessage(host, hshell, 4, lateSent, { restart: w.restart, setSize() {} });
   const o = host.mp.others.get(4);
-  check('방장 세상에서 구경하는 사람이다', o.waiting && o.dead, true);
+  check('방장 세상에서 구경하는 사람이다', o.waiting, true);
+  // 명단에 있는 1 은 살아서 움직이고, 안 덮인다
+  net.handleMessage(host, hshell, 1, ['p', 300, 0, 0, 0, 0, 1, 0, -1, 0, 0], { restart: w.restart, setSize() {} });
   for (let i = 0; i < 4; i++) net.pump(host, 1 / 60, hshell);
-  const row = sent.filter((m) => m.t === 's').pop().pl.find((r) => r[0] === 4);
-  check('손님들에게도 구경(2)으로 간다', row[7], 2);
-  const row1 = sent.filter((m) => m.t === 's').pop().pl.find((r) => r[0] === 1);
-  check('명단에 있는 사람은 그대로', row1[7], 0);
+  const snap = sent.filter((m) => m.t === 's').pop();
+  check('손님들에게도 구경(2)으로 간다', snap.pl.find((r) => r[0] === 4)[7], 2);
+  check('명단에 있는 사람은 그대로 (0)', snap.pl.find((r) => r[0] === 1)[7], 0);
 }
 
 done('게임 갈아 끼우기');

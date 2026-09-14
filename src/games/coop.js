@@ -993,6 +993,15 @@ function drawBox(ctx, bx, seed) {
     circle(ctx, x + T / 2 - 5, y + 6, 2, { width: 1, color: INK, fill: INK, halo: false, seed: 1, amp: 0 });
     circle(ctx, x + T / 2 + 5, y + 6, 2, { width: 1, color: INK, fill: INK, halo: false, seed: 1, amp: 0 });
   } else circle(ctx, x + T / 2, y + 6, 2, { width: 1, color: INK, fill: INK, halo: false, seed: 1, amp: 0 });
+  if (bx.weight >= 2) {
+    // 「2명」 — 이 상자는 둘이 붙어야 밀린다. 상자 위에 작게.
+    ctx.save();
+    ctx.font = `700 11px "Apple SD Gothic Neo", sans-serif`;
+    const label = `${bx.weight}명`, tw = ctx.measureText(label).width;
+    ctx.fillStyle = PAPER_SOLID; ctx.globalAlpha = 0.9; ctx.fillRect(x + T / 2 - tw / 2 - 3, y - 15, tw + 6, 14); ctx.globalAlpha = 1;
+    ctx.fillStyle = RED; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, x + T / 2, y - 8);
+    ctx.restore();
+  }
 }
 
 function drawBarrel(ctx, br, seed) {

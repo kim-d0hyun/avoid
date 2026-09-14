@@ -159,7 +159,7 @@ export function interpolate(world, dt) {
 function myPacket(world) {
   const p = world.player;
   const r1 = (v) => Math.round(v * 10) / 10;
-  const state = p.dead ? (world.mp.waiting ? 2 : 1) : 0;
+  const state = world.mp.waiting ? 2 : (p.dead ? 1 : 0);   // 구경 중이면 늘 2 — 명단 없이도 각자 자기 상태로 보이고 숨는다
   return ['p', r1(p.x), r1(p.vx), r1(p.air), r1(p.vy),
           Math.round(p.crouch * 100) / 100, p.facing, state,
           p.grabbing, p.escapes, world.dodged];
@@ -217,9 +217,11 @@ export function pump(world, dt, shell) {
     // 마지막 칸은 **내가 이 소식을 들은 지 얼마나 됐나.** 받는 쪽은 자기 지연에
     // 이걸 더해야 「지금쯤 저 사람이 있을 자리」가 나온다. 안 실으면 손님끼리는
     // 방장을 거치는 만큼 늘 뒤처져 보인다.
-    // 이번 판 명단에 없는 사람(판 도중에 들어옴)은 손님들에게도 구경하는 사람(2)으로 보낸다 — 남의 화면에서도 몸이 없게.
+    // **받은 상태를 그대로 전한다.** 명단(roster)으로 남의 상태를 덮어쓰지 않는다 — 그게 멀쩡히 놀고 있는 사람을
+    // (재접속·명단 어긋남으로) 모두에게 안 보이게 만들었다. 판 도중 들어온 사람은 스스로 「구경(2)」으로 보고하므로
+    // 여기서 따로 손볼 필요가 없다.
     players.push([other.id, other.baseX, other.vx, other.baseAir, other.vy,
-                  other.tcrouch, other.facing, (world.state === 'play' && mp.round > 0 && !mp.roster.has(other.id)) ? 2 : other.state,
+                  other.tcrouch, other.facing, other.state,
                   other.grabbing, other.escapes, other.dodged,
                   Math.round(other.age * 1000) / 1000]);
   }
@@ -271,11 +273,7 @@ export function handleMessage(world, shell, from, message, api) {
   if (Array.isArray(message) && message[0] === 'p') {
     if (mp.role !== 'host') return;
     const other = mp.others.get(from) ?? blankOther(from, mp.names.get(from) ?? '누군가');
-    applyPacket(other, message, other.rtt / 2);
-    // **판 도중에 들어온 사람은 이번 판에 몸이 없다.** 첫 스냅샷을 받기 전 몇 프레임은 자기 화면(고르는 화면)의
-    // 자리를 「살아 있다」고 보내와서, 방장 세상 한가운데 갑자기 산 사람이 나타나 밀어내거나 밟히거나 누름판을 눌렀다.
-    // 이번 판 명단에 없으면 구경하는 사람으로 둔다 — 다음 판부터 몸이 생긴다.
-    if (world.state === 'play' && mp.round > 0 && !mp.roster.has(from)) { other.waiting = true; other.dead = true; other.state = 2; }
+    applyPacket(other, message, other.rtt / 2);   // 상태(구경/죽음/삶)는 보낸 사람이 정한다 — 여기서 안 덮는다
     mp.others.set(from, other);
     return;
   }
