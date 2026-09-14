@@ -29,12 +29,13 @@ const tap = (world, a) => { w.press(world, a, true); w.press(world, a, false); }
 
 say('네트 — 공은 그물 면에서 튄다 (사람이 멈추는 자리와 같은 폭)');
 {
-  const world = mk();
-  world.state = 'play';
+  const world = mk(); world.state = 'play'; world.team = 0;
   const b = world.bag, netX = world.w / 2;
-  b.ball.x = netX - 200; b.ball.y = world.groundY - 50; b.ball.vx = 900; b.ball.vy = 0;
-  let bounced = false;
-  for (let i = 0; i < 60 && !bounced; i++) { w.update(world, 1 / 60); bounced = b.ball.vx < 0; }
+  volley.update(world, 1 / 60); b.wait = 0;        // 첫 프레임에 서브가 올라가고 잠깐 멎는다 — 그 대기를 끝낸다
+  // 네트 몸통 높이(꼭대기 아래)에서 빠르게 날아가 바닥에 닿기 전에 그물에 맞는다
+  b.ball.x = netX - 120; b.ball.y = world.groundY - 55; b.ball.vx = 1600; b.ball.vy = 0;
+  let bounced = false; const xs = [];
+  for (let i = 0; i < 30 && !bounced; i++) { volley.update(world, 1 / 60); xs.push(Math.round(b.ball.x - netX)); bounced = b.ball.vx < 0; }
   check('되돌아왔다', bounced, true);
   check('그물 면(가운데에서 14px)에 공 가장자리가 닿는 자리에서 튀었다', Math.round(netX - b.ball.x), 20 + 14);
 }
