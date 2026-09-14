@@ -849,7 +849,6 @@ say('기차놀이 — 두 세상이 각자 굴려도 등 뒤에서 함께 밀면
   note(`상자 ${((bx.x - x0) / T).toFixed(2)}칸 · 사이 ${(A.player.x - B.player.x).toFixed(0)}px`);
 }
 
-done('넷이서');
 
 say('되감기 — 방에 넷이 아니어도(하나 나갔거나 구경이 있어도) 방장 ⌥R 이 먹는다');
 {
@@ -864,3 +863,33 @@ say('되감기 — 방에 넷이 아니어도(하나 나갔거나 구경이 있�
   ok('셋이어도 되감긴다', world.mp.round === r0 + 1 && Math.abs(world.player.x - 30 * T) > T);
   ok('손님에게 go 가 간다', sent.some((m) => m.t === 'go'));
 }
+
+say('부딪힘 — 벼랑 끝에 선 사람은 동료가 밀어도 떨어지지 않는다 (떨어지는 건 제 발로만)');
+{
+  const world = make('표지판', { mp: true, host: true }); world.bump = true; world.bag.chutes = [];
+  const b = world.bag;
+  let edge = -1; for (let x = 2; x < b.w - 1; x++) if (b.rows[19][x] === '#' && b.rows[19][x + 1] !== '#') { edge = x; break; }
+  ok('도랑 가장자리를 찾았다', edge > 0);
+  setPos(world, edge, 18); world.player.grounded = true;                    // 나는 벼랑 끝에 서 있다
+  const o = other(world, 2, edge - 1, 18); o.vx = 200;                       // 동료가 뒤에서 걸어 들어온다
+  const x0 = world.player.x;
+  for (let i = 0; i < 120; i++) { o.x = o.baseX = world.player.x - 2 * HALF_PX + 6; tick(world, 1, {}); }   // 계속 등에 붙어 밀린다
+  ok('벼랑 밖으로 안 밀렸다 (발밑에 바닥이 있는 자리까지만)', world.player.x <= (edge + 1) * T - 6 && !world.player.dead);
+  note(`가장자리 ${edge}칸, 나 ${(world.player.x / T).toFixed(2)}칸 (시작 ${(x0 / T).toFixed(2)})`);
+}
+
+
+say('부딪힘 — 누름판을 밟고 선 사람은 동료가 밀어도 안 밀린다 (다리가 사라지면 안 된다)');
+{
+  const world = make('표지판', { mp: true, host: true }); world.bump = true; world.bag.chutes = [];
+  const b = world.bag; let px = -1, py = -1;
+  for (let y = 0; y < b.h && px < 0; y++) for (let x = 0; x < b.w; x++) if (b.rows[y][x] === 'p') { px = x; py = y; break; }
+  ok('누름판을 찾았다', px > 0);
+  setPos(world, px, py); world.player.grounded = true; tick(world, 2, {});
+  ok('밟고 있다', b.plates.p === true);
+  const o = other(world, 2, px - 1, py); o.vx = 200;
+  for (let i = 0; i < 120; i++) { o.x = o.baseX = world.player.x - 2 * HALF_PX + 6; tick(world, 1, {}); }
+  ok('누름판에서 밀려나지 않았다', Math.floor(world.player.x / T) === px && b.plates.p === true);
+}
+
+done('넷이서');

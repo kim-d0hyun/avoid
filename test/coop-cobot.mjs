@@ -100,6 +100,11 @@ function* gwalk(world, targetX, opts = {}) {
           else { const gap = gapWidth(world, p.x, dir, fy); if (gap > 4) return; if (gap >= 3 && Math.abs(p.vx) < 250 && !opts.noRunup) { yield* gwalk(world, p.x - dir * 1.5 * T, { noRunup: true, frames: 120 }); continue; } jump = true; }
         }
         if (hold && !jump && Math.abs(dx) > HALF + 8 && bodyBlocked(world, p.x + dir * (HALF + 3), fy - 1, BLOCK_H) && !bodyBlocked(world, p.x + dir * (HALF + 3), fy - 1 - T, BLOCK_H)) jump = true;
+        // 동료가 같은 높이에서 바로 앞을 막고 서 있으면(충돌 켠 세상) 뛰어넘는다 — 사람이 하는 대로. 머리에 내려도 그 다음 걸음이 내려선다.
+        if (hold && !jump && world.bump !== false && Math.abs(dx) > 2 * HALF + 10) {
+          const blocker = [...world.mp.others.values()].some((o) => !o.dead && !o.waiting && Math.abs((o.groundY - o.air) - fy) < 20 && Math.sign(o.x - p.x) === dir && Math.abs(o.x - p.x) < 2 * HALF + 12);
+          if (blocker) jump = true;
+        }
       }
     }
     yield { left: hold < 0, right: hold > 0, jump };
