@@ -63,6 +63,10 @@ private enum HK {
     static let grab: UInt32 = 8     // ⌥Space — 붙잡기
     static let grabAlt: UInt32 = 9  // ⌥Z — ⌥Space 를 입력기가 먹는 자리가 있어 뒷길을 둔다
     static let lock: UInt32 = 10    // ⌥P — ⌥ 고정 켜고 끄기. ⌥H 처럼 언제나 걸려 있다
+    static let say1: UInt32 = 11    // ⌥1~4 — 이모트(머리 위 말풍선). 협동에서 쓴다
+    static let say2: UInt32 = 12
+    static let say3: UInt32 = 13
+    static let say4: UInt32 = 14
 
     /// 게임 중에만 거는 것들. 숨기면 반드시 푼다 — ⌥←/⌥→ 는 맥에서 「단어 단위 이동」이라
     /// 계속 잡고 있으면 남의 글쓰기를 망친다. 창이 안 보이면 그 키는 원래 주인에게 돌려준다.
@@ -75,6 +79,10 @@ private enum HK {
         (menu, kVK_ANSI_M, "menu"),
         (grab, kVK_Space, "grab"),
         (grabAlt, kVK_ANSI_Z, "grab"),
+        (say1, kVK_ANSI_1, "say1"),
+        (say2, kVK_ANSI_2, "say2"),
+        (say3, kVK_ANSI_3, "say3"),
+        (say4, kVK_ANSI_4, "say4"),
     ]
 
     static func action(_ id: UInt32) -> String? { play.first { $0.id == id }?.action }

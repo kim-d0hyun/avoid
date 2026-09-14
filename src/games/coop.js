@@ -37,6 +37,8 @@ const KNOCK = 380, STUN = 0.5;             // 통에 맞으면 세 칸 밀려나
 const BUMP_SEP = 300;                      // 사람끼리 부딪힐 때 벌어지는 힘. 걷는 속도(290)보다 조금 세서, 막되 뒤에서 밀면 조금씩 나아간다
 const BUMP_AT = BLOCK_W;                   // 두 몸 중심이 이보다 가까우면 겹친 것 (몸 폭 34)
 const PORTAL_COOL = 0.3;
+const EMOTES = ['여기로 와!', '먼저 가!', '기다려!', '도와줘!'];   // ⌥1~4 (또는 고정 모드에서 1~4). 머리 위에 3초.
+const EMOTE_T = 3;
 const ROT_AFTER = 0.5, ROT_GONE = 3;         // 삭은 발판: 0.5초 밟으면 부서지고 3초 뒤 돌아온다 — 한 명씩 건넌다
 const DIE_FOR = 0.8;                       // 죽고 나서 시작 자리에 다시 서기까지
 const NEXT_FADE = 0.6;                     // 판 사이 어두워지는 시간
@@ -1028,6 +1030,7 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
   crew,
   keys: [['⌥ ← →', '걷기 (상자는 걸어가서 민다)'], ['⌥ ↑', '점프 · 사다리 오르기 · 포탈에서 다음 판'],
          ['⌥ ↓', '웅크리기 (한 칸 굴) · 사다리 내리기'],
+         ['⌥ 1~4', '외치기 — 여기로 와 · 먼저 가 · 기다려 · 도와줘'],
          ['⌥ R', '판 되감기 (방장만)']],
   noGrab: true, noClock: true, noResults: true, noGround: true,
   /// ⌥R 은 판 도중에도 먹는다 — 방장이 되감는다. 다른 게임은 판이 끝난 뒤에만.
@@ -1071,6 +1074,8 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
     if (!b?.rows) return;
     const p = world.player;
     if (b.flash) { b.flash.t -= dt; if (b.flash.t <= 0) b.flash = null; }
+    if (p.chat) { p.chat.t -= dt; if (p.chat.t <= 0) p.chat = null; }
+    for (const o of world.mp.others.values()) if (o.chat) { o.chat.t -= dt; if (o.chat.t <= 0) o.chat = null; }
     // p.load (머리 위에 선 사람 수) 는 move 가 센다 — 뛸 수 있는지에 쓰인다.
 
     // 개발용 심장 소리 — 1초에 한 번. 판 · 상태 · 내 자리 · 잡은 키.
@@ -1272,6 +1277,19 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
       if (exitState(world).ready) b.exitAsk = 0.2;
       return;
     }
+    if (msg.k === 'say') {
+      const text = EMOTES[(msg.n | 0) - 1]; if (!text) return;
+      const who = msg.who ?? from;
+      if (who !== world.mp.myId) { const o = world.mp.others.get(who); if (o) o.chat = { text, t: EMOTE_T }; }
+      if (host) world.send?.({ t: 'gm', k: 'say', n: msg.n, who });   // 방장은 다른 손님들에게도 전한다
+      return;
+    }
+  },
+  /// ⌥1~4 — 머리 위에 정해진 말을 3초 띄운다. 내 화면엔 바로, 남에게는 방장을 거쳐.
+  emote(world, n) {
+    const text = EMOTES[(n | 0) - 1]; if (!text) return;
+    world.player.chat = { text, t: EMOTE_T };
+    if (world.mp.on) world.send?.({ t: 'gm', k: 'say', n, who: world.mp.myId });
   },
   };
 }

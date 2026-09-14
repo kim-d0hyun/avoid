@@ -7,7 +7,7 @@
 // 관절이 없는 대신 **찌그러지고 늘어난다**: 웅크리면 넓고 낮게, 뛰면 좁고 길게, 누가 위에 서면
 // 눌린다. 이것 말고는 움직임을 보일 길이 없는데, 이게 아주 잘 읽힌다.
 
-import { INK, RED, PENCIL, stroke, circle, text, setFade } from './ink.js';
+import { INK, RED, PENCIL, PAPER_SOLID, stroke, circle, text, setFade } from './ink.js';
 
 export const BLOCK_W = 34;     // 한 칸(42)의 0.8
 export const BLOCK_H = 50;     // 1.2칸
@@ -115,6 +115,7 @@ export function drawBlock(ctx, p, time, seed, opts = {}) {
   ctx.restore();
 
   if (opts.name) drawTag(ctx, p, opts, h);
+  if (opts.chat && opts.chat.t > 0) drawBubble(ctx, p, opts, h);
   if (opts.faded) setFade(1);
 }
 
@@ -168,4 +169,30 @@ function drawTag(ctx, p, opts, bodyH) {
     const hw = Math.max(14, ctx.measureText(opts.name).width / 2 + 3);
     stroke(ctx, [[p.x - hw, y + 4], [p.x + hw, y + 4]], { width: 2.2, color: RED, seed: 21, amp: 0.7, haloWidth: 3 });
   }
+}
+
+/// 머리 위 말풍선 — 정해진 말을 3초. 마지막 0.6초에 옅어진다. 이름표보다 한 뼘 위에.
+function drawBubble(ctx, p, opts, bodyH) {
+  const t = opts.chat.t, text = opts.chat.text;
+  const alpha = Math.min(1, t / 0.6);
+  const y = p.groundY - p.air - bodyH - 44;
+  ctx.font = `700 13px ${'"Apple SD Gothic Neo", "Gothic A1", sans-serif'}`;
+  const w = ctx.measureText(text).width, pad = 9;
+  const bw = w + pad * 2, bh = 24, x0 = p.x - bw / 2, y0 = y - bh;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  // 종이 풍선
+  ctx.fillStyle = PAPER_SOLID;
+  ctx.strokeStyle = INK; ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x0, y0, bw, bh, 7); else ctx.rect(x0, y0, bw, bh);
+  ctx.fill(); ctx.stroke();
+  // 아래 꼬리
+  ctx.beginPath();
+  ctx.moveTo(p.x - 5, y0 + bh - 1); ctx.lineTo(p.x, y0 + bh + 6); ctx.lineTo(p.x + 5, y0 + bh - 1);
+  ctx.closePath(); ctx.fillStyle = PAPER_SOLID; ctx.fill(); ctx.stroke();
+  // 글자
+  ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, p.x, y0 + bh / 2);
+  ctx.restore();
 }

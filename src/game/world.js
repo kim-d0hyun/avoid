@@ -864,6 +864,11 @@ export function press(world, action, down) {
     if (down && (canRestart(world) || rewind)) world.onMenu?.('again');
     return;
   }
+  // ⌥1~4 — 이모트(머리 위 말풍선). 게임이 받는다. world.input 에는 안 넣는다.
+  if (action[0] === 's' && action[1] === 'a' && action[2] === 'y') {
+    if (down) gameOf(world).emote?.(world, +action.slice(3));
+    return;
+  }
   if (!(action in world.input)) return;
   world.input[action] = down;
 

@@ -507,7 +507,7 @@ function render(time) {
     for (const other of world.mp.others.values()) {
       upright(other.x, world.groundY, () => figure(ctx, other, time, boilFrame,
         { name: other.name, faded: other.dead, color: shirtOf(other.id, other.x),
-          mark: markOf(other.id),
+          mark: markOf(other.id), chat: other.chat,
           crown: world.mp.on && other.id === hostId }));
     }
     // 혼자 할 때는 색을 안 입힌다 — 구분할 사람이 없으면 그냥 낙서가 맞다.
@@ -517,7 +517,7 @@ function render(time) {
       name: world.mp.on ? world.mp.myName : null,
       mine: true,
       crown: world.mp.on && world.mp.role === 'host',
-      mark: markOf(world.mp.myId),
+      mark: markOf(world.mp.myId), chat: world.player.chat,
       color: world.mp.on || game.shirt ? shirtOf(world.mp.myId, world.player.x) : null,
     }));
   }

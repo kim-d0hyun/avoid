@@ -894,4 +894,26 @@ say('부딪힘 — 누름판을 밟고 선 사람은 동료가 밀어도 안 밀
   ok('누름판에서 밀려나지 않았다', Math.floor(world.player.x / T) === px && b.plates.p === true);
 }
 
+
+say('이모트 — ⌥1~4 는 머리 위에 3초 말풍선. 방장이 손님 것을 남들에게 전한다');
+{
+  const world = make('표지판', { mp: true, host: true });
+  w.press(world, "say1", true); w.press(world, "say1", false);
+  check('내 머리에 「여기로 와!」', world.player.chat?.text, '여기로 와!');
+  check('3초짜리', Math.round(world.player.chat.t), 3);
+  ok('말을 보냈다', world.sent.some((s) => s.m.k === 'say' && s.m.n === 1));
+  tick(world, 60, {}); ok('1초 뒤 아직 있다', (world.player.chat?.t ?? 0) > 1.5);
+  tick(world, 130, {}); ok('3초 지나면 사라진다', !world.player.chat);
+  // 손님이 보낸 say 를 방장이 받아 남에게 단다
+  const host = make('표지판', { mp: true, host: true });
+  other(host, 2, 10, 18);
+  coop.message(host, 2, { k: 'say', n: 2, who: 2 });
+  check('2번 머리에 「먼저 가!」', host.mp.others.get(2).chat?.text, '먼저 가!');
+  ok('방장이 다른 손님들에게 전한다', host.sent.some((s) => s.m.k === 'say' && s.m.who === 2));
+  // 없는 번호는 무시
+  const w3 = make('표지판', { mp: true, host: true });
+  w.press(w3, "say5", true);
+  ok('없는 번호(5)는 아무 일 없다', !w3.player.chat);
+}
+
 done('넷이서');
