@@ -67,4 +67,45 @@ say('방장이 하던 중에 게임을 바꾸면 손님도 따라간다');
   check('공은 사라졌다', world.bag.ball, undefined);
 }
 
+say('방장이 홈으로 나가면 손님은 시작 화면에서 기다리고, 같은 게임을 다시 골라도 첫 판으로 따라온다');
+{
+  const host = w.createWorld({ ms: 0, dodged: 0 }); host.onRecord = () => {}; host.onGameOver = () => {}; w.resize(host, 1512, 944);
+  const guest = w.createWorld({ ms: 0, dodged: 0 }); guest.onRecord = () => {}; guest.onGameOver = () => {}; w.resize(guest, 1512, 944);
+  const sent = []; const hshell = { net: { send: (m) => sent.push(JSON.parse(JSON.stringify(m))) }, log() {} };
+  const gapi = { restart: w.restart, setSize: (a, b) => w.resize(guest, a ?? 1512, b ?? 944) };
+  w.pickGame(host, 'coop'); net.roleChanged(host, 'host', 'ZR95', 0, '방장');
+  w.pickGame(guest, 'coop'); net.roleChanged(guest, 'guest', 'ZR95', 7, '손님');
+  const relay = () => { for (let i = 0; i < 4; i++) net.pump(host, 1 / 60, hshell); const s = sent.filter((m) => m.t === 's').pop(); net.handleMessage(guest, shell, 0, s, gapi); return s; };
+  host.state = 'play'; host.stage = 3; w.restart(host); guest.state = 'play'; relay();
+  check('손님도 4판째', guest.bag.stage, 3);
+  w.goHome(host); const s1 = relay();
+  check('방장 홈: 스냅샷', s1.st, 'pick');
+  check('손님은 시작 화면에서 기다린다', guest.state, 'ready');
+  w.pickGame(host, 'coop'); w.spread(host); const s2 = relay();
+  check('같은 게임을 다시 골랐다 — 고른 횟수가 올랐다', s2.gs > s1.gs, true);
+  check('손님도 첫 판으로 되돌아왔다', guest.bag.stage, 0);
+  check('손님은 시작 전 화면', guest.state, 'ready');
+  check('구경 표시가 아니다', guest.mp.waiting, false);
+}
+
+say('판 도중에 들어온 사람은 이번 판에 몸이 없다 — 방장 세상에서도, 손님들 화면에서도 구경하는 사람');
+{
+  const host = w.createWorld({ ms: 0, dodged: 0 }); host.onRecord = () => {}; host.onGameOver = () => {}; w.resize(host, 1512, 944);
+  const sent = []; const hshell = { net: { send: (m) => sent.push(JSON.parse(JSON.stringify(m))) }, log() {} };
+  w.pickGame(host, 'coop'); net.roleChanged(host, 'host', 'ZR95', 0, '방장');
+  for (const id of [1, 2, 3]) net.peerChanged(host, hshell, id, `손${id}`, true, { spread: w.spread });
+  net.startRound(host, hshell, { restart: w.restart });          // 넷이 시작 — 명단 {1,2,3}
+  check('판이 열렸다', host.state, 'play');
+  net.handleMessage(host, hshell, 1, ['p', 300, 0, 0, 0, 0, 1, 0, -1, 0, 0], { restart: w.restart, setSize() {} });   // 명단에 있는 1 은 살아서 움직인다
+  net.peerChanged(host, hshell, 4, '새손님', true, { spread: w.spread });
+  net.handleMessage(host, hshell, 4, ['p', 756, 0, 0, 0, 0, 1, 0, -1, 0, 0], { restart: w.restart, setSize() {} });   // 살아 있다고 보내온다
+  const o = host.mp.others.get(4);
+  check('방장 세상에서 구경하는 사람이다', o.waiting && o.dead, true);
+  for (let i = 0; i < 4; i++) net.pump(host, 1 / 60, hshell);
+  const row = sent.filter((m) => m.t === 's').pop().pl.find((r) => r[0] === 4);
+  check('손님들에게도 구경(2)으로 간다', row[7], 2);
+  const row1 = sent.filter((m) => m.t === 's').pop().pl.find((r) => r[0] === 1);
+  check('명단에 있는 사람은 그대로', row1[7], 0);
+}
+
 done('게임 갈아 끼우기');

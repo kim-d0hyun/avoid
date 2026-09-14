@@ -217,8 +217,9 @@ export function pump(world, dt, shell) {
     // 마지막 칸은 **내가 이 소식을 들은 지 얼마나 됐나.** 받는 쪽은 자기 지연에
     // 이걸 더해야 「지금쯤 저 사람이 있을 자리」가 나온다. 안 실으면 손님끼리는
     // 방장을 거치는 만큼 늘 뒤처져 보인다.
+    // 이번 판 명단에 없는 사람(판 도중에 들어옴)은 손님들에게도 구경하는 사람(2)으로 보낸다 — 남의 화면에서도 몸이 없게.
     players.push([other.id, other.baseX, other.vx, other.baseAir, other.vy,
-                  other.tcrouch, other.facing, other.state,
+                  other.tcrouch, other.facing, (world.state === 'play' && mp.round > 0 && !mp.roster.has(other.id)) ? 2 : other.state,
                   other.grabbing, other.escapes, other.dodged,
                   Math.round(other.age * 1000) / 1000]);
   }
@@ -227,8 +228,9 @@ export function pump(world, dt, shell) {
     // **판의 크기.** 손님은 이 크기로 세계를 굴리고, 그리는 순간에만 자기 화면에 맞춘다.
     // 각자 자기 화면 크기로 굴리면 똥 떨어지는 자리도, 남이 서 있는 자리도 서로 어긋난다.
     vw: Math.round(world.w), vh: Math.round(world.h),
-    // **무슨 게임을 하고 있나.** 방장이 정하고 방 전체가 따라간다.
-    g: world.gameId,
+    // **무슨 게임을 하고 있나.** 방장이 정하고 방 전체가 따라간다. gs 는 몇 번째로 고른 것인가 —
+    // 홈으로 나갔다 같은 게임을 다시 골라도 손님이 첫 판으로 되돌아오게.
+    g: world.gameId, gs: world.gameGen ?? 0,
     // 방장이 누군지. 손님은 이걸 보고 머리 위에 왕관을 씌운다 —
     // 판을 여는 사람이 누군지 보여야 「왜 시작이 안 되지」를 안 묻는다.
     h: mp.myId,
@@ -270,6 +272,10 @@ export function handleMessage(world, shell, from, message, api) {
     if (mp.role !== 'host') return;
     const other = mp.others.get(from) ?? blankOther(from, mp.names.get(from) ?? '누군가');
     applyPacket(other, message, other.rtt / 2);
+    // **판 도중에 들어온 사람은 이번 판에 몸이 없다.** 첫 스냅샷을 받기 전 몇 프레임은 자기 화면(고르는 화면)의
+    // 자리를 「살아 있다」고 보내와서, 방장 세상 한가운데 갑자기 산 사람이 나타나 밀어내거나 밟히거나 누름판을 눌렀다.
+    // 이번 판 명단에 없으면 구경하는 사람으로 둔다 — 다음 판부터 몸이 생긴다.
+    if (world.state === 'play' && mp.round > 0 && !mp.roster.has(from)) { other.waiting = true; other.dead = true; other.state = 2; }
     mp.others.set(from, other);
     return;
   }
@@ -353,6 +359,19 @@ export function handleMessage(world, shell, from, message, api) {
       if (typeof message.g === 'string' && message.g !== world.gameId
           && games.some((g) => g.id === message.g)) {
         pickGame(world, message.g);
+        mp.hostGameGen = Number.isFinite(message.gs) ? message.gs : undefined;
+      } else if (Number.isFinite(message.gs)) {
+        // 같은 게임을 방장이 다시 골랐다(홈으로 나갔다 되돌아옴) — 나도 첫 판 시작 화면으로.
+        if (mp.hostGameGen !== undefined && message.gs !== mp.hostGameGen) {
+          pickGame(world, message.g); mp.waiting = false;
+        }
+        mp.hostGameGen = message.gs;
+      }
+      // 방장이 홈(게임 고르는 화면)으로 나갔다. 나도 판을 멈추고 시작 화면에서 기다린다 — 방장만 사라진 채
+      // 내 판이 혼자 돌면 「방장만 나갔다」로 보인다. 방장이 게임을 고르면 위 두 갈래로 따라간다.
+      if (message.st === 'pick' && world.state !== 'ready') {
+        world.state = 'ready'; world.player.dead = false; mp.waiting = false;
+        say(world, '방장이 게임을 고르는 중', 2);
       }
 
       // **모양을 안 믿는다.** 남이 보낸 글자다 — 줄이 잘렸거나, 다음 버전이 칸을 바꿨거나,
@@ -596,6 +615,7 @@ export function roleChanged(world, role, code, myId, myName) {
   mp.heard = 0;
   mp.lost = false;
   mp.namesSent = '';
+  mp.hostGameGen = undefined;
   mp.role = role;
   mp.code = code;
   mp.myId = myId;

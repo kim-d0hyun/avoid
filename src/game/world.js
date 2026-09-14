@@ -170,6 +170,7 @@ export function startSlide(world, dir) {
 export function pickGame(world, gameId) {
   world.gameId = gameById(gameId).id;
   world.stage = 0; world.bagResets = 0;      // 판이 여럿인 게임은 첫 판부터
+  world.gameGen = (world.gameGen ?? 0) + 1;  // 몇 번째로 고른 게임인가 — 방장이 같은 게임을 다시 골라도 손님이 알아채게
   restart(world);
   world.state = 'ready';
 }

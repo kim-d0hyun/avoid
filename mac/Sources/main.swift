@@ -1049,7 +1049,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         // 누른 직후 잠깐은 봐준다. keyState 가 어떤 이유로든 눌림을 못 보는 기기에서도
         // 한 번 누르면 한 걸음은 나가게 하는 하한선이다 — 최악이 「안 움직임」이 되면 안 된다.
         let now = Date.timeIntervalSinceReferenceDate
-        for (action, since) in held where now - since > 0.12 && !isDown(action) {
+        // 붙잡기(스페이스·Z)는 keyState 로 놓았다고 단정하지 않는다 — 스페이스는 입력기·시스템 단축키가 끼어들어
+        // 눌린 채로도 「안 눌림」으로 읽히는 기기가 있어, 누르는 순간만 잡고 바로 놓아 버렸다. 붙잡기는 핫키의
+        // 놓음 이벤트, ⌥ 떼기(releaseAll), 숨기기로 풀린다 — 셋 다 그대로다.
+        for (action, since) in held where now - since > 0.12 && action != "grab" && !isDown(action) {
             release(action)
         }
     }
