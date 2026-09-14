@@ -197,7 +197,7 @@ say('색 열쇠 — 집으면 그 색 블록이 사라지고, 발밑이면 떨�
   const world = make('두 열쇠');
   const b = world.bag;
   ok('빨간 블록이 막고 있다', coopMod.solidTile(b, 'R'));
-  setPos(world, 30, 11);                    // 다락 끝 빨간 열쇠 자리 (바닥이 빨간 블록)
+  setPos(world, 34, 11);                    // 다락 끝 빨간 열쇠 자리 (바닥이 빨간 블록)
   tick(world, 2, {});
   ok('열쇠를 집었다', b.opened.has('r'));
   ok('빨간 블록이 사라졋다', !coopMod.solidTile(b, 'R'));
@@ -393,7 +393,7 @@ say('되감기 — 방장 ⌥R 이면 상자·열쇠·사람이 처음으로, �
 {
   const world = make('두 열쇠', { mp: true });
   world.mp.others.set(2, other(world, 2, 4, 18)); other(world, 3, 4, 18); other(world, 4, 4, 18);
-  setPos(world, 30, 11); tick(world, 2, {});
+  setPos(world, 34, 11); tick(world, 2, {});
   ok('열쇠를 집었다', world.bag.opened.has('r'));
   world.onMenu = (a) => { if (a === 'again') { world.bagResets = (world.bagResets ?? 0) + 1; w.restart(world); world.state = 'play'; } };
   tick(world, 40, {});                      // 판이 조금 돌아야 ⌥R 이 먹는다
@@ -403,12 +403,20 @@ say('되감기 — 방장 ⌥R 이면 상자·열쇠·사람이 처음으로, �
   check('같은 판이다', world.bag.def.name, '두 열쇠');
 }
 
-say('시간 제한 — 옥상 120초 · 종점 150초');
+say('시간 제한 — 마지막 다섯 판에만 붙는다');
 {
   const world = make('옥상', { mp: true });
-  check('120초', world.bag.limit, 120);
-  check('종점은 150초', make('종점', { mp: true }).bag.limit, 150);
-  world.bag.clock = 119.9;
+  check('옥상은 170초', world.bag.limit, 170);
+  check('3층 창고는 180초', make('3층 창고', { mp: true }).bag.limit, 180);
+  check('동시에는 160초', make('동시에', { mp: true }).bag.limit, 160);
+  check('무빙워크는 150초', make('무빙워크', { mp: true }).bag.limit, 150);
+  check('종점은 180초', make('종점', { mp: true }).bag.limit, 180);
+  // 앞의 아홉 판은 시간을 안 잰다
+  for (const n of ['표지판', '상자 계단', '두 열쇠', '지키는 사람', '두 길', '엘리베이터', '움직이는 발판', '되돌아오기', '탑']) {
+    if (make(n, { mp: true }).bag.limit !== 0) check(`${n} 은 제한 없음`, make(n, { mp: true }).bag.limit, 0);
+  }
+  ok('앞의 아홉 판은 제한이 없다', true);
+  world.bag.clock = 169.9;
   tick(world, 10, {});
   ok('다 되면 되감는다', world.bag.resets === 1 && world.bag.clock < 1);
 }
@@ -713,6 +721,35 @@ say('나오는 발판 위에 서 있는데 누름판이 풀리면 — 떨어진�
   check('발판이 사라져 3층 바닥까지 떨어졌다', feetRow(world), 8);
 }
 
+
+say('상자로 누른 누름판 — 사람이 없어도 다리가 남는다');
+{
+  const world = make('상자 계단');                   // 첫 단 위 누름판 (24,15) · 가시 구덩이 위 다리 M (26~29,16)
+  const b = world.bag;
+  ok('처음엔 다리가 없다', !coopMod.solidTile(b, 'M'));
+  const box = b.boxes.find((x) => Math.round(x.y / T) === 16);   // 첫 단 위 상자 (20,15)
+  box.x = 24.5 * T;                                              // 누름판 위로
+  setPos(world, 3, 18); tick(world, 3, {});
+  ok('상자가 누르면 누름판이 눌린다', b.plates.p === true);
+  ok('아무도 없는데 다리가 나 있다', coopMod.solidTile(b, 'M'));
+  check('구덩이 위를 딛는다', coopMod.floorBelow(world, 27.5 * T, 16 * T, 16 * T + 20), 16 * T);
+  box.x = 20.5 * T; tick(world, 3, {});
+  ok('상자를 치우면 다리가 사라진다', !coopMod.solidTile(b, 'M') && b.plates.p === false);
+}
+
+say('구멍에 넣은 상자 — 4층에서 로비 누름판까지 떨어진다');
+{
+  const world = make('엘리베이터');                  // 26~27칸이 4층부터 로비까지 뚫려 있다. 로비 누름판 (27,40)
+  const b = world.bag;
+  ok('로비 셔터 P 가 막고 있다', coopMod.solidTile(b, 'P'));
+  const box = b.boxes.find((x) => Math.round(x.y / T) === 12);   // 4층 상자 (33,11)
+  box.x = 27.5 * T;                                              // 구멍 위로
+  setPos(world, 3, 40);
+  for (let i = 0; i < 300 && Math.round(box.y / T) < 41; i++) tick(world, 1, {});
+  tick(world, 5, {});
+  check('세 층을 지나 로비 바닥에 앉았다', Math.round(box.y / T), 41);
+  ok('누름판이 눌려 셔터가 열린다', b.plates.p === true && !coopMod.solidTile(b, 'P'));
+}
 
 say('포탈 — 저편에 내려선 채 가만히 있어도 되돌아가지 않는다. 떠났다 다시 들어오면 다시 탄다');
 {
