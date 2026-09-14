@@ -545,8 +545,12 @@ export function startRound(world, shell, api) {
   // **판을 여는 건 방장뿐이다.** 손님이 아무 때나 열면 아직 준비 안 된 사람이 끌려 들어간다 —
   // 편을 고르는 중일 수도, 방금 들어와 자리를 잡는 중일 수도 있다.
   if (mp.role !== 'host') return;
-  // 게임이 「아직 안 된다」고 하면 안 연다 (배구에서 한쪽 편이 비었을 때).
-  if (gameOf(world).blocked?.(world)) return;
+  // 게임이 「아직 안 된다」고 하면 안 연다 (배구에서 한쪽 편이 비었을 때 · 넷이서에 넷이 안 됐을 때).
+  // 다만 **하고 있던 판을 되감는 것**(넷이서·셋이서 ⌥R)은 인원을 다시 따지지 않는다 — 판 도중에 하나가 나갔거나
+  // 구경하는 사람이 들어와 있어도 되감아야 한다. 안 그러면 ⌥R 이 아무 말 없이 안 먹는다.
+  const rewinding = world.state === 'play' && gameOf(world).rewindable;
+  if (!rewinding && gameOf(world).blocked?.(world)) return;
+  if (rewinding) say(world, '되감기', 1.2);
   mp.round++;
   mp.results = null;
   mp.winner = null;

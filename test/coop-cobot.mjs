@@ -39,7 +39,7 @@ const framesNow = () => FR.n;
 class Quad {
   constructor(stageName) {
     this.frames = 0; this.worlds = {};
-    for (const k of IDS) { this.worlds[k] = makeWorld(stageName, { id: +k }); this.worlds[k].bump = false; }
+    for (const k of IDS) { this.worlds[k] = makeWorld(stageName, { id: +k }); this.worlds[k].bump = !!process.env.BUMP; }   // BUMP=1: 사람 충돌을 켠 채 (실제 조건)
     this.host = this.worlds['1'];
     for (const k of IDS) {
       const wk = this.worlds[k]; wk.mp.rtt = 2 * LAG * DT;

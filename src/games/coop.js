@@ -546,20 +546,32 @@ function pushBox(world, box, dir, dt) {
 }
 
 function countPushers(world, box, dir) {
-  let n = 0;
-  // 상자에서 한 칸 남짓 안에 서서 그쪽으로 걷고 있으면 미는 사람이다. 딱 붙어 있지 않아도 센다 —
-  // 둘이 나란히 밀면 뒤의 사람은 앞사람 어깨에 막혀 몇 픽셀 떨어져 선다.
-  const near = (x, fy) => Math.abs(box.y - fy) < T * 0.6 && Math.abs(box.x - x) < HALF + T / 2 + 14 && Math.sign(box.x - x) === dir;
-  const me = world.player;
-  if (!me.dead && near(me.x, world.groundY - me.air)) n++;
+  // **기차놀이.** 사람끼리는 겹치지 못하니 둘이 나란히 상자에 붙을 수 없다 — 앞사람이 상자에 붙고, 뒷사람은 앞사람의
+  // 등에 붙어 같은 쪽으로 걷는다. 상자에서부터 등 뒤로 이어진 사슬을 센다: 첫 사람은 상자에서 한 칸 남짓 안, 그 뒤는
+  // 앞사람 몸에서 몸 하나 남짓 안. 사슬이 끊기면 거기까지다. 서 있기만 하는 사람(그쪽으로 걷지 않는)은 사슬이 아니다.
+  const level = (fy) => Math.abs(box.y - fy) < T * 0.6;
+  const behind = (x) => Math.sign(box.x - x) === dir;                       // 상자의 미는 쪽에 있나
+  const me = world.player, idx = world.bag.boxes.indexOf(box);
+  const people = new Map();                                                 // id → x
+  const meFy = world.groundY - me.air;
+  const meWalks = (dir > 0 ? world.input.right : world.input.left) || Math.sign(me.vx) === dir;
+  if (!me.dead && level(meFy) && behind(me.x) && meWalks) people.set(world.mp.myId, me.x);
   for (const o of world.mp.others.values()) {
-    if (!o.dead && near(o.x, o.groundY - o.air) && Math.sign(o.vx || 0) === dir) n++;
+    if (o.dead || o.waiting || !level(o.groundY - o.air) || !behind(o.x)) continue;
+    const want = world.bag.pushWants?.get(o.id);
+    const asks = want && want.i === idx && want.d === dir && want.t > 0;
+    // 밀기 부탁을 보낸 손님은 자기 화면에서 상자에 붙어 있다 — 그 자리가 정답이다 (내 화면의 그 사람 자리는 뒤처질 수 있다)
+    if (asks) people.set(o.id, box.x - dir * (T / 2 + HALF));
+    else if (Math.sign(o.vx || 0) === dir) people.set(o.id, o.x);
   }
-  for (const [id, want] of (world.bag.pushWants ?? new Map())) {
-    const o = world.mp.others.get(id);
-    if (o && want.i === world.bag.boxes.indexOf(box) && want.d === dir && want.t > 0) n++;
+  const xs = [...people.values()].sort((a, b) => Math.abs(box.x - a) - Math.abs(box.x - b));
+  let n = 0, edge = box.x - dir * (T / 2);                                   // 상자의 미는 쪽 면
+  for (const x of xs) {
+    const gap = Math.abs(edge - x) - HALF;                                    // 앞 면과 이 사람 몸 앞면 사이
+    if (gap > 14) break;                                                     // 손이 안 닿는다 — 사슬이 끊겼다
+    n++; edge = x - dir * HALF;                                              // 이 사람의 등
   }
-  return Math.max(n, world.mp.on ? 0 : box.weight);            // 혼자(연습) 할 때는 무게를 안 따진다
+  return Math.max(n, world.mp.on ? 0 : box.weight);                         // 혼자(연습) 할 때는 무게를 안 따진다
 }
 
 // ── 물건 (방장·혼자가 굴린다) ─────────────────────────────────────────────────

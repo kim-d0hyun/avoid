@@ -797,4 +797,70 @@ say('판 도중에 들어온 사람 — 출구 인원에 안 세고, 다음 판�
   ok('손님도 구경을 끝내고 판에 낀다', !guest.mp.waiting && !guest.player.dead && guest.bag.stage === 1);
 }
 
+
+say('기차놀이 — 무거운 상자는 등 뒤에 붙어 같은 쪽으로 걷는 사람까지 센다 (사람끼리 겹치지 않아도)');
+{
+  const world = make('옥상', { mp: true, host: true }); world.bump = true;
+  const b = world.bag; const bx = b.boxes.find((x) => x.weight === 2);
+  const fyRow = Math.round(bx.y / T) - 1;                                    // 상자가 선 줄
+  const front = bx.x - (T / 2 + HALF_PX + 0.5), back = front - (2 * HALF_PX + 2), far = front - (2 * HALF_PX + 40);
+  const place = (x) => { world.player.x = x; world.player.air = world.groundY - (fyRow + 1) * T; world.player.grounded = true; };
+  // ① 혼자 붙어 밀면 안 움직인다
+  place(front); const x0 = bx.x; tick(world, 30, { right: true });
+  ok('혼자서는 무거운 상자가 안 밀린다', Math.abs(bx.x - x0) < 1);
+  // ② 등 뒤에 한 명이 붙어 같은 쪽으로 걸으면 둘 — 밀린다
+  const o = other(world, 2, 0, fyRow); o.x = o.baseX = back; o.vx = 120;
+  place(front); tick(world, 60, { right: true });
+  ok('등 뒤에서 같이 밀면 밀린다', bx.x - x0 > 30);
+  note(`상자 ${((bx.x - x0) / T).toFixed(2)}칸 이동`);
+  // ③ 뒤 사람이 서 있기만 하면(걷지 않으면) 사슬이 아니다
+  const w3 = make('옥상', { mp: true, host: true }); w3.bump = true; const b3 = w3.bag.boxes.find((x) => x.weight === 2);
+  const o3 = other(w3, 2, 0, fyRow); o3.x = o3.baseX = b3.x - (T / 2 + HALF_PX + 0.5) - (2 * HALF_PX + 2); o3.vx = 0;
+  w3.player.x = b3.x - (T / 2 + HALF_PX + 0.5); w3.player.air = w3.groundY - (fyRow + 1) * T; w3.player.grounded = true;
+  const x3 = b3.x; tick(w3, 60, { right: true });
+  ok('서 있기만 하는 사람은 안 센다', Math.abs(b3.x - x3) < 1);
+  // ④ 사슬이 끊기면(뒤 사람이 한 칸 떨어져) 안 센다
+  const w4 = make('옥상', { mp: true, host: true }); w4.bump = true; const b4 = w4.bag.boxes.find((x) => x.weight === 2);
+  const o4 = other(w4, 2, 0, fyRow); o4.x = o4.baseX = b4.x - (T / 2 + HALF_PX + 0.5) - (2 * HALF_PX + 40); o4.vx = 120;
+  w4.player.x = b4.x - (T / 2 + HALF_PX + 0.5); w4.player.air = w4.groundY - (fyRow + 1) * T; w4.player.grounded = true;
+  const x4 = b4.x; tick(w4, 60, { right: true });
+  ok('떨어져 걷는 사람은 사슬이 아니다', Math.abs(b4.x - x4) < 1);
+}
+
+say('기차놀이 — 두 세상이 각자 굴려도 등 뒤에서 함께 밀면 밀린다 (충돌 켠 채)');
+{
+  const A = make('옥상', { mp: true, host: true }); A.bump = true;
+  const B = make('옥상', { mp: true, host: false }); B.bump = true; B.mp.myId = 2;
+  const bx = A.bag.boxes.find((x) => x.weight === 2); const fyRow = Math.round(bx.y / T) - 1;
+  const front = bx.x - (T / 2 + HALF_PX + 0.5);
+  A.player.x = front; A.player.air = A.groundY - (fyRow + 1) * T; A.player.grounded = true;
+  B.player.x = front - (2 * HALF_PX + 2); B.player.air = B.groundY - (fyRow + 1) * T; B.player.grounded = true;
+  A.send = () => {}; B.send = (m) => { if (m.k === 'push') coop.message(A, 2, m); };   // 손님의 밀기 부탁은 방장에게
+  const mirror = () => {
+    A.mp.others.clear(); B.mp.others.clear();
+    const oa = other(A, 2, 0, fyRow); oa.x = oa.baseX = B.player.x; oa.vx = B.player.vx;
+    const ob = other(B, 1, 0, fyRow); ob.x = ob.baseX = A.player.x; ob.vx = A.player.vx;
+    B.bag.boxes[A.bag.boxes.indexOf(bx)].x = bx.x;                            // 방장 상자 자리를 손님이 받는다
+  };
+  const x0 = bx.x;
+  for (let i = 0; i < 90; i++) { mirror(); Object.assign(A.input, { left: false, right: true, jump: false, duck: false }); Object.assign(B.input, { left: false, right: true, jump: false, duck: false }); w.update(A, 1 / 60); w.update(B, 1 / 60); }
+  ok('앞은 상자에, 뒤는 앞사람 등에 붙어 둘이 밀었다', bx.x - x0 > 40);
+  ok('둘은 겹치지 않았다 (등에 붙어 몇 px 파묻힐 뿐)', A.player.x - B.player.x >= 2 * HALF_PX - 10);
+  note(`상자 ${((bx.x - x0) / T).toFixed(2)}칸 · 사이 ${(A.player.x - B.player.x).toFixed(0)}px`);
+}
+
 done('넷이서');
+
+say('되감기 — 방에 넷이 아니어도(하나 나갔거나 구경이 있어도) 방장 ⌥R 이 먹는다');
+{
+  const world = make('표지판', { mp: true, host: true });
+  const sent = []; const shell = { net: { send: (m) => sent.push(m) }, log() {} };
+  for (const id of [2, 3, 4]) other(world, id, 4, 18);
+  net.startRound(world, shell, { restart: (w0) => w.restart(w0) });
+  check('넷이 시작', world.state, 'play');
+  world.mp.others.delete(4);                                                 // 하나 나갔다 — 셋
+  world.stage = 0; world.player.x = 30 * T; const r0 = world.mp.round;
+  net.startRound(world, shell, { restart: (w0) => w.restart(w0) });         // ⌥R
+  ok('셋이어도 되감긴다', world.mp.round === r0 + 1 && Math.abs(world.player.x - 30 * T) > T);
+  ok('손님에게 go 가 간다', sent.some((m) => m.t === 'go'));
+}
