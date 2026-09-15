@@ -3,6 +3,7 @@
 // 고칠 때마다 `npm test` 로 전부 돌린다. 결과는 test/결과.md 에 남는다.
 
 import './dom-stub.mjs';
+import { readFileSync } from 'node:fs';
 const R = new URL('../src/', import.meta.url).href;
 const w = await import(R + 'game/world.js');
 const net = await import(R + 'game/net.js');
@@ -15,7 +16,10 @@ const stage = (name) => STAGES.findIndex((s) => s.name === name);
 const HALF_PX = 17;
 const BUMP_W = 34;   // 몸 폭 (coop.js BUMP_AT)
 
-function make(stageName = '표지판', { mp = false, host = true, debug = true } = {}) {
+// 물리·규칙 시험은 v3.10.0 의 넷이서 지도 위에서 돈다 (test/coop-legacy-stages.json). 판을 다시 짜도 「상자 계단 (24,15) 누름판」 같은
+// 자리를 믿는 시험이 흔들리지 않게. 지금 판 묶음을 보는 시험(판 수·크기·마지막 판)은 legacy:false 로 부른다.
+const LEGACY = JSON.parse(readFileSync(new URL('coop-legacy-stages.json', import.meta.url), 'utf8'));
+function make(stageName = '표지판', { mp = false, host = true, debug = true, legacy = true } = {}) {
   const world = w.createWorld({ ms: 0, dodged: 0 }, 'coop');
   world.debug = debug;
   world.onRecord = () => {}; world.onGameOver = (r) => { world.ended = r; };
@@ -23,6 +27,8 @@ function make(stageName = '표지판', { mp = false, host = true, debug = true }
   if (mp) { world.mp.on = true; world.mp.role = host ? 'host' : 'guest'; world.mp.myId = host ? 1 : 2; }
   world.stage = stage(stageName);
   w.restart(world);
+  const L = legacy ? LEGACY.findIndex((s) => s.name === stageName) : -1;
+  if (L >= 0) { world.bag.stages = LEGACY; world.stage = L; coopMod.loadStage(world, L); coop.stand(world, 0); }
   world.state = 'play';
   world.bump = false;                         // 기존 시험은 충돌 끈 채로 본다 (충돌은 아래 따로)
   return world;
@@ -50,7 +56,7 @@ say('판 — 열다섯이 다 열리고 크기가 맞다');
   const world = make();
   check('판 수', STAGES.length, 15);
   for (const s of STAGES) {
-    const world2 = make(s.name);
+    const world2 = make(s.name, { legacy: false });
     const b = world2.bag;
     if (!b.rows || b.rows.length !== s.h || b.rows[0].length !== s.w) { check(`${s.name} 크기`, [b.rows?.length, b.rows?.[0]?.length], [s.h, s.w]); }
     if (!b.exit) check(`${s.name} 출구`, !!b.exit, true);
@@ -972,6 +978,257 @@ say('새 협동 장치 — 전원 집결 체크포인트, 시한문, 구조 사�
   coop.unpack(guest, coop.pack(world));
   ok('신규 장치 상태와 체크포인트가 동기화된다', guest.bag.rally && guest.bag.timed > 0
     && guest.bag.ladderOpen && guest.bag.checkpoint?.length === 4);
+}
+
+// ── 기획서 4장 장치 — 빈 시험 판에 세워 본다 ──────────────────────────────────
+/// 글자 그림으로 시험 판을 하나 만들어 판 묶음 끝에 붙이고 연다. 땅은 19줄(발은 18줄).
+function custom(paint, { mp = true } = {}) {
+  const W0 = 44, H0 = 22;
+  const g = Array.from({ length: H0 }, (_, y) => Array.from({ length: W0 }, (_, x) => (y === 0 || y >= 19 || x === 0 || x === W0 - 1) ? '#' : '.'));
+  g[18][2] = '1'; g[18][3] = '2'; g[18][4] = '3'; g[18][5] = '4'; g[18][40] = 'O';
+  paint((x, y, ch) => { g[y][x] = ch; });
+  const world = make('표지판', { mp });
+  const b = world.bag;
+  const def = { ...STAGES[0], name: '시험 판', w: W0, h: H0, art: g.map((r) => r.join('')), notes: [], limit: 0, end: 'all' };
+  b.stages = [...b.stages, def];
+  coopMod.loadStage(world, b.stages.length - 1); coop.stand(world, 0);
+  b.chutes = [];
+  return world;
+}
+const standAt = (world, o, fy) => { o.air = o.baseAir = world.groundY - fy; o.fyPrev = undefined; };
+const moveTo = (o, x) => { o.x = o.baseX = x; };            // 남의 자리는 매 프레임 baseX 에서 다시 잡힌다
+
+say('사람 계단 — 밑에서 뛰어오르는 남의 머리가 위 사람을 들어 올리지 않는다');
+{
+  // 가운데 받침(나)은 맨 밑 받침(2) 머리 위에 서 있고, 오르는 사람(3)이 땅에서 내 옆에 몸이 겹쳐 붙어 뛴다.
+  // 3 의 머리는 처음에 내 발과 같은 높이다. 고치기 전에는 3 이 뛰는 대로 내가 한 몸 높이 솟았다.
+  const world = custom(() => {});
+  const fy0 = 19 * T, p = world.player;
+  other(world, 2, 10, 18);
+  p.x = 10.5 * T; p.air = world.groundY - (fy0 - 53); p.grounded = true; p.vy = 0;
+  tick(world, 3, {});
+  check('나는 2 의 머리 위에 선다', Math.round(world.groundY - p.air), fy0 - 53);
+  const c = other(world, 3, 10, 18); moveTo(c, 10.5 * T + 20);
+  let highest = world.groundY - p.air;
+  for (let i = 0; i < 20; i++) { standAt(world, c, fy0 - 9 * (i + 1)); tick(world, 1, {}); highest = Math.min(highest, world.groundY - p.air); }
+  check('3 이 뛰어도 나는 안 솟는다', Math.round(highest), fy0 - 53);
+}
+
+say('무거운 상자 — 늦게 오는 동료가 상자를 지나쳐 보여도, 밀기를 부탁했으면 센다');
+{
+  // 남은 마지막 꾸러미에서 **속도로 이어 그린다**. 상자에 막혀 선 사람도 vx 는 달리는 속도 그대로라
+  // 유령이 최대 1.24칸 앞질러 — 상자를 지나쳐 — 그려진다. 그 자리로 「상자 뒤에 있나」를 재면 미는 사람이 빠졌다.
+  const world = custom((put) => { put(20, 18, 'X'); });
+  const b = world.bag, box = b.boxes[0], x0 = box.x;
+  check('무거운 상자다', box.weight, 2);
+  setPos(world, 19, 18);
+  const o = other(world, 2, 18, 18, { vx: 290 });
+  coop.message(world, 2, { k: 'push', i: 0, d: 1, ep: world.mp.stageEpoch });
+  o.x = o.baseX = box.x + 26;                      // 유령이 상자를 지나쳐 보인다
+  tick(world, 40, { right: true });
+  ok('둘이 미니 상자가 간다', box.x > x0 + 10);
+  // 부탁하지 않은 동료는 그대로 자리로 판정한다 — 상자 너머에 선 사람은 미는 사람이 아니다
+  const world2 = custom((put) => { put(20, 18, 'X'); });
+  const box2 = world2.bag.boxes[0], y0 = box2.x;
+  setPos(world2, 19, 18);
+  const o2 = other(world2, 2, 18, 18, { vx: 290 });
+  o2.x = o2.baseX = box2.x + 26;
+  tick(world2, 40, { right: true });
+  ok('부탁 없이 상자 너머에 선 사람은 안 센다', Math.abs(box2.x - y0) < 3);
+}
+
+say('집결판 무리 둘 — 무리마다 한 번씩 체크포인트, 첫 집결이 집결문을 연다');
+{
+  const world = custom((put) => { for (const x of [6, 8, 10, 12]) put(x, 18, 'c'); for (let y = 16; y <= 18; y++) put(16, y, 'C');
+                                  for (const x of [24, 26, 28, 30]) put(x, 18, 'c'); });
+  const b = world.bag;
+  const gather = (xs) => { setPos(world, xs[0], 18); [2, 3, 4].forEach((id, i) => other(world, id, xs[i + 1], 18)); tick(world, 25); };
+  gather([6, 8, 10, 24]);
+  ok('무리가 섞이면 집결이 아니다', !b.rally);
+  gather([6, 8, 10, 12]);
+  ok('첫 무리 — 집결문이 열리고 체크포인트', b.rally && !coopMod.solidTile(b, 'C') && Math.round(b.checkpoint[0][0]) === Math.round(6.5 * T));
+  gather([24, 26, 28, 30]);
+  ok('둘째 무리 — 체크포인트가 앞으로 옮겨진다', b.rallyDone.size === 2 && Math.round(b.checkpoint[0][0]) === Math.round(24.5 * T));
+  gather([6, 8, 10, 12]);
+  ok('지난 무리로 돌아가도 체크포인트는 그대로', Math.round(b.checkpoint[0][0]) === Math.round(24.5 * T));
+  const guest = custom((put) => { for (const x of [6, 8, 10, 12]) put(x, 18, 'c'); for (let y = 16; y <= 18; y++) put(16, y, 'C'); for (const x of [24, 26, 28, 30]) put(x, 18, 'c'); });
+  guest.mp.role = 'guest';
+  coop.unpack(guest, coop.pack(world));
+  check('손님도 두 무리를 안다', [...guest.bag.rallyDone].sort(), ['24,18', '6,18']);
+  coop.unpack(guest, { ...coop.pack(world), ra: ['99,99', 'x', 7] });
+  ok('없는 무리 이름은 버린다', guest.bag.rallyDone.size === 0);
+}
+
+say('사람 수 누름판 — k 는 서로 다른 둘, e 는 셋. 상자는 안 센다');
+{
+  const world = custom((put) => { put(10, 18, 'k'); put(11, 18, 'k'); for (let y = 16; y <= 18; y++) put(20, y, 'K');
+                                  put(24, 18, 'e'); put(25, 18, 'e'); put(26, 18, 'e'); for (let y = 16; y <= 18; y++) put(30, y, 'E'); });
+  const b = world.bag;
+  setPos(world, 10, 18); coopMod.stepObjects(world, 1 / 60);
+  ok('한 명이면 K 가 닫혀 있다', coopMod.solidTile(b, 'K'));
+  other(world, 2, 11, 18); coopMod.stepObjects(world, 1 / 60);
+  ok('둘이 밟으면 K 가 열린다', !coopMod.solidTile(b, 'K'));
+  world.mp.others.delete(2); b.boxes.push({ x: 11.5 * T, y: 19 * T, vx: 0, vy: 0, weight: 1 }); coopMod.stepObjects(world, 1 / 60);
+  ok('사람 하나 + 상자는 둘이 아니다', coopMod.solidTile(b, 'K'));
+  b.boxes = [];
+  setPos(world, 24, 18); other(world, 2, 25, 18); coopMod.stepObjects(world, 1 / 60);
+  ok('둘이면 E 가 닫혀 있다', coopMod.solidTile(b, 'E'));
+  other(world, 3, 26, 18); coopMod.stepObjects(world, 1 / 60);
+  ok('셋이면 E 가 열린다', !coopMod.solidTile(b, 'E'));
+  const guest = custom(() => {}, { mp: true }); guest.mp.role = 'guest';
+  guest.bag.plateTiles = b.plateTiles;
+  coop.unpack(guest, coop.pack(world));
+  ok('사람 수 누름판 상태가 손님에게 간다', guest.bag.plates.e && !guest.bag.plates.k);
+  const solo = custom((put) => { put(10, 18, 'k'); for (let y = 16; y <= 18; y++) put(20, y, 'K'); }, { mp: false });
+  setPos(solo, 10, 18); coopMod.stepObjects(solo, 1 / 60);
+  ok('혼자 연습할 때는 한 명이면 된다', !coopMod.solidTile(solo.bag, 'K'));
+}
+
+say('교대문 — 누름판 p 가 둘이면 어느 쪽이 눌려도 P 가 열린다');
+{
+  const world = custom((put) => { put(10, 18, 'p'); put(30, 18, 'p'); for (let y = 16; y <= 18; y++) put(20, y, 'P'); });
+  setPos(world, 10, 18); coopMod.stepObjects(world, 1 / 60);
+  ok('이쪽 판', world.bag.plates.p);
+  setPos(world, 30, 18); coopMod.stepObjects(world, 1 / 60);
+  ok('저쪽 판 — 건너간 사람이 이어받는다', world.bag.plates.p);
+  setPos(world, 25, 18); coopMod.stepObjects(world, 1 / 60);
+  ok('둘 다 비면 닫힌다', !world.bag.plates.p);
+}
+
+say('탑 감지기 — 전원이 층층이 쌓인 탑의 꼭대기가 닿아야 켜진다');
+{
+  // 발 19T. 넷 탑의 꼭대기 사람은 발이 19T-159 → 몸이 14~15줄에 걸린다.
+  const world = custom((put) => { put(10, 15, 'i'); put(10, 14, 'i'); for (let y = 16; y <= 18; y++) put(20, y, 'I'); });
+  const b = world.bag, fy0 = 19 * T, p = world.player;
+  p.x = 10.5 * T; p.air = world.groundY - (fy0 - 159); p.grounded = false;
+  coopMod.stepObjects(world, 1 / 60);
+  ok('혼자 그 높이로 뛰어 스치면 안 켜진다', !b.tower && coopMod.solidTile(b, 'I'));
+  for (const [id, k] of [[2, 0], [3, 1], [4, 2]]) { const o = other(world, id, 10, 18); standAt(world, o, fy0 - 53 * k); }
+  moveTo(world.mp.others.get(4), 10.5 * T + 40);   // 셋째가 옆으로 비켜 섰다 — 사슬이 끊겼다
+  coopMod.stepObjects(world, 1 / 60);
+  ok('사슬이 끊기면 안 켜진다', !b.tower);
+  moveTo(world.mp.others.get(4), 10.5 * T);
+  coopMod.stepObjects(world, 1 / 60);
+  ok('넷이 쌓은 탑의 꼭대기가 닿으면 켜진다', b.tower && !coopMod.solidTile(b, 'I'));
+  world.mp.others.clear(); p.air = world.groundY - fy0; coopMod.stepObjects(world, 1 / 60);
+  ok('내려와도 열린 채 남는다', b.tower);
+  const guest = custom(() => {}); coop.unpack(guest, coop.pack(world));
+  ok('손님도 열린 문을 본다', guest.bag.tower);
+}
+
+say('승강기 — V 는 둘이 타야 오르고, 비면 도로 내려온다. 오르다 내리면 떨어뜨리지 않고 돌아간다');
+{
+  // 기둥 21칸, 12~18줄. 위 승강장은 12줄 양옆 땅(19~20 · 23~24칸).
+  const paint = (ch) => (put) => { for (let y = 12; y <= 18; y++) put(21, y, ch); for (const x of [17, 18, 19, 23, 24, 25]) put(x, 12, '#'); };
+  const world = custom(paint('V'));
+  const b = world.bag, lf = b.lifts[0], p = world.player;
+  check('승강기 하나 · 길이 일곱 칸', [b.lifts.length, lf.len / T], [1, 7]);
+  const top = () => coopMod.liftRect(lf).top;
+  check('아래 승강장 발판은 땅과 높이가 같다', top(), 19 * T);
+  setPos(world, 21, 18);
+  tick(world, 60);
+  check('혼자 서 있으면 안 오른다', lf.pos, 0);
+  const o = other(world, 2, 20, 18);
+  const ride = (n, carry = true) => { for (let i = 0; i < n; i++) { if (carry) standAt(world, o, top()); tick(world, 1); } };
+  ride(30);
+  ok('둘이 0.3초 서 있으면 오르기 시작한다', lf.dir === 1 && lf.pos > 0);
+  ride(260);
+  check('위 승강장에 선다', [lf.pos, lf.dir], [lf.len, 0]);
+  check('내 발도 위 승강장 높이', Math.round(world.groundY - p.air), 12 * T);
+  standAt(world, o, 12 * T); moveTo(o, 24.5 * T);   // 둘째가 내려 옆 땅에 섰다
+  ride(150, false);
+  check('누가 아직 타고 있으면 위에서 기다린다', [lf.pos, Math.round(world.groundY - p.air)], [lf.len, 12 * T]);
+  setPos(world, 18, 11);                               // 나도 내려 왼쪽 땅에
+  ride(60, false);
+  check('비고 1초는 그대로', lf.pos, lf.len);
+  ride(300, false);
+  check('비고 1.5초 지나면 아래 승강장으로 내려온다', [lf.pos, lf.dir], [0, 0]);
+  // 오르다 하나가 뛰어내리면 — 도로 내려간다
+  setPos(world, 21, 18); standAt(world, o, top()); moveTo(o, 20.5 * T);
+  ride(60);
+  ok('다시 둘이 오른다', lf.dir === 1 && lf.pos > 0);
+  moveTo(o, 15.5 * T); standAt(world, o, 19 * T);
+  ride(4, false);
+  check('하나가 내리면 아래로 돌아간다', lf.dir, -1);
+  ride(300, false);
+  check('떨어뜨리지 않고 아래 승강장에', [lf.pos, Math.round(world.groundY - p.air), p.dead], [0, 19 * T, false]);
+  // N — 전원
+  const all = custom(paint('N'));
+  const lfN = all.bag.lifts[0];
+  setPos(all, 21, 18); other(all, 2, 20, 18); other(all, 3, 22, 18);
+  tick(all, 60);
+  check('N 은 셋으로는 안 오른다', lfN.pos, 0);
+  other(all, 4, 21, 18); standAt(all, all.mp.others.get(4), 19 * T - 53);   // 넷째는 누구 머리 위가 아니라 — 발판 위여야 한다
+  moveTo(all.mp.others.get(4), 22.2 * T); standAt(all, all.mp.others.get(4), 19 * T);
+  tick(all, 25);
+  ok('넷이 다 타면 오른다', lfN.dir === 1);
+  // 꾸러미
+  const guest = custom(paint('V')); guest.mp.role = 'guest';
+  lf.pos = 100; lf.dir = 1;
+  coop.unpack(guest, coop.pack(world));
+  ok('손님 승강기가 방장 쪽으로 녹아든다', guest.bag.lifts[0].pos > 20 && guest.bag.lifts[0].dir === 1);
+  const solo = custom(paint('V'), { mp: false });
+  setPos(solo, 21, 18); tick(solo, 40);
+  ok('혼자 연습할 때는 혼자 타도 오른다', solo.bag.lifts[0].pos > 0);
+}
+
+say('분기 벨트 — 누름판을 밟는 동안 앞으로, 아니면 회수 쪽으로 · 상자 정차대');
+{
+  const world = custom((put) => { for (let x = 12; x <= 28; x++) put(x, 19, 'J'); put(8, 18, 'p'); });
+  const b = world.bag;
+  b.boxes = [{ x: 20.5 * T, y: 19 * T, vx: 0, vy: 0, weight: 1 }];
+  setPos(world, 34, 18);
+  tick(world, 30);
+  ok('누름판이 비면 왼쪽(회수)으로', b.boxes[0].x < 20.5 * T - 20);
+  const x0 = b.boxes[0].x;
+  setPos(world, 8, 18); tick(world, 30);
+  ok('누름판을 밟는 동안 오른쪽으로', b.boxes[0].x > x0 + 20);
+  ok('사람도 벨트를 탄다', coopMod.beltDir(b, 'J') === 1);
+  // 정차대 — 벨트 끝이 아니라 누름판에서 선다
+  const park = custom((put) => { for (let x = 12; x <= 30; x++) put(x, 19, '>'); put(22, 18, 'q'); for (let y = 16; y <= 18; y++) put(36, y, 'Q'); });
+  park.bag.boxes = [{ x: 14.5 * T, y: 19 * T, vx: 0, vy: 0, weight: 1 }];
+  setPos(park, 5, 18);
+  tick(park, 240);
+  check('벨트가 실어 온 상자가 누름판에 선다', Math.floor(park.bag.boxes[0].x / T), 22);
+  ok('누름판이 눌린 채', park.bag.plates.q);
+  // 밀다가 조금 지나쳐도 누름판 가운데로 자리 잡는다
+  const nudge = custom((put) => { put(20, 18, 'p'); });
+  nudge.bag.boxes = [{ x: 20.5 * T + 15, y: 19 * T, vx: 0, vy: 0, weight: 1 }];
+  setPos(nudge, 5, 18); tick(nudge, 30);
+  ok('누름판 위 상자는 가운데로 자리 잡는다', Math.abs(nudge.bag.boxes[0].x - 20.5 * T) < 2 && nudge.bag.plates.p);
+}
+
+say('신호탑 — 신호탑에 보이는 모양의 버튼을 ⌥↓ 로. 틀리면 신호가 바뀐다');
+{
+  const world = custom((put) => { put(30, 17, 'z'); put(6, 18, 'd'); put(8, 18, 'f'); put(10, 18, 'g'); for (let y = 16; y <= 18; y++) put(14, y, 'Z'); });
+  const b = world.bag;
+  ok('신호는 셋 중 하나', [0, 1, 2].includes(b.signal));
+  b.signal = 1;                                              // 동그라미 → f
+  setPos(world, 6, 18); tick(world, 20);
+  ok('걸어 서 있기만 해서는 안 눌린다', !b.signalOk && b.signal === 1);
+  tick(world, 15, { duck: true });
+  ok('틀린 버튼(세모)을 누르면 안 열리고 신호가 바뀐다', !b.signalOk && b.signal !== 1 && b.signalLock > 0);
+  const changed = b.signal;
+  tick(world, 90, { duck: true });
+  check('누른 채로 기다려도 다시 안 먹는다 (한 번뿐)', [b.signal, b.signalOk], [changed, false]);
+  tick(world, 5);
+  b.signal = 2;                                              // 네모 → g
+  setPos(world, 10, 18); tick(world, 15, { duck: true });
+  ok('맞는 버튼을 누르면 신호문이 열린다', b.signalOk && !coopMod.solidTile(b, 'Z'));
+  const guest = custom((put) => { put(30, 17, 'z'); put(6, 18, 'd'); put(8, 18, 'f'); put(10, 18, 'g'); for (let y = 16; y <= 18; y++) put(14, y, 'Z'); });
+  guest.mp.role = 'guest';
+  coop.unpack(guest, coop.pack(world));
+  ok('신호와 신호문이 손님에게 간다', guest.bag.signal === 2 && guest.bag.signalOk);
+  const fresh = custom((put) => { put(30, 17, 'z'); put(6, 18, 'd'); put(8, 18, 'f'); put(10, 18, 'g'); for (let y = 16; y <= 18; y++) put(14, y, 'Z'); });
+  fresh.bag.signal = 0; guest.bag.signalOk = false;
+  const packed = coop.pack(fresh); packed.sg = 7;
+  coop.unpack(guest, packed);
+  ok('엉뚱한 신호 번호는 버린다', guest.bag.signal === 2);
+}
+
+say('v3.11 — 지금 넷이서 판에는 판 전체 시간 제한이 없다 (박자는 10초 시한문·깜빡이 발판이 준다)');
+{
+  check('시간 제한이 남은 판', STAGES.filter((s) => s.limit).map((s) => s.name), []);
 }
 
 say('대기방 — 인원이 다 안 차면 뜬다 (인원으로 막는 게임에만)');

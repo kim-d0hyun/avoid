@@ -8,7 +8,7 @@
 // **어느 게임인지는 GAME 이 정한다** — 기본은 넷이서(coop), `GAME=trio` 면 셋이서. 명단(IDS)·판 묶음·
 // 풀이 파일이 전부 그 게임에서 나온다. 물리는 둘이 같은 것을 쓴다 (coop.js 의 makeCoop).
 //
-// 걸음(verb)은 solve.py 와 같다: walk jump hop climb boost stairs push ride take switch need_plate rally timer deploy portal box_portal spring.
+// 걸음(verb)은 solve.py 와 같다: walk jump hop climb boost stairs push ride take switch need_plate rally timer deploy lift tower signal choose sync portal box_portal spring.
 
 import './dom-stub.mjs';
 import { readFileSync } from 'node:fs';
@@ -121,7 +121,7 @@ export function walkTo(sim, world, targetX, opts = {}) {
     const dx = targetX - p.x;
     if (Math.abs(dx) < 3 && p.grounded && Math.abs(p.vx) < 40) { p.vx = 0; return null; }
     // 무빙워크 위에서는 가만히 설 수가 없다 — 반 칸 안이면 된 것으로 친다
-    const belt = p.grounded && '<>'.includes(tile(b, col(p.x), Math.floor((fy + 2) / T)));
+    const belt = p.grounded && '<>Jj'.includes(tile(b, col(p.x), Math.floor((fy + 2) / T)));
     if (belt && Math.abs(dx) < T * 0.5) return null;
     const dir = Math.sign(dx);
     let hold = dir, jump = false;
@@ -133,7 +133,10 @@ export function walkTo(sim, world, targetX, opts = {}) {
       if (Math.abs(dx) <= stop + 2) hold = 0;
       if (hold) {
         const ax = p.x + dir * (HALF + 8);
-        const ahead = floorAt(world, ax, fy, true) ?? floorBelow(world, ax, fy + 16, fy + 60, 5, { people: true });   // 조금 낮은 데는 내려선다
+        // 남의 머리 위인가 — 엔진이 알려 주는 것(rideId)과 자리로 본 것 둘 다. 밑 사람이 걷는 중이면 머리가 몇 px 흔들린다.
+        const onHead = p.rideId != null || [...world.mp.others.values()].some((o) => !o.dead && !o.waiting && Math.abs(o.x - p.x) < HALF + 17 && Math.abs((o.groundY - o.air - HEAD) - fy) < 9);
+        // 조금 낮은 데는 내려선다. 남의 머리 위(탑·어깨)에 서 있으면 네 칸 아래 땅까지 — 구멍이 아니라 내려오는 것이다.
+        const ahead = floorAt(world, ax, fy, true) ?? floorBelow(world, ax, fy + 16, fy + (onHead ? 4 * T : 60), 5, { people: true });
         const tAhead = tile(b, col(ax), Math.floor((fy + 2) / T));
         const under = tile(b, col(p.x), Math.floor((fy + 2) / T));
         // 깜빡이는 발판에 발을 들이기 전 — 막 켜졌을 때만 간다 (여덟 칸을 2초 안에)
@@ -158,7 +161,10 @@ export function walkTo(sim, world, targetX, opts = {}) {
           }
         }
         // 낮은 턱 — 목표가 그 너머인데 앞이 막혔고 한 칸 위가 비었으면 뛰어 오른다
-        if (hold && !jump && Math.abs(dx) > HALF + 8 && bodyBlocked(world, p.x + dir * (HALF + 3), fy - 1, BLOCK_H)
+        // 판자 두께만큼의 턱(14px 안)은 엔진이 걸어서 올려 준다 — 뛰지 않는다. 뛰면 턱 너머로 멀리 날아가 깜빡이는 발판에
+        // 켜진 시간 끝자락에 내려앉는다 (삭은 판자 → 땅 턱 → 깜빡이는 다리가 이어진 3층 창고).
+        const ledge = floorBelow(world, p.x + dir * (HALF + 3), fy - 15, fy - 2, HALF - 2, { people: false });
+        if (hold && !jump && Math.abs(dx) > HALF + 8 && ledge === null && bodyBlocked(world, p.x + dir * (HALF + 3), fy - 1, BLOCK_H)
             && !bodyBlocked(world, p.x + dir * (HALF + 3), fy - 1 - T, BLOCK_H)) jump = true;
       }
     }
@@ -287,6 +293,39 @@ export function stackLayout(world, me, dir, n) {
   if (!lay && n === 1) lay = { base: me.x, lean: dir, start: me.x, tower: true };
   return lay ?? null;
 }
+/// 전원 탑의 자리 — 꼭대기 사람이 감지기 칸(topX) 가운데에 서도록 밑 사람 자리(base)를 거꾸로 잡는다.
+/// queue 가 있으면 오를 자리(start) 뒤로 40px 씩 그만큼 줄 설 바닥도 있어야 한다 (동시 봇이 차례로 오르려고 줄을 세운다).
+/// 한쪽이 벽·문에 막히면 반대로 기울여 본다.
+export function towerLayout(world, me, topX, n, queue = 0) {
+  const free = (x, fy) => !bodyBlocked(world, x, fy - 1, BLOCK_H);
+  for (const lean of [1, -1]) for (const shift of [0, 6, -6, 12, -12]) {
+    const base = topX - lean * 14 * (n - 1) + shift, start = base - lean * 44;
+    const room = [...Array(n + 1).keys()].every((k) => free(base + lean * 14 * Math.min(k, n - 1), me.fy - HEAD * k));
+    const line = [...Array(queue).keys()].every((j) => { const x = start - lean * 40 * (j + 1); return floorAt(world, x, me.fy) !== null && free(x, me.fy); });
+    if (room && line && floorAt(world, base, me.fy) !== null && floorAt(world, start, me.fy) !== null && free(start, me.fy)) return { base, lean, start };
+  }
+  return null;
+}
+/// 감지기 i — 내 자리 좌우 한 칸 안, 내 발보다 위.
+export function sensorAbove(b, me) {
+  for (let y = row(me.fy) - 1; y >= 0; y--) for (let x = col(me.x) - 1; x <= col(me.x) + 1; x++) if (tile(b, x, y) === 'i') return { x, y };
+  return null;
+}
+/// 승강기 — 아래 승강장 발판 위(기둥 좌우 한 칸 안)에 선 사람 곁의 것. 탈 자리는 발판 왼쪽부터 34px 씩.
+/// 탈 사람 가운데 누가 아래 승강장 발판에 서 있으면 그 승강기. 없으면 기둥 좌우 한 칸 안에 있는 사람의 것 (남의 머리 위에 서 있어도).
+export function liftFor(b, qs) {
+  qs = Array.isArray(qs) ? qs : [qs];
+  return b.lifts.find((l) => qs.some((q) => Math.abs(col(q.x) - l.x) <= 1 && Math.abs(q.fy - (l.y1 + 1) * T) < 16))
+      ?? b.lifts.find((l) => qs.some((q) => Math.abs(col(q.x) - l.x) <= 1 && q.fy <= (l.y1 + 1) * T + 16 && q.fy >= (l.y1 + 1) * T - 4 * T)) ?? null;
+}
+export const liftSpot = (lf, i) => (lf.x - 1) * T + 21 + 34 * i;
+/// 신호 버튼 — 지금 신호가 가리키는 것.
+export function signalSpot(b) {
+  const ch = coopMod.SIGNAL_TILES[b.signal];
+  for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) if (b.rows[y][x] === ch) return { x, y };
+  return null;
+}
+
 /// 스택의 머리를 차례로 딛고 올라간다. present 개의 머리가 있고, 그중 upto 번째까지 오른다.
 /// 머리 j 에서 다음다음 사람(j+2)이 있으면 그 발에 머리를 찧지 않게 뒤쪽 가장자리(-lean·20)에 선다.
 export function hopChain(sim, world, lay, me, present, upto, finalOffset) {
@@ -371,13 +410,14 @@ export function play(stage, moves, sim) {
           if (fell && bx.vy === 0 && Math.abs(bx.y - y0) > T * 0.9) break;
           if (!fell && Math.abs(bx.x - px(x1)) < 3) break;
           if (TRACE2 && f % 60 === 0) console.log(`        push f${f} box=${bx.x.toFixed(0)} me=${world.player.x.toFixed(0)} pushing=${world.player.pushing} px=${bx.px}`);
-          sim.step(world, { left: dir < 0, right: dir > 0 });
+          // 상자가 떨어지기 시작하면 손을 뗀다 — 계속 밀면 미는 사람도 벼랑 끝을 따라 떨어진다
+          sim.step(world, fell ? {} : { left: dir < 0, right: dir > 0 });
         }
         sim.releaseMates(mates);
         if (!err) {
           // 다 밀고 나서 떨어지기 시작할 수 있다 — 상자가 가만히 있을 때까지 본다
           for (let f = 0, still = 0; f < 180 && still < 6; f++) { sim.step(world, {}); still = bx.vy === 0 && Math.abs(bx.y - (bx.yPrev ?? bx.y)) < 0.01 ? still + 1 : 0; bx.yPrev = bx.y; }
-          const onBelt = '<>'.includes(tile(b, col(bx.x), Math.floor((bx.y + 2) / T)));
+          const onBelt = '<>Jj'.includes(tile(b, col(bx.x), Math.floor((bx.y + 2) / T)));
           if (warped) note(`${box} 가 포탈을 지나 (${col(bx.x)},${Math.round(bx.y / T) - 1}) 에`);
           else if (Math.abs(bx.y - y0) > 2) { fell = true; note(`${box} 가 (${col(bx.x)},${Math.round(bx.y / T) - 1}) 로 떨어졌다`); }
           else if (onBelt) note(`${box} 가 무빙워크에 올랐다 (${col(bx.x)}칸)`);
@@ -414,8 +454,11 @@ export function play(stage, moves, sim) {
         break;
       }
       case 'rally': {
-        for (let f = 0; f < 30 && !b.rally; f++) sim.step(world, {});
-        if (!b.rally) err = `전원 집결판이 안 켜졌다 — ${IDS.map((k) => { const q = sim.at(k); return `${k}:(${col(q.x)},${row(q.fy)})`; }).join(' ')}`;
+        // 지금 1번이 선 집결판 무리가 체크포인트가 됐나 — 판에 집결판 무리가 여럿이면 앞 무리로는 안 된다
+        const q0 = sim.at(IDS[0]), key = coopMod.rallyKey(b, col(q0.x), row(q0.fy));
+        const rallied = () => !!key && b.rallyDone.has(key);
+        for (let f = 0; f < 30 && !rallied(); f++) sim.step(world, {});
+        if (!rallied()) err = `전원 집결판이 안 켜졌다 — ${IDS.map((k) => { const q = sim.at(k); return `${k}:(${col(q.x)},${row(q.fy)})`; }).join(' ')}`;
         break;
       }
       case 'timer': case 'deploy': {
@@ -423,6 +466,57 @@ export function play(stage, moves, sim) {
         const ready = () => verb === 'timer' ? b.timed > 0 : b.ladderOpen;
         for (let f = 0; f < 30 && !ready(); f++) sim.step(world, {});
         if (!ready()) err = `${verb === 'timer' ? '시한 스위치' : '구조 사다리'}가 작동하지 않았다 ${where(world)}`;
+        break;
+      }
+      case 'lift': {
+        // 정원만큼 아래 승강장 발판에 올라서면 승강기가 오른다. 인형은 발판을 따라 옮겨 준다 (sim.carry).
+        const riders = a, lf = liftFor(b, riders.map((k) => sim.at(k)));
+        if (!lf) { err = `${riders[0]}번 곁에 승강기 아래 승강장이 없다 ${where(sim.activate(riders[0]))}`; break; }
+        const order = [...riders].sort((m, n) => sim.at(m).x - sim.at(n).x);
+        for (const k of riders) { err = go(k) ?? walkTo(sim, world, liftSpot(lf, order.indexOf(k)), { frames: 600, noRunup: true }); if (err) break; }
+        if (err) break;
+        sim.carry?.(riders.filter((k) => k !== actor), lf);
+        for (let f = 0; f < 60 * 20 && !(lf.pos >= lf.len && lf.dir === 0); f++) sim.step(world, {});
+        sim.carry?.(null);
+        if (lf.pos < lf.len) err = `승강기가 위 승강장까지 안 올라갔다 — ${Math.round(lf.pos)}/${lf.len}px`;
+        break;
+      }
+      case 'tower': {
+        // 전원 탑 — 밑 사람들이 층층이 서고 who 가 머리를 딛고 꼭대기에 올라 감지기에 닿는다. 켜지면 도로 뛰어내린다.
+        const [who, on] = a;
+        err = go(who); if (err) break;
+        // 탑은 땅에서 쌓는다 — 누가 남의 머리 위에 서 있어도 가장 낮은 발(땅)을 기준으로
+        const me = { x: sim.at(who).x, fy: Math.max(...[who, ...on].map((k) => sim.at(k).fy)) }, sensor = sensorAbove(b, me);
+        if (!sensor) { err = `감지기 i 가 ${who}번 위에 없다 ${where(world)}`; break; }
+        const lay = towerLayout(world, me, (sensor.x + 0.5) * T, on.length);
+        if (!lay) { err = `탑을 세울 자리가 없다 ${where(world)}`; break; }
+        err = sim.stack(on, lay, me); if (err) break;
+        world = sim.activate(who);
+        err = walkTo(sim, world, lay.start, { frames: 300, noRunup: true }) ?? hopChain(sim, world, lay, me, on.length, on.length - 1, 0);
+        if (err) break;
+        for (let f = 0; f < 40 && !b.tower; f++) sim.step(world, {});
+        if (!b.tower) { err = `탑 꼭대기가 감지기 (${sensor.x},${sensor.y}) 에 안 닿았다 ${where(world)}`; break; }
+        err = jumpTo(sim, world, lay.start, me.fy);
+        break;
+      }
+      case 'sync': break;                                   // 동시 봇의 맞춤 지점 — 한 명씩 하는 세상에서는 할 일이 없다
+      case 'signal': {
+        err = go(a[0]); if (err) break;
+        if (!b.signalAt) err = '신호탑 z 가 없다';
+        else if (Math.abs(col(world.player.x) - b.signalAt.x) > 3) err = `${a[0]}번이 신호탑 앞에 없다 ${where(world)}`;
+        break;
+      }
+      case 'choose': {
+        // 신호탑 앞 사람이 말해 준 버튼으로 가서 ⌥↓. 틀리면(신호가 바뀌면) 다시 듣고 다시 누른다.
+        err = go(a[0]); if (err) break;
+        for (let tries = 0; tries < 4 && !b.signalOk && !err; tries++) {
+          const spot = signalSpot(b);
+          err = walkTo(sim, world, px(spot.x), { frames: 400, noRunup: true }); if (err) break;
+          for (let f = 0; f < 30 && !b.signalOk && b.signalLock <= 0; f++) sim.step(world, { duck: true });
+          for (let f = 0; f < 8; f++) sim.step(world, {});
+          for (let f = 0; f < 80 && b.signalLock > 0; f++) sim.step(world, {});
+        }
+        if (!err && !b.signalOk) err = `신호 버튼을 맞게 못 눌렀다 ${where(world)}`;
         break;
       }
       case 'portal': {
@@ -485,6 +579,7 @@ export function play(stage, moves, sim) {
     if (!err) err = sim.settle();
     if (!err) { const d = sim.deadOne(); if (d) err = `${d}번이 가만히 있다가 죽었다 (${(() => { const q = sim.at(d); return `${col(q.x)},${row(q.fy)}`; })()})`; }
     if (TRACE) console.log(`      → ${IDS.map((k) => { const q = sim.at(k); return `${k}:(${col(q.x)},${row(q.fy)})`; }).join(' ')}  ${where(world)}`);
+    if (process.env.TRACE_POS) console.log(`pos ${i + 1} ${verb} ${a.join(' ')} | ${IDS.map((k) => { const q = sim.at(k); return `${k}:${(q.x / T).toFixed(1)},${(q.fy / T).toFixed(2)}`; }).join(' ')} | box ${b.boxes.map((x) => `${(x.x / T).toFixed(2)},${(x.y / T).toFixed(2)}`).join(' ')} | pl ${b.plates.p ? 'p' : ''}${b.plates.q ? 'q' : ''}`);
     if (err) return dump(world, err, i, label);
   }
   // 출구 — 조건이 차고 안에 있는 누가 ⌥↑

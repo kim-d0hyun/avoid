@@ -183,16 +183,19 @@ export function restart(world) {
   // 손을 떼었다 다시 누르지 않아도 바로 달려야 한다.
   const { w, h, best, input, onRecord, onDeath, onMenu, onGameOver,
           mp, menu, screens, gameId, pick, fade, size, spot, optionHide, bare, capture, toast,
-          team, debug, log, send, stage, bagResets, seen, progress, saveProgress } = world;
+          team, debug, log, send, stage, bagResets, seen, progress, saveProgress, screen } = world;
   Object.assign(world, createWorld(best, gameId),
                 { w, h, input, onRecord, onDeath, onMenu, onGameOver,
                   mp, menu, screens, pick, fade, size, spot, optionHide, bare, capture, toast,
-                  team, debug, log, send, stage, bagResets, seen, progress, saveProgress });
+                  team, debug, log, send, stage, bagResets, seen, progress, saveProgress, screen });
   world.state = 'ready';
   // 혼자 할 때도 우승 표시가 남는다 (배구). 안 지우면 세리머니가 다음 판까지 따라와서
   // 사람들이 화면에서 사라진 채로 판이 돈다.
   if (!mp.on) { mp.winner = null; mp.results = null; }
-  resize(world, w, h);
+  // **화면 크기로 되돌린다.** 카메라가 있는 게임(넷이서·셋이서)은 world.w 가 화면이 아니라 판 크기다 —
+  // 그대로 물려받으면 배구로 갈아 끼웠을 때 코트가 판 크기(6000px)가 되어 네트(가운데)가 화면 밖 오른쪽에 그려진다.
+  // 카메라가 있는 게임은 아래 resize 에서 제 판 크기로 다시 덮는다.
+  resize(world, screen?.w ?? w, screen?.h ?? h);
   spread(world);
   gameOf(world).begin?.(world);
 }

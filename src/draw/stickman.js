@@ -13,8 +13,66 @@ const TORSO = 25, NECK = 7, HEAD_R = 9.5;
 const HIP_Y = -(THIGH + SHIN + 1);
 /// 발끝에서 머리 꼭대기까지. 판정 상자가 이 값을 쓴다.
 export const BODY_H = -HIP_Y + TORSO + NECK + HEAD_R * 2;
-/// 내리꽂는 팔이 도는 시간. 게임 쪽(배구)이 p.swing 에 이 값을 넣으면 그 자세가 나온다.
-export const SWING_TIME = 0.3;
+/// 내리치는 팔이 도는 시간 — 휘두름 · 맞댐 · 따라 휘기를 다 합친 길이.
+/// 게임 쪽(배구)이 p.swing 에 이 값을 넣으면 그 자세가 나온다. 다른 게임은 안 넣으니 안 바뀐다.
+export const SWING_TIME = 0.36;
+/// 젖혀 둔 팔이 공까지 내려오는 시간. 두 프레임. 배구는 이 동안 공을 멈춰 둔다(히트스톱) —
+/// 그래야 **손이 공에 닿는 순간과 공이 튀어 나가는 순간이 같다.**
+export const SWING_WHIP = 2 / 60;
+/// 땅에서 받아 올릴 때 두 팔을 머리 위로 밀어 올리는 시간.
+export const TOSS_TIME = 0.22;
+/// 어깨에서 손끝까지.
+export const ARM_LEN = UPPER + FORE;
+/// 맞는 순간 몸이 앞으로 숙는 정도. 게임 쪽이 어깨 자리를 셈할 때 같은 값을 쓴다.
+const LEAN_HIT = 0.32;
+const TAU = Math.PI * 2;
+const EPS = 1e-6;
+
+// 강타 준비 — 활시위를 당긴 모양. 치는 팔은 팔꿈치를 머리 뒤 위로 들고 손을 뒤통수 옆에 두고,
+// 반대 팔은 앞으로 뻗어 공을 겨눈다. 등은 살짝 젖히고 두 다리는 뒤로 접는다.
+const COCK = {
+  lean: -0.16,
+  legs: [[-0.32, -1.60], [0.12, -1.10]],
+  // 치는 팔은 **팔꿈치를 귀 높이로 들고 손을 뒤로 접는다** — 팔꿈치가 안 접혀 있으면
+  // 그냥 팔을 뒤로 늘어뜨린 그림이라 「당겼다」가 안 보이고, 따라서 휘두름도 안 보인다.
+  arms: [[-2.55, -0.95], [2.15, 2.60]],
+};
+// 맞은 뒤. 반대 팔은 옆구리로 끌어내리고(반동), 다리는 앞으로 차올린다 — 몸이 접힌다.
+const OFF_HIT = [0.35, -0.15];
+const KICK_LEGS = [[0.20, -0.55], [0.55, 0.10]];
+// 토스. 두 팔을 머리 위 앞으로.
+const TOSS_ARMS = [[2.62, 2.95], [2.45, 2.85]];
+
+const lerp = (a, b, t) => a + (b - a) * t;
+/// 각도를 짧은 쪽으로 잇는다. 그냥 섞으면 머리 위로 올라가야 할 팔이 발밑을 지나 돈다.
+const wrapPi = (a) => a - TAU * Math.round(a / TAU);
+const lerpAngle = (a, b, t) => a + wrapPi(b - a) * t;
+const mixLimbs = (a, b, t) => a.map((pair, i) => pair.map((v, j) => lerpAngle(v, b[i][j], t)));
+const smooth = (t) => { const k = Math.max(0, Math.min(1, t)); return k * k * (3 - 2 * k); };
+
+/// 몸을 어느 쪽으로 돌려 그리나. 휘두르는 동안은 **때린 쪽**을 본다 — 뒷걸음질하다 쳐도
+/// 팔은 공이 가는 쪽으로 돈다.
+export function faceOf(p, spike = true) {
+  return spike && p.swing > 0 && (p.swingDir === 1 || p.swingDir === -1) ? p.swingDir : p.facing;
+}
+
+/// 맞는 순간의 어깨 자리(판 좌표). 배구가 공을 손끝에 붙일 때 이걸 쓴다.
+export function swingShoulder(p, face = faceOf(p)) {
+  return {
+    x: p.x + face * Math.sin(LEAN_HIT) * TORSO,
+    y: p.groundY - p.air + HIP_Y - Math.cos(LEAN_HIT) * TORSO,
+  };
+}
+
+/// 지금 휘두름의 어느 박자인가. whip(내려오는 중) · contact(공에 닿아 있음) · follow(따라 휘기).
+export function swingPhase(p) {
+  if (!(p.swing > 0)) return null;
+  const u = SWING_TIME - p.swing;
+  const hold = p.swingHold ?? 2 / 60;
+  if (u < SWING_WHIP - EPS) return 'whip';
+  if (u < SWING_WHIP + hold - EPS) return 'contact';
+  return 'follow';
+}
 
 function limb(ox, oy, a1, l1, a2, l2) {
   const jx = ox + Math.sin(a1) * l1;
@@ -30,7 +88,7 @@ function runLegs(ph, run) {
   return [[thigh, thigh - heelUp(ph)], [-thigh, -thigh - heelUp(ph + Math.PI)]];
 }
 
-function pose(p, time) {
+function basePose(p, time, spike = true) {
   const c = p.crouch;
 
   // 이긴 사람. 두 팔을 번쩍 들고 발을 구른다.
@@ -54,31 +112,23 @@ function pose(p, time) {
     };
   }
 
-  // **내리꽂기.** 팔을 머리 뒤로 젖혔다가 공을 때려 내린다.
-  //
-  // 공이 빨라지는 것만으로는 「세게 쳤다」가 안 읽힌다. 치는 사람이 실제로 내려치는
-  // 동작을 해야 맞은 공이 세 보인다 — 0.3초 동안 팔이 위에서 아래로 돈다.
-  if (p.swing > 0) {
-    const t = Math.max(0, Math.min(1, p.swing / SWING_TIME));
-    const e = 1 - t * t;                     // 0 때린 순간 → 1 다 돌아간 뒤
-    const a = -1.65 + e * 2.95;              // 머리 뒤 → 앞 아래
-    return {
-      hipY: HIP_Y, lean: 0.10 + e * 0.46, bob: 0,
-      // 다리는 접어 올린다. 공중에서 상체만 도는 그림은 인형처럼 보인다.
-      legs: [[-0.62, -1.30], [0.40, 0.74]],
-      // 때리는 팔 하나가 크게 돌고, 반대 팔은 그 반동으로 조금만 따라간다.
-      arms: [[a, a + 0.34], [-0.5 - e * 0.9, -0.9 - e * 1.2]],
-    };
-  }
-
   if (p.air > 0.5) {
     // 공중. 앞다리는 접고 뒷다리는 뻗고 팔은 위로 — 떴다는 게 실루엣만으로 읽혀야 한다.
     const rise = Math.max(-1, Math.min(1, (p.vyDraw ?? p.vy) / 420));
-    return {
+    const air = {
       hipY: HIP_Y, lean: 0.06, bob: 0,
       legs: [[-0.70, -1.45], [0.55, 0.85]],
       arms: [[-2.30 - rise * 0.22, -2.75], [-1.90 + rise * 0.18, -2.45]],
     };
+    // 배구 — 공이 가까이 오면 팔을 젖혀 둔다(p.cock, 0~1). 치기 **전**에 준비 자세가 보여야
+    // 휘두름이 휘두름으로 읽힌다. 공과 사람 자리만으로 정해지니 누구 화면에서나 같다.
+    const ck = spike ? (p.cock ?? 0) : 0;   // 웅크리기(c) 와 헷갈리지 않게 따로 이름을 둔다
+    if (ck > 0.001) {
+      air.lean = lerp(air.lean, COCK.lean, ck);
+      air.legs = mixLimbs(air.legs, COCK.legs, ck);
+      air.arms = mixLimbs(air.arms, COCK.arms, ck);
+    }
+    return air;
   }
 
   if (c > 0.05) {
@@ -152,7 +202,112 @@ function pose(p, time) {
   };
 }
 
-/// opts: { name, mine, faded }
+/// spike — **배구에서만 켠다.** 치는 모션(p.swing·p.toss·p.cock)은 이 스위치가 켜져야 나온다.
+/// 졸라맨은 다른 게임도 쓰니, 배구가 남겨 둔 값이 남의 그림에 새어 들면 안 된다 —
+/// 판을 갈아 끼울 때 휘두르던 사람이 다음 게임에서 그 자세로 굳는 일이 실제로 일어난다.
+function pose(p, time, face = faceOf(p), spike = true) {
+  const base = basePose(p, time, spike);
+  if (p.dead || p.cheer || p.waiting || !spike) return base;
+  if (p.swing > 0) return swingPose(p, base, face);
+  if (p.toss > 0) return tossPose(p, base);
+  return base;
+}
+
+/// **내리치기** — 준비 · 휘두름 · 따라 휘기.
+///
+/// 공이 빨라지는 것만으로는 「세게 쳤다」가 안 읽힌다. 치는 사람이 팔을 젖혔다가 공을 향해
+/// 내리쳐야 맞은 공이 세 보인다. 박자는 셋이다:
+///
+///   휘두름   SWING_WHIP (두 프레임)  젖힌 팔이 머리 위를 넘어 **공 쪽으로** 내려온다. 가속하며.
+///   맞댐     p.swingHold             팔을 쭉 뻗어 손끝이 공에 닿아 있다. 이 동안 공은 멈춰 있다.
+///   따라 휘기  나머지                  팔이 앞 아래로 끝까지 돌고, 몸이 접혔다가 원래 자세로 풀린다.
+///
+/// 팔은 정해진 각도로 도는 게 아니라 **공을 겨눈다** (p.aim = [x, y, 반지름]). 공이 머리 위에
+/// 있든 앞에 있든 손끝이 공에 닿는다. 팔 길이가 모자라면 조금(1.35배까지) 늘여 뻗는다.
+function swingPose(p, base, face) {
+  const hold = p.swingHold ?? 2 / 60;
+  const u = SWING_TIME - p.swing;
+  const follow = Math.max(0.05, SWING_TIME - SWING_WHIP - hold);
+
+  // 맞을 때의 어깨에서 공까지. 뒤집힌 공간이라 +x 가 늘 앞(때리는 쪽)이다.
+  const sx = Math.sin(LEAN_HIT) * TORSO;
+  const sy = HIP_Y - Math.cos(LEAN_HIT) * TORSO;
+  let aim = 2.3;                 // 공을 모르면 앞 위
+  let reach = 1;
+  const [ax, ay, ar] = Array.isArray(p.aim) ? p.aim : [];
+  if (Number.isFinite(ax) && Number.isFinite(ay)) {
+    const dx = (ax - p.x) * face - sx;
+    const dy = ay - (p.groundY - p.air) - sy;
+    aim = Math.atan2(dx, dy);
+    reach = Math.max(0.75, Math.min(1.35, (Math.hypot(dx, dy) - (ar ?? 20) * 0.8) / ARM_LEN));
+  }
+  // 젖힌 자리에서 **머리 위를 넘어** 공까지 간다 — 각이 줄어드는 쪽으로만 돈다.
+  let hit = aim;
+  while (hit > COCK.arms[0][0] + 0.9) hit -= TAU;
+  while (hit <= COCK.arms[0][0] + 0.9 - TAU) hit += TAU;
+
+  const airborne = p.air > 0.5;
+  if (u < SWING_WHIP) {
+    const e = (u / SWING_WHIP) ** 2;                 // 가속하며 내려온다
+    return {
+      hipY: HIP_Y, lean: lerp(COCK.lean, LEAN_HIT, e), bob: 0,
+      legs: airborne ? mixLimbs(COCK.legs, KICK_LEGS, e) : base.legs,
+      // 팔꿈치가 먼저 오고 손은 한 박자 늦게 채찍처럼 따라온다.
+      arms: [[lerp(COCK.arms[0][0], hit, e), lerp(COCK.arms[0][1], hit, e ** 1.7)],
+             [lerpAngle(COCK.arms[1][0], OFF_HIT[0], e), lerpAngle(COCK.arms[1][1], OFF_HIT[1], e)]],
+      reach: [lerp(1, reach, e), 1],
+    };
+  }
+  if (u < SWING_WHIP + hold) {
+    return {
+      hipY: HIP_Y, lean: LEAN_HIT, bob: 0,
+      legs: airborne ? KICK_LEGS : base.legs,
+      arms: [[hit, hit], [...OFF_HIT]],
+      reach: [reach, 1],
+    };
+  }
+  // 따라 휘기. 앞쪽 55% 동안 팔이 앞 아래로 끝까지 돌고, 남은 동안 원래 자세로 풀린다.
+  const k = Math.min(1, (u - SWING_WHIP - hold) / follow);
+  const e = 1 - (1 - Math.min(1, k / 0.55)) ** 3;
+  const end = Math.min(hit - 0.5, -TAU + 0.35);      // 앞 아래, 엉덩이 앞
+  const w = smooth((k - 0.55) / 0.45);
+  const upper = lerp(hit, end, e);
+  const fore = lerp(hit, end - 0.35, e);             // 손목이 먼저 꺾여 내려간다
+  return {
+    hipY: lerp(HIP_Y, base.hipY, w), lean: lerp(lerp(LEAN_HIT, 0.55, e), base.lean, w),
+    bob: base.bob * w,
+    legs: airborne ? mixLimbs(KICK_LEGS, base.legs, w) : base.legs,
+    arms: [[lerpAngle(upper, base.arms[0][0], w), lerpAngle(fore, base.arms[0][1], w)],
+           [lerpAngle(OFF_HIT[0], base.arms[1][0], w), lerpAngle(OFF_HIT[1], base.arms[1][1], w)]],
+    reach: [lerp(lerp(reach, 1, e), 1, w), 1],
+  };
+}
+
+/// 받아 올리기(토스). 두 팔을 머리 위로 재빨리 밀어 올렸다가 천천히 내린다. 발끝으로 살짝 선다.
+function tossPose(p, base) {
+  const k = Math.max(0, Math.min(1, (TOSS_TIME - p.toss) / TOSS_TIME));
+  const w = k < 0.22 ? smooth(k / 0.22) : 1 - smooth((k - 0.22) / 0.78);
+  return {
+    ...base,
+    hipY: base.hipY - 3 * w,
+    lean: lerp(base.lean, -0.04, w),
+    arms: mixLimbs(base.arms, TOSS_ARMS, w),
+  };
+}
+
+/// 치는 손(첫째 팔) 끝이 판 어디에 있나. 시험이 「손이 공에 닿았나」를 재는 데 쓴다.
+export function handPoint(p, time = 0) {
+  const face = faceOf(p);
+  const s = pose(p, time, face, true);
+  const hipY = s.hipY + s.bob;
+  const sx = Math.sin(s.lean) * TORSO;
+  const sy = hipY - Math.cos(s.lean) * TORSO;
+  const r = s.reach?.[0] ?? 1;
+  const [, , hand] = limb(sx, sy, s.arms[0][0], UPPER * r, s.arms[0][1], FORE * r);
+  return { x: p.x + hand[0] * face, y: p.groundY - p.air + hand[1] };
+}
+
+/// opts: { name, mine, faded, spike }. spike 는 배구만 켠다 — 게임 쪽에서 figure 로 넣는다.
 export function drawStickman(ctx, p, time, seed, opts = {}) {
   // 다음 판을 기다리는 사람은 **넘어지지 않는다.** 죽은 자세로 그리면 「쟤 죽었네」로
   // 읽히는데, 사실은 다음 판을 기다리며 구경하는 중이다.
@@ -170,11 +325,13 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
     ctx.translate(-p.facing * 18 * ease, -3 * ease);
     ctx.rotate(p.facing * ease * Math.PI * 0.46);
   }
-  ctx.scale(p.facing, 1); // 뒤집힌 공간 안에서는 +x 가 언제나 「앞」이다
+  const spike = !!opts.spike;
+  const face = faceOf(p, spike);
+  ctx.scale(face, 1); // 뒤집힌 공간 안에서는 +x 가 언제나 「앞」이다
   // 몸을 던지면 앞으로 쏠린다. 발이 뒤에 남고 어깨가 앞으로 나간다.
   if (p.slide > 0) ctx.translate(-6, 0);
 
-  const s = pose(p, time);
+  const s = pose(p, time, face, spike);
   const hipY = s.hipY + s.bob;
   const lean = p.dead ? 0.02 : s.lean;
 
@@ -193,7 +350,11 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   // 다리는 왼쪽으로 걷고 팔은 오른쪽으로 뻗어 있어야 붙잡고 있는 것으로 읽힌다.
   // 몸 전체가 facing 으로 이미 뒤집혀 있으므로, 반대쪽을 잡았으면 각도만 뒤집는다.
   const armFlip = p.grabAim && p.grabAim !== p.facing ? -1 : 1;
-  const arm = (i) => limb(shldX, shldY, s.arms[i][0] * armFlip, UPPER, s.arms[i][1] * armFlip, FORE);
+  // 공을 향해 뻗은 팔은 조금 늘어난다(reach). 배구에서 손끝이 공에 닿게 하는 몫이다.
+  const arm = (i) => {
+    const r = s.reach?.[i] ?? 1;
+    return limb(shldX, shldY, s.arms[i][0] * armFlip, UPPER * r, s.arms[i][1] * armFlip, FORE * r);
+  };
   const armA = arm(0);
   const armB = arm(1);
 

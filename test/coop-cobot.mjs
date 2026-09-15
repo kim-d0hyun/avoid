@@ -20,6 +20,7 @@ import {
   w, coop, coopMod, T, DT, IDS, GUESTS, GAME, HALF, BLOCK_H, HEAD, RUN, G, JUMP_V, FRICTION_G, FRICTION_A,
   STAGES, MOVES, WORLD_NAMES, col, row, makeWorld, puppet,
   floorAt, floorBelow, bodyBlocked, trackNear, trackCenterAfter, boxIndex, stackLayout,
+  towerLayout, sensorAbove, liftFor, liftSpot, signalSpot,
 } from './coop-bot.mjs';
 const ink = await import(new URL('../src/draw/ink.js', import.meta.url).href);
 const block = await import(new URL('../src/draw/block.js', import.meta.url).href);
@@ -80,7 +81,7 @@ function* gwalk(world, targetX, opts = {}) {
     if (Math.abs(p.x - lastX) > 3 * T) return; lastX = p.x;
     const fy = world.groundY - p.air, dx = targetX - p.x;
     if (Math.abs(dx) < 3 && p.grounded && Math.abs(p.vx) < 40) return;
-    const belt = p.grounded && '<>'.includes(tile(b, col(p.x), Math.floor((fy + 2) / T)));
+    const belt = p.grounded && '<>Jj'.includes(tile(b, col(p.x), Math.floor((fy + 2) / T)));
     if (belt && Math.abs(dx) < T * 0.5) return;
     const dir = Math.sign(dx); let hold = dir, jump = false;
     if (!p.grounded) { const stop = p.vx * p.vx / (2 * FRICTION_A); hold = Math.abs(dx) > stop + 3 ? dir : 0; }
@@ -91,7 +92,10 @@ function* gwalk(world, targetX, opts = {}) {
         // 왕복 발판 위에서는 「조금 낮은 데로 내려선다」를 안 한다 — 발판이 되돌아가는 중에 물가로 내려서려다 연못에 빠진다.
         // 발판에서 내리는 건 경로의 뛰기(jump) 걸음이 한다.
         const onTrack = !!trackNear(world, p.x, fy);
-        const ahead = floorAt(world, ax, fy, true) ?? (onTrack ? null : floorBelow(world, ax, fy + 16, fy + 60, 5, { people: true }));
+        // 남의 머리 위인가 — 엔진이 알려 주는 것(rideId)과 자리로 본 것 둘 다. 밑 사람이 걷는 중이면 머리가 몇 px 흔들린다.
+        const onHead = p.rideId != null || [...world.mp.others.values()].some((o) => !o.dead && !o.waiting && Math.abs(o.x - p.x) < HALF + 17 && Math.abs((o.groundY - o.air - HEAD) - fy) < 9);
+        // 남의 머리 위(탑·어깨)에 서 있으면 네 칸 아래 땅까지 내려선다 — 구멍이 아니다
+        const ahead = floorAt(world, ax, fy, true) ?? (onTrack ? null : floorBelow(world, ax, fy + 16, fy + (onHead ? 4 * T : 60), 5, { people: true }));
         const tA = tile(b, col(ax), Math.floor((fy + 2) / T)), un = tile(b, col(p.x), Math.floor((fy + 2) / T));
         if (tA === '~' && un !== '~' && !((b.clock % 4) < 0.12)) hold = 0;
         if (hold && ahead === null) {
@@ -100,11 +104,15 @@ function* gwalk(world, targetX, opts = {}) {
           else if (near) hold = 0;
           else { const gap = gapWidth(world, p.x, dir, fy); if (gap > 4) return; if (gap >= 3 && Math.abs(p.vx) < 250 && !opts.noRunup) { yield* gwalk(world, p.x - dir * 1.5 * T, { noRunup: true, frames: 120 }); continue; } jump = true; }
         }
-        if (hold && !jump && Math.abs(dx) > HALF + 8 && bodyBlocked(world, p.x + dir * (HALF + 3), fy - 1, BLOCK_H) && !bodyBlocked(world, p.x + dir * (HALF + 3), fy - 1 - T, BLOCK_H)) jump = true;
+        const ledge = floorBelow(world, p.x + dir * (HALF + 3), fy - 15, fy - 2, HALF - 2, { people: false });   // 14px 턱은 걸어서 오른다
+        if (hold && !jump && Math.abs(dx) > HALF + 8 && ledge === null && bodyBlocked(world, p.x + dir * (HALF + 3), fy - 1, BLOCK_H) && !bodyBlocked(world, p.x + dir * (HALF + 3), fy - 1 - T, BLOCK_H)) jump = true;
         // 동료가 같은 높이에서 바로 앞을 막고 서 있으면(충돌 켠 세상) 뛰어넘는다 — 사람이 하는 대로. 머리에 내려도 그 다음 걸음이 내려선다.
         if (hold && !jump && world.bump !== false && Math.abs(dx) > 2 * HALF + 10) {
-          const blocker = [...world.mp.others.values()].some((o) => !o.dead && !o.waiting && Math.abs((o.groundY - o.air) - fy) < 20 && Math.sign(o.x - p.x) === dir && Math.abs(o.x - p.x) < 2 * HALF + 12);
-          if (blocker) jump = true;
+          // 목표가 그 사람 **너머**일 때만 뛰어넘는다 — 목표가 그 사람 앞이면 뒤에 서면 된다 (앞질러 뛰면 그 너머 벼랑·상자로 떨어진다)
+          const blocker = [...world.mp.others.values()].some((o) => !o.dead && !o.waiting && Math.abs((o.groundY - o.air) - fy) < 20 && Math.sign(o.x - p.x) === dir && Math.abs(o.x - p.x) < 2 * HALF + 12 && (targetX - o.x) * dir > 2 * HALF);
+          // 너머에 딛을 바닥이 있을 때만 뛴다 — 없으면(구멍 · 꺼진 깜빡이 마루) 그 사람이 비킬 때까지 선다.
+          // 깜빡이 마루 앞에서 켜지길 기다리는 동료를 뛰어넘어 꺼진 마루로 떨어진 적이 있다 (셋이서 무도회장, 편도 5프레임).
+          if (blocker) { if (floorAt(world, p.x + dir * (2 * HALF + T), fy) !== null) jump = true; else hold = 0; }
         }
       }
     }
@@ -189,12 +197,14 @@ function* mPush(quad, stage, box, x1, whoList) {
   while (gathering) { const ins = {}; gathering = false; for (const m of whoList) { const r = gens[m].next(); if (!r.done) { ins[m] = r.value || {}; gathering = true; } } yield ins; }
   // 밀기 — 다 같이 그쪽으로. 목표 칸 가운데에 닿거나 지나치면 멈춘다.
   const y0 = bx.y; let lastBx = bx.x, still = 0;
+  let falling = false;
   for (let f = 0; f < 60 * 40; f++) {
-    const ins = {}; for (const m of whoList) ins[m] = { left: dir < 0, right: dir > 0 }; yield ins;
+    const ins = {}; for (const m of whoList) ins[m] = falling ? {} : { left: dir < 0, right: dir > 0 }; yield ins;   // 떨어지기 시작하면 손을 뗀다
+    if (bx.y > y0 + 2) falling = true;
     if (Math.abs(bx.x - lastBx) > 3 * T) break; lastBx = bx.x;                                 // 포탈을 지났다
     if (bx.y > y0 + 2) { if (bx.vy === 0 && ++still > 6) break; else continue; }              // 떨어지는 중 — 앉을 때까지
     if (dir * (bx.x - px(x1)) > -3) break;                                                    // 닿았다
-    if ('<>'.includes(tile(b, col(bx.x), Math.floor((bx.y + 2) / T))) && Math.abs(bx.x - px(x1)) < 6 * T) break;   // 무빙워크에 올렸다 — 알아서 간다
+    if ('<>Jj'.includes(tile(b, col(bx.x), Math.floor((bx.y + 2) / T))) && Math.abs(bx.x - px(x1)) < 6 * T) break;   // 무빙워크에 올렸다 — 알아서 간다
   }
   for (let f = 0; f < 12; f++) yield {};                                                      // 손을 뗀다
 }
@@ -204,6 +214,14 @@ function* gchain(world, lay, me, present, upto, finalOffset) {
     const edge = (j + 2 < present) ? -lay.lean * 20 : (j === upto ? finalOffset : 0);
     yield* gjump(world, lay.base + lay.lean * 14 * j + edge, me.fy - HEAD * (j + 1));
   }
+}
+/// 뛰기·어깨가 목표에 닿았나 — 못 닿았으면 그 자리에서 실패를 적는다. 목표 칸 한 칸 반 안이고, 발이 목표 줄이거나
+/// 그 위 동료 머리(두 사람까지)면 닿은 것이다 (gjump 가 받아 주는 것과 같다). 전엔 조용히 넘어가 한참 뒤에 드러났다.
+function* landed(quad, who, tx, ty, gen) {
+  yield* gen;
+  const q = quad.at(who), t = pfy(ty);
+  if (q.dead || Math.abs(q.x - px(tx)) > 1.6 * T || q.fy > t + 20 || q.fy < t - 2 * HEAD - 8)
+    fail(quad, `${who}번이 (${tx},${ty}) 에 못 닿았다 — (${col(q.x)},${row(q.fy)}) 에 있다`);
 }
 function* mBoost(quad, stage, who, x1, y1, on) {
   const me0 = quad.at(who), dir = Math.sign(px(x1) - me0.x) || 1;
@@ -220,15 +238,105 @@ function* mBoost(quad, stage, who, x1, y1, on) {
   for (let f = 0; f < 6; f++) yield {};
   // 뛰는 사람이 머리를 차례로 딛고 올라가 목표로 뛴다
   yield* one(who, gchain(quad.W(who), lay, me0, on.length, on.length - 1, 0));
-  yield* one(who, gjump(quad.W(who), px(x1), pfy(y1)));
+  yield* landed(quad, who, x1, y1, one(who, gjump(quad.W(who), px(x1), pfy(y1))));
 }
-function* mTake(quad, who, color) { const g = gwalk(quad.W(who), quad.W(who).player.x, { frames: 8 }); for (let f = 0; f < 60 && !quad.host.bag.opened.has(color); f++) yield {}; }
-function* mSwitch(quad) { for (let f = 0; f < 30 && !quad.host.bag.latched; f++) yield {}; }
-function* mNeedPlate(quad, tag) { for (let f = 0; f < 40 && !quad.host.bag.plates[tag]; f++) yield {}; }
-function* mRally(quad) { for (let f = 0; f < 40 && !quad.host.bag.rally; f++) yield {}; }
-function* mTimed(quad) { for (let f = 0; f < 40 && quad.host.bag.timed <= 0; f++) yield {}; }
-function* mDeploy(quad) { for (let f = 0; f < 40 && !quad.host.bag.ladderOpen; f++) yield {}; }
-function* mRide(quad, stage, box, x1) { const bx = quad.host.bag.boxes[boxIndex(stage, box)]; for (let f = 0; f < 900 && Math.abs(bx.x - px(x1)) >= 3; f++) yield {}; }
+// 협동 마디는 **모두의 세상**에 퍼질 때까지 기다린다 — 방장이 켰어도 손님 세상엔 한 왕복 뒤에 온다. 방장만 보고 넘어가면
+// 열쇠를 집은 사람 발밑 색 바닥이 아직 남은 채 다음 걸음이 시작되고, 손님이 아직 닫힌 셔터로 걸어 들어간다.
+// 끝내 안 되면 **그 자리에서 실패**를 적는다 (quad.failed) — 조용히 넘어가면 수천 프레임 뒤 출구에서야 드러났다.
+const fail = (quad, msg) => { quad.failed = quad.failed ?? msg; };   // 프레임 번호는 결과 줄이 붙인다
+const everywhere = (quad, see) => IDS.every((k) => see(quad.W(k).bag));
+function* waitAll(quad, see, frames) { for (let f = 0; f < frames && !everywhere(quad, see); f++) yield {}; }
+function* mTake(quad, who, color) {
+  yield* waitAll(quad, (b) => b.opened.has(color), 120);
+  if (!everywhere(quad, (b) => b.opened.has(color))) return fail(quad, `${color} 열쇠가 모두의 세상에 안 퍼졌다 — ${who}번`);
+  for (let f = 0; f < 90 && !quad.W(who).player.grounded; f++) yield {};   // 발밑이 사라졌으면 떨어져 내려앉을 때까지
+}
+function* mSwitch(quad, who) {
+  yield* waitAll(quad, (b) => b.latched, 90);
+  if (!everywhere(quad, (b) => b.latched)) fail(quad, `스위치가 안 켜졌다 — ${who ?? '?'}번`);
+}
+function* mNeedPlate(quad, tag) {
+  yield* waitAll(quad, (b) => b.plates[tag], 90);
+  if (!everywhere(quad, (b) => b.plates[tag])) fail(quad, `누름판 ${tag} 가 모두의 세상에서 안 눌려 있다`);
+}
+function* mLift(quad, riders) {
+  const b = quad.host.bag, lf = liftFor(b, riders.map((k) => quad.at(k)));
+  if (!lf) return;
+  // 왼쪽에 있는 사람이 왼쪽 자리 — 오르며 서로 길을 막지 않게. 다 같이 걸어 오른다.
+  const order = [...riders].sort((m, n) => quad.at(m).x - quad.at(n).x);
+  const gens = {}; order.forEach((k, i) => { gens[k] = gwalk(quad.W(k), liftSpot(lf, i), { frames: 600, noRunup: true }); });
+  let moving = true;
+  while (moving) { const ins = {}; moving = false; for (const k of riders) { const r = gens[k].next(); if (!r.done) { ins[k] = r.value || {}; moving = true; } } yield ins; }
+  if (process.env.TRACE_LIFT) console.log('\nlift-boarded f' + quad.frames + ' ' + JSON.stringify({ lf: { x: lf.x, pos: lf.pos, dir: lf.dir, t: lf.t }, riders: riders.map((k) => { const q = quad.at(k); return [k, +(q.x / T).toFixed(2), +(q.fy / T).toFixed(2)]; }), hostSees: [...quad.host.mp.others.values()].map((o) => [o.id, +(o.x / T).toFixed(2), +((o.groundY - o.air) / T).toFixed(2)]), top: coopMod.liftRect(lf).top / T, P: quad.host.bag.plates.p }));
+  for (let f = 0; f < 60 * 20 && !(lf.pos >= lf.len && lf.dir === 0); f++) yield {};
+  if (process.env.TRACE_LIFT) console.log('\nlift-done f' + quad.frames + ' pos=' + lf.pos + '/' + lf.len);
+}
+function* mTower(quad, who, on) {
+  // 탑은 땅에서 쌓는다 — 누가 남의 머리 위에 서 있어도(같은 칸을 노린 두 사람) 가장 낮은 발을 기준으로
+  const w0 = quad.W(who), b = quad.host.bag;
+  const me0 = { x: quad.at(who).x, fy: Math.max(...[who, ...on].map((k) => quad.at(k).fy)) }, sensor = sensorAbove(b, me0);
+  if (!sensor) return;
+  const lay = towerLayout(w0, me0, (sensor.x + 0.5) * T, on.length, on.length) ?? towerLayout(w0, me0, (sensor.x + 0.5) * T, on.length);
+  if (!lay) return;
+  const tt = (tag) => { if (process.env.TRACE_TOWER) console.log('\ntower-' + tag + ' f' + quad.frames + ' ' + [...IDS].map((k) => { const q = quad.at(k); return `${k}:${(q.x / T).toFixed(2)},${(q.fy / T).toFixed(2)}`; }).join(' ')); };
+  // 받치는 자리는 누가 맡아도 같다 — 지금 자리 순서대로 나눈다. 기울이는 쪽(lean)으로 가장 앞선 사람이 밑(base),
+  // 그 뒤로 오를 자리(start) 뒤에 한 줄로 서고, 맨 뒤 사람이 꼭대기에 오른다. 서로 앞질러 가지 않으니 사람끼리 부딪히는
+  // 세상에서 누가 누구 머리에 먼저 올라타는 일이 없다. (풀이의 who 는 꼭대기에 오르는 「한 명」이라는 뜻일 뿐이다.)
+  const all = [who, ...on].sort((m, n) => (quad.at(n).x - quad.at(m).x) * lay.lean);
+  const base = all[0], queue = all.slice(1), top = queue[queue.length - 1];
+  const slot = (j) => lay.start - lay.lean * 40 * (j + 1);
+  const roomy = queue.every((k, j) => floorAt(w0, slot(j), me0.fy) !== null && !bodyBlocked(w0, slot(j), me0.fy - 1, BLOCK_H));
+  if (!roomy) return;
+  const gens = { [base]: gwalk(quad.W(base), lay.base, { frames: 600, noRunup: true }) };
+  queue.forEach((k, j) => { gens[k] = gwalk(quad.W(k), slot(j), { frames: 600, noRunup: true }); });
+  let moving = true;
+  while (moving) { const ins = {}; moving = false; for (const k of Object.keys(gens)) { const r = gens[k].next(); if (!r.done) { ins[k] = r.value || {}; moving = true; } } yield ins; }
+  for (let f = 0; f < 10; f++) yield {};
+  tt('queued');
+  // 차례로 — 오를 자리로 걸어 나와 앞 사람들 머리를 딛고 올라선다. 꼭대기 사람은 감지기 칸 가운데에 선다.
+  for (let k = 0; k < queue.length; k++) {
+    const last = k === queue.length - 1;
+    yield* one(queue[k], gwalk(quad.W(queue[k]), lay.start, { frames: 400, noRunup: true }));
+    yield* one(queue[k], gchain(quad.W(queue[k]), lay, me0, k + 1, k, last ? 0 : lay.lean * 14));
+    tt(`stacked${k}`);
+    for (let f = 0; f < 6; f++) yield {};
+  }
+  for (let f = 0; f < 60 && !b.tower; f++) yield {};
+  tt(b.tower ? 'lit' : 'dark');
+  if (!b.tower) return fail(quad, `탑 꼭대기가 감지기 (${sensor.x},${sensor.y}) 에 안 닿았다`);
+  yield* one(top, gjump(quad.W(top), lay.start, me0.fy));
+}
+function* mChoose(quad, who) {
+  const w0 = quad.W(who), b = quad.host.bag;
+  for (let tries = 0; tries < 4 && !b.signalOk; tries++) {
+    const spot = signalSpot(b);
+    yield* one(who, gwalk(w0, px(spot.x), { frames: 400, noRunup: true }));
+    for (let f = 0; f < 40 && !b.signalOk && b.signalLock <= 0; f++) yield { [who]: { duck: true } };
+    for (let f = 0; f < 8; f++) yield {};
+    for (let f = 0; f < 90 && b.signalLock > 0; f++) yield {};
+  }
+  if (!quad.host.bag.signalOk) fail(quad, `신호 버튼을 맞게 못 눌렀다 — ${who}번`);
+}
+function* mRally(quad) {
+  const b = quad.host.bag, q0 = quad.at(IDS[0]), key = coopMod.rallyKey(b, col(q0.x), row(q0.fy));
+  yield* waitAll(quad, (w) => !!key && w.rallyDone.has(key), 120);
+  if (!everywhere(quad, (w) => !!key && w.rallyDone.has(key))) fail(quad, `집결이 모두의 세상에서 안 됐다 — 무리 ${key ?? '없음'}`);
+}
+function* mTimed(quad, who) {
+  yield* waitAll(quad, (b) => b.timed > 0, 90);
+  if (!everywhere(quad, (b) => b.timed > 0)) fail(quad, `시한 스위치가 안 켜졌다 — ${who ?? '?'}번`);
+}
+function* mDeploy(quad, who) {
+  yield* waitAll(quad, (b) => b.ladderOpen, 90);
+  if (!everywhere(quad, (b) => b.ladderOpen)) fail(quad, `구조 사다리가 안 펼쳐졌다 — ${who ?? '?'}번`);
+}
+function* mRide(quad, stage, box, x1) {
+  const b = quad.host.bag, bx = b.boxes[boxIndex(stage, box)];
+  const tr = (tag) => { if (process.env.TRACE_LIFT) console.log(`\nride-${tag} f${quad.frames} box=${(bx.x / T).toFixed(2)},${(bx.y / T).toFixed(2)} vy=${(bx.vy ?? 0).toFixed(0)} p=${b.plates.p} ${IDS.map((k) => { const q = quad.at(k); return `${k}:${(q.x / T).toFixed(1)},${(q.fy / T).toFixed(1)}`; }).join(' ')}`); };
+  tr('start');
+  for (let f = 0; f < 900 && Math.abs(bx.x - px(x1)) >= 3; f++) { if (f % 120 === 60) tr('mid'); yield {}; }
+  tr('end');
+}
 function* mPortalBox(quad, stage, box, tag) { const b = quad.host.bag, bx = b.boxes[boxIndex(stage, box)], to = b.portals[other(tag)]; for (let f = 0; f < 120 && col(bx.x) !== to.x; f++) yield {}; }
 // 포탈을 지나 저편에 내려설 때까지 **프레임을 흘려보내며** 기다린다 (제자리 걷기는 한 프레임도 안 흘려 바로 끝났다 — 그래서 다음 걸음 도중에 옮겨졌다)
 function* mPortal(quad, who, tag) { const b = quad.host.bag, to = b.portals[other(tag)]; for (let f = 0; f < 240 && !(col(quad.W(who).player.x) === to.x && quad.W(who).player.grounded); f++) yield {}; for (let f = 0; f < 4; f++) yield {}; }
@@ -238,18 +346,22 @@ function makeGen(quad, stage, move) {
   const [v, ...a] = move, who = a[0];
   switch (v) {
     case 'walk': return one(who, gwalk(quad.W(who), px(a[1])));
-    case 'jump': return one(who, gjump(quad.W(who), px(a[1]), pfy(a[2])));
+    case 'jump': return landed(quad, who, a[1], a[2], one(who, gjump(quad.W(who), px(a[1]), pfy(a[2]))));
     case 'climb': return one(who, gclimb(quad.W(who), pfy(a[1])));
     case 'hop': return one(who, ghop(quad.W(who), px(a[1])));
     case 'spring': return one(who, gspring(quad.W(who), a[1], a[2]));
     case 'push': return mPush(quad, stage, a[0], a[1], a[2]);
     case 'boost': case 'stairs': return mBoost(quad, stage, a[0], a[1], a[2], a[3]);
     case 'take': return mTake(quad, a[0], a[1]);
-    case 'switch': return mSwitch(quad);
+    case 'switch': return mSwitch(quad, a[0]);
     case 'need_plate': return mNeedPlate(quad, a[0]);
     case 'rally': return mRally(quad);
-    case 'timer': return mTimed(quad);
-    case 'deploy': return mDeploy(quad);
+    case 'lift': return mLift(quad, a);
+    case 'tower': return mTower(quad, a[0], a[1]);
+    case 'signal': case 'sync': return (function* () { yield {}; })();
+    case 'choose': return mChoose(quad, a[0]);
+    case 'timer': return mTimed(quad, a[0]);
+    case 'deploy': return mDeploy(quad, a[0]);
     case 'ride': return mRide(quad, stage, a[0], a[1]);
     case 'box_portal': return mPortalBox(quad, stage, a[0], a[1]);
     case 'portal': return mPortal(quad, a[0], a[1]);
@@ -260,7 +372,10 @@ function actorsOf(m) {
   const [v, ...a] = m;
   if (v === 'boost' || v === 'stairs') return { actors: [a[0], ...a[3]], barrier: true };
   if (v === 'push') return { actors: a[2].slice(), barrier: true };
-  if (v === 'take' || v === 'switch' || v === 'timer' || v === 'deploy') return { actors: [a[0] ?? '1'], barrier: true };
+  if (v === 'take' || v === 'switch' || v === 'timer' || v === 'deploy' || v === 'signal' || v === 'choose') return { actors: [a[0] ?? '1'], barrier: true };
+  if (v === 'lift') return { actors: a.slice(), barrier: true };
+  if (v === 'sync') return { actors: [], barrier: true };
+  if (v === 'tower') return { actors: [a[0], ...a[1]], barrier: true };
   if (v === 'need_plate' || v === 'rally' || v === 'ride' || v === 'box_portal') return { actors: [], barrier: true };
   return { actors: [a[0]], barrier: false };
 }
@@ -274,7 +389,7 @@ function playConcurrent(stage, moves, quad, onFrame) {
     if (moves[i][0] !== 'walk') continue;
     const who = moves[i][1];
     let j = i + 1; while (j < N && moves[j][0] !== 'need_plate' && !meta[j].actors.includes(who)) j++;
-    if (j < N && ['take', 'switch', 'need_plate', 'timer', 'deploy'].includes(moves[j][0])) meta[i] = { ...meta[i], barrier: true };
+    if (j < N && ['take', 'switch', 'need_plate', 'timer', 'deploy', 'choose', 'lift', 'tower'].includes(moves[j][0])) meta[i] = { ...meta[i], barrier: true };
   }
   const running = new Map();          // i → {gen, actors}
   const busy = new Set();
@@ -308,13 +423,14 @@ function playConcurrent(stage, moves, quad, onFrame) {
     const inputs = {};
     for (const [i, task] of [...running]) {
       const r = (task.budget-- > 0) ? task.gen.next() : { done: true };
-      if (r.done) { done[i] = true; task.actors.forEach((p) => busy.delete(p)); running.delete(i); if (process.env.TRACE) console.log('done ', i, moves[i].join(' '), '@', quad.frames); continue; }
+      if (r.done) { done[i] = true; task.actors.forEach((p) => busy.delete(p)); running.delete(i); if (process.env.TRACE) console.log('done ', i, moves[i].join(' '), '@', quad.frames, process.env.TRACE_DONEPOS ? IDS.map((k) => { const q = quad.at(k); return `${k}:${(q.x / T).toFixed(1)},${(q.fy / T).toFixed(1)}`; }).join(' ') : ''); continue; }
       if (process.env.TRACE3 && quad.frames >= +process.env.TRACE3 && quad.frames < +process.env.TRACE3 + 3) console.log(`  f${quad.frames} task ${i} ${moves[i].join(' ')} → ${JSON.stringify(r.value)}`);
       if (process.env.TRACE_TASK && i === +process.env.TRACE_TASK && ((task.n = (task.n ?? 0) + 1) % 40 === 1)) { const who = moves[i][1], q = quad.W(who), pp = q.player; console.log(`  f${quad.frames} task ${i} ${moves[i].join(' ')} → ${JSON.stringify(r.value)} | ${who}: x=${(pp.x / T).toFixed(2)} fy=${((q.groundY - pp.air) / T).toFixed(2)} g=${pp.grounded ? 1 : 0} vx=${pp.vx.toFixed(0)} push=${pp.pushing ? 1 : 0} box=${q.bag.boxes.map((x) => (x.x / T).toFixed(2)).join('/')} others=${[...q.mp.others.values()].map((o) => `${o.id}@${(o.x / T).toFixed(1)}`).join(',')}`); }
       Object.assign(inputs, r.value || {});
     }
     quad.step(inputs);
     if (quad.host.bag.stage === STAGES.indexOf(stage) + 1 || quad.host.ended) return { ok: true };
+    if (quad.failed) return { ok: false, err: quad.failed };
     if (quad.anyDead()) { const who = IDS.filter((k) => quad.at(k).dead); const spots = IDS.map((k) => { const q = quad.at(k); return `${k}:(${col(q.x)},${row(q.fy)})${q.dead ? '†' : ''}`; }).join(' '); const run = [...running.keys()].map((i) => moves[i].join(' ')).join(' | '); return { ok: false, err: `${who.join('·')}번이 죽었다 (프레임 ${quad.frames}) 자리 ${spots} · 하던 것 ${run}` }; }
     if (quad.frames % STEP === 0) onFrame();
   }

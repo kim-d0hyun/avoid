@@ -13,7 +13,8 @@
 // 속도로 사이를 메워 그리고, 어긋난 만큼은 사람한테 쓰는 것과 같은 방식으로 녹인다.
 
 import { INK, RED, PENCIL, stroke, circle, text, PAPER } from '../draw/ink.js';
-import { BODY_H, SWING_TIME } from '../draw/stickman.js';
+import { drawStickman } from '../draw/stickman.js';
+import { BODY_H, SWING_TIME, SWING_WHIP, TOSS_TIME, ARM_LEN, swingShoulder } from '../draw/stickman.js';
 import { startSlide, SLIDE_COOL } from '../game/world.js';
 
 // 편은 옷 색으로 가른다. 번호가 아니라 **보이는 것**으로 갈라야 한 눈에 읽힌다.
@@ -48,7 +49,10 @@ const MIN_UP = 1310 * SLOW;  // 맞으면 적어도 이만큼은 위로. 그보�
 const OFF_CENTER = 44 * SLOW;     // 몸 가운데에서 벗어난 만큼 옆으로 — 대각선은 여기서 나온다
 const CARRY = 0.45;         // 치는 사람이 달리던 속도가 실린다
 const SMASH_SIDE = 1760 * SLOW;   // 방향키를 누르고 때리면
-const SMASH_FLAT = 880 * SLOW;    // 안 누르고 때리면 (수평 미사일)
+// 안 누르고 때리면 (수평 미사일). 원판 비율(880)대로 두었더니 받아 올린 공(MIN_UP 865)보다도
+// 느렸다 — 강타가 토스보다 느리니 「세게 안 나간다」가 맞는 말이었다. 꼭대기에서 치면 받아
+// 올린 공보다 한 뼘 빠르게(960쯤) 되도록 올렸다. 방향키를 누른 강타(SMASH_SIDE)는 그대로다.
+const SMASH_FLAT = 1300 * SLOW;
 /// 내리꽂는 세로 속도. **손보다 아래에 있는 공을 때렸을 때** 여기까지 간다.
 const SMASH_DIVE = 2350 * SLOW;     // ⌥↓ 를 누르고 때리면 아래로 이 배수
 const SMASH_UP = 1.6;       // ⌥↑ 를 누르고 때리면 위로 (넘겨 주기)
@@ -75,6 +79,50 @@ const NET_H = 95;
 const SERVE_UP = 900 * SLOW;
 const WIN_AT = 5;
 const RESET_WAIT = 1.1;     // 점수 난 뒤 다음 서브까지
+
+// ── 스파이크의 손맛 ────────────────────────────────────────────────────────
+//
+// 공만 빨갛게 번쩍이고 끝나면 세게 쳤다는 게 안 읽힌다 — 실제로 그런 말을 들었다. 그래서 치는
+// 순간을 **멈추고, 흔들고, 흩뿌리고, 늘여서** 보인다. 전부 한 번의 타격에 묶여 있다.
+//
+//   히트스톱  젖힌 팔이 공까지 오는 두 프레임 + 맞은 채 붙들어 두는 두 프레임(정타는 세 프레임).
+//             공이 그만큼 멈췄다가 튀어 나간다. **손이 공에 닿는 순간 = 공이 떠나는 순간.**
+//   흔들림    world.shake (죽을 때가 1, 흔들림 폭은 제곱×9px). 강타 0.45 → 2px, 정타 0.8 → 6px,
+//             달아오른 공이 바닥에 꽂히면 한 번 더.
+//   잔상      달아오른 공(hot) 뒤로 속도선 셋. 빠른 공은 가는 쪽으로 늘어나 그려진다.
+//   탑스핀    달아오른 강타는 중력의 0.45배만큼 더 빨리 떨어진다 — 앞으로 도는 공이 꺾여 꽂히는 모양.
+//
+// **정타** — 점프 꼭대기(발이 52px 넘게 떴을 때)에서, 공 가운데가 손끝 36px 안에 있을 때 친 강타.
+// 1.25배 세고 상한도 1.2배로 풀리고, 달아오른 동안 공기 저항을 안 받는다. 「쾅!」이 뜬다.
+// 외우는 키가 아니라 **뛰는 때와 공을 맞추는 일**이고, 받는 쪽은 여전히 몸으로 받으면 받힌다 —
+// 몸에 맞은 공은 속도와 상관없이 MAX_UP 까지만 떠오른다(bounceOff). 받아 내면 「받았다!」가 뜬다.
+const JUMP_TOP = 65;          // world.js 의 점프(480 px/s, 중력 1760)가 올라가는 높이
+const HIT_WHIP = SWING_WHIP;  // 팔이 공까지 오는 동안에도 공은 멈춰 있다
+const HIT_HOLD = 2 / 60;      // 맞은 채 붙들어 두는 시간
+const ACE_HOLD = 3 / 60;
+const APEX_AIR = 52;          // JUMP_TOP 의 8할. 꼭대기 앞뒤 0.12초씩, 0.25초 창이다 (점프는 0.55초)
+/// 손끝(발에서 BODY_H×0.86)에서 공 가운데까지. **36 으로 뒀더니 정타가 한 번도 안 나왔다** —
+/// 몸이 세로로 긴 알약이라 공이 손에서 38px 까지밖에 못 다가온다. 그 안쪽은 치기 전에 몸에
+/// 먼저 맞아 도로 떠오르는 자리다. 52 면 「손 닿고 몸엔 안 닿는」 자리의 16% 가 정타 칸이다
+/// (3726칸 중 603칸, test/volley.mjs 가 이 숫자를 지킨다).
+const SWEET_R = 52;
+const ACE_POWER = 1.25;
+const ACE_CAP = MAX_SPEED * 1.2;
+const HOT_TIME = 0.7;         // 강타가 달아오른 채 가는 시간. 몸·벽·네트·바닥에 닿으면 식는다
+const TOPSPIN = GRAVITY * 0.45;
+const HOT_DRAG = 0.4;         // 보통 강타는 공기 저항을 4할만 받는다. 정타는 안 받는다
+/// 친 사람 몸은 잠깐 공을 안 받는다. 머리 위 공을 내리꽂으면 공이 제 몸을 지나가는데,
+/// 그 프레임에 몸에 맞아 도로 떠올라서 **강타가 토스가 됐다** (vy +1700 → -811, 시험에 남겼다).
+const SELF_SKIP = 0.25;
+const STOP_EPS = 1e-6;
+const SHAKE_HIT = 0.45;
+const SHAKE_ACE = 0.8;
+const SHAKE_SLAM = 0.5;
+const SHAKE_SLAM_ACE = 0.85;
+/// 공중에서 공이 이만큼 가까워지면 팔을 젖힌다(준비 자세). 멀면 0, 가까우면 1.
+const COCK_NEAR = 110;
+const COCK_FAR = 230;
+const FX_MAX = 24;
 
 // 편 가르기.
 //
@@ -143,8 +191,16 @@ function serve(world, toSide) {
   b.ball.vy = -Math.min(MAX_UP, SERVE_UP);
   b.ball.spin = 0;
   b.ball.spinV = (Math.random() - 0.5) * 2;
+  cool(b.ball);
+  b.ball.skip = null; b.ball.skipT = 0; b.ball.gT = 0;
+  b.stop = 0;
   b.tail = [];
   b.wait = RESET_WAIT;
+}
+
+/// 달아오른 강타를 식힌다. 몸·벽·네트·바닥·서브 — 무엇이든 한 번 닿으면 보통 공이다.
+function cool(ball) {
+  ball.hot = 0; ball.ace = false; ball.topspin = false;
 }
 
 /// 공이 사람 몸에 닿았나. 몸은 세로로 긴 알약이라 가로·세로를 따로 본다.
@@ -185,21 +241,35 @@ function bounceOff(ball, p) {
 ///
 /// 공이 방장 것이라 손님이 자기 화면에서 공을 밀어 봐야 다음 꾸러미에 덮인다.
 /// 그래서 손님은 「내가 여기서 이렇게 쳤다」를 보내고, 방장이 그 값으로 이 함수를 부른다.
-function applyHit(world, at, want) {
+/// 손님 화면에서도 부르지만 **공은 안 건드리고** 손맛(번쩍임·파편·흔들림)만 먼저 보인다.
+///
+/// 돌려주는 것: 못 쳤으면 null, 쳤으면 { kind, ace, face, hold, stop, x, y, smash }.
+///   kind  0 토스(땅) · 1 강타 · 2 정타      face  몸을 돌려 칠 쪽(±1)
+///   hold  맞댄 채 붙드는 시간                stop  공이 멈춰 있는 시간 = 휘두름 + hold
+///   x, y  손끝이 공에 닿은 자리
+function applyHit(world, at, want, body = null, who = -1) {
   const b = world.bag;
   const ball = b.ball;
+  // 이미 누가 치고 있다(히트스톱 중). 멈춘 공을 둘이 동시에 치면 누구 것도 아니게 된다.
+  if (b.stop > STOP_EPS) return null;
   const dx = ball.x - at.x;
   const dy = ball.y - (at.groundY - at.air - BODY_H * 0.7);
-  if (dx * dx + dy * dy > SPIKE_REACH * SPIKE_REACH) return false;
+  if (dx * dx + dy * dy > SPIKE_REACH * SPIKE_REACH) return null;
 
   const away = at.side === 1 ? -1 : 1;             // 상대 코트 쪽
   const held = want.held | 0;
+  let vx;
+  let vy;
+  let kind = 0;
+  let ace = false;
+  let lob = false;
+  let smash = 0;
   if (at.air <= 12) {
     // 토스. 위로 올려 주고 옆으로는 살짝만.
-    ball.vx = clamp(dx * OFF_CENTER * 0.6 + held * 240, MAX_SPEED);
+    vx = clamp(dx * OFF_CENTER * 0.6 + held * 240, MAX_SPEED);
     // 받아 올릴 때마다 조금씩 죽인다. 1에 가까우면 랠리가 돌수록 공이 빨라져서
     // 나중에는 아무도 못 받는다 — 원판도 여기서 조금 깎는다.
-    ball.vy = -Math.min(MAX_UP, Math.max(Math.abs(ball.vy), MIN_UP) * 0.90);
+    vy = -Math.min(MAX_UP, Math.max(Math.abs(ball.vy), MIN_UP) * 0.90);
   } else {
     // 공중 강타. **손보다 공이 아래에 있으면 꽂는다.**
     //
@@ -215,38 +285,96 @@ function applyHit(world, at, want) {
     const under = (ball.y - hand) / (BODY_H * 0.55);
     const dive = want.down ? 1 : want.up ? 0 : Math.max(0, Math.min(1, under));
     // 높이 뜰수록 세다. 뛰자마자 치는 것과 꼭대기에서 치는 것이 같으면 점프에 뜻이 없다.
-    const lift = 0.78 + 0.34 * Math.min(1, at.air / 120);
+    // (예전엔 120 으로 나눴는데 점프가 65 까지밖에 안 올라가서 끝까지 못 썼다.)
+    const lift = 0.78 + 0.34 * Math.min(1, at.air / JUMP_TOP);
+    lob = !!want.up && !want.down;
+    // 정타 — 꼭대기에서, 손끝으로.
+    ace = !lob && at.air >= APEX_AIR && Math.hypot(ball.x - at.x, ball.y - hand) <= SWEET_R;
+    const power = ace ? ACE_POWER : 1;
+    const cap = ace ? ACE_CAP : MAX_SPEED;
     const side = held !== 0 ? held : away;
     // 가파르게 꽂을수록 가로로는 덜 간다. 힘의 총량은 그대로 두고 방향만 아래로 돌린다.
-    ball.vx = clamp(side * (held !== 0 ? SMASH_SIDE : SMASH_FLAT) * lift * (1 - 0.32 * dive),
-                    MAX_SPEED);
-    if (dive > 0.02) ball.vy = clamp(SMASH_DIVE * dive * lift, MAX_SPEED);
-    else if (want.up) ball.vy = -Math.min(MAX_UP, Math.abs(ball.vy) * SMASH_UP);
-    else ball.vy = 0;                              // 수평 미사일
-    ball.vy = clamp(ball.vy, MAX_SPEED);
+    vx = clamp(side * (held !== 0 ? SMASH_SIDE : SMASH_FLAT) * lift * (1 - 0.32 * dive) * power, cap);
+    if (dive > 0.02) vy = clamp(SMASH_DIVE * dive * lift * power, cap);
+    else if (want.up) vy = -Math.min(MAX_UP, Math.abs(ball.vy) * SMASH_UP);
+    else vy = 0;                                   // 수평 미사일
     // 번쩍임 세기. 가파르게 꽂을수록 크게 터진다.
-    ball.smash = Math.max(0.4, dive);
+    smash = Math.max(0.4, dive);
+    kind = ace ? 2 : 1;
   }
-  ball.spinV = clamp(ball.vx * 0.006, 12);
-  ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y;
-  // 손님 화면에도 같은 번쩍임과 같은 내리치는 팔이 보여야 한다. 다음 꾸러미에 실어 보낸다.
-  b.flash = [Math.round(ball.x), Math.round(ball.y), Math.round((ball.smash ?? 0) * 100) / 100];
-  return true;
+
+  const dir = Math.sign(vx) || away;
+  const hold = kind === 0 ? 0 : ace ? ACE_HOLD : HIT_HOLD;
+  const stop = kind === 0 ? 0 : HIT_WHIP + hold;
+  // 몸을 어느 쪽으로 돌려 치나 — 공이 가는 쪽. 다만 공이 등 뒤 낮은 데 있으면 공 쪽을 본다
+  // (그 자리를 앞으로 휘둘러 치려면 팔이 한 바퀴를 돌아야 한다).
+  let face = dir;
+  let hx = ball.x;
+  let hy = ball.y;
+  if (kind > 0) {
+    if ((ball.x - at.x) * dir < -10 && ball.y > swingShoulder(at, dir).y - 10) face = -dir;
+    // **공을 손끝으로.** 치는 거리(88)는 팔이 닿는 거리(팔 22 + 공 20)보다 넉넉하다 — 봐주는 몫이다.
+    // 그 틈을 그대로 두면 팔이 허공을 치고 공이 혼자 날아간다. 팔은 1.3배까지 뻗고, 남는 틈은
+    // 공이 손으로 온다. 공이 멈춰 있는 두 프레임 동안 미끄러져 오므로 순간이동으로 안 보인다.
+    const s = swingShoulder(at, face);
+    const gx = ball.x - s.x;
+    const gy = ball.y - s.y;
+    const far = Math.hypot(gx, gy);
+    const keep = ARM_LEN * 1.3 + BALL_R * 0.8;
+    if (far > keep) { hx = s.x + gx / far * keep; hy = s.y + gy / far * keep; }
+  }
+  const info = { kind, ace, face, hold, stop, x: hx, y: hy, smash };
+
+  if (world.mp.role !== 'guest') {
+    ball.vx = vx;
+    ball.vy = vy;
+    ball.spinV = clamp(vx * 0.006, 12);
+    ball.smash = smash;
+    if (kind > 0) {
+      ball.gx = ball.x - hx; ball.gy = ball.y - hy; ball.gT = HIT_WHIP;
+      ball.x = hx; ball.y = hy;
+      b.stop = stop; b.stopHold = hold;
+      // 넘겨 주기(⌥↑)는 강타가 아니다 — 달아오르지 않는다.
+      if (lob) cool(ball);
+      else { ball.hot = HOT_TIME; ball.ace = ace; ball.topspin = true; }
+    } else {
+      cool(ball);
+    }
+    // 친 사람 몸은 잠깐 공을 안 받는다 (SELF_SKIP).
+    ball.skip = body; ball.skipT = body ? SELF_SKIP : 0;
+    // 손님 화면에도 같은 순간에 같은 팔과 같은 번쩍임이 보여야 한다. 다음 꾸러미에 실어 보낸다.
+    //   [x, y, 세기, 친 사람 번호, 종류, 몸 방향, 멈춤 시간] — 앞의 셋은 옛 모양 그대로다.
+    b.flash = [Math.round(hx), Math.round(hy), Math.round(smash * 100) / 100,
+               Number.isFinite(who) ? who : -1, kind, face, Math.round(stop * 1000) / 1000];
+  }
+  spawnHit(world, info);
+  return info;
 }
 
-/// 때린 사람에게 내리치는 팔을 잠깐 남긴다. 꾸러미에는 「어디서 터졌나」만 오므로
-/// 그 자리에 떠 있던 사람을 찾아 붙인다 — 번호를 따로 실어 보낼 만큼 중요한 값이 아니다.
-function markSwing(world, x, y) {
+/// 친 사람에게 동작을 건다. 강타는 내리치는 팔(p.swing), 토스는 밀어 올리는 두 팔(p.toss).
+/// late — 이미 이만큼 지난 뒤에 알게 됐다(손님이 꾸러미로 받을 때). 그만큼 앞선 박자에서 시작한다.
+function startSwing(p, info, late = 0) {
+  if (!p) return;
+  if (info.kind === 0) { p.toss = Math.max(0, TOSS_TIME - late); return; }
+  p.swing = Math.max(0.001, SWING_TIME - late);
+  p.swingDir = info.face;
+  p.swingHold = info.hold;
+  p.aim = [info.x, info.y, BALL_R];
+  p.cock = 1;
+}
+
+/// 옛 모양 꾸러미(번호 없이 [x, y, 세기])를 받았을 때 — 그 자리에 떠 있던 사람을 찾아 붙인다.
+function nearestHitter(world, x, y, airborne) {
   let best = null;
   let near = 130 * 130;
   for (const p of [world.player, ...world.mp.others.values()]) {
-    if (p.dead || (p.air ?? 0) <= 8) continue;
+    if (p.dead || (airborne && (p.air ?? 0) <= 8)) continue;
     const dx = p.x - x;
     const dy = (p.groundY - p.air - BODY_H * 0.7) - y;
     const gap = dx * dx + dy * dy;
     if (gap < near) { near = gap; best = p; }
   }
-  if (best) best.swing = SWING_TIME;
+  return best;
 }
 
 /// ⌥Space — 때리기.
@@ -287,11 +415,11 @@ export function spike(world) {
   // 손님은 방장에게 부탁한다. 내 화면에서도 바로 반응은 보여 주되(손맛),
   // 진짜로 정하는 건 방장이다 — 곧 오는 꾸러미가 이 값을 덮는다.
   if (world.mp.role === 'guest') world.send?.({ t: 'gm', k: 'hit', at, want });
-  const hit = applyHit(world, at, want);
+  const hit = applyHit(world, at, want, p, world.mp.myId);
   // 손님은 공을 못 건드리지만 **팔은 바로 돈다.** 내 손이 0.1초 늦게 움직이면
   // 내가 친 게 아니라 화면이 친 것처럼 느껴진다.
-  if (hit && p.air > 0) p.swing = SWING_TIME;
-  return hit;
+  if (hit) { startSwing(p, hit); b.mineAt = 0; }
+  return !!hit;
 }
 
 /// 지나온 자리를 몇 개 남긴다. 빠른 공이 빨라 보이려면 잔상이 있어야 한다 —
@@ -318,13 +446,208 @@ function report(world, b, dt) {
     + ` v=${Math.round(Math.hypot(b.ball.vx, b.ball.vy))} 점수=${b.score.join(':')}`);
 }
 
-/// 맞은 자국·강타 번쩍임·내리치는 팔이 시간에 따라 사그라든다.
-function ball0(world, b, dt) {
-  b.ball.hit = Math.max(0, (b.ball.hit ?? 0) - dt * 4);
-  b.ball.smash = Math.max(0, (b.ball.smash ?? 0) - dt * 2.2);
-  // 팔 도는 시간은 world 가 모르는 값이라 여기서 줄인다.
+/// 맞은 자국·강타 번쩍임·팔 동작·파편이 시간에 따라 사그라든다. 판이 안 돌 때도 돈다 —
+/// 안 그러면 마지막 점수를 낸 강타의 파편이 끝난 판 위에 얼어붙는다.
+function visuals(world, b, dt) {
+  const ball = b.ball;
+  ball.hit = Math.max(0, (ball.hit ?? 0) - dt * 4);
+  ball.smash = Math.max(0, (ball.smash ?? 0) - dt * 2.2);
+  ball.gT = Math.max(0, (ball.gT ?? 0) - dt);
+  // 내가 마지막으로 친 뒤 흐른 시간. 방장이 「네가 쳤다」고 알려 와도 두 번 안 터뜨리려고 센다.
+  b.mineAt = Math.min(9, (b.mineAt ?? 9) + dt);
+  // 팔 도는 시간은 world 가 모르는 값이라 여기서 줄인다. **공이 멈춰 있는 시간(b.stop)과 같은
+  // 프레임에 같은 만큼 줄여야** 손이 공에서 떨어지는 순간과 공이 튀어 나가는 순간이 맞는다.
   for (const p of [world.player, ...world.mp.others.values()]) {
     if (p.swing > 0) p.swing = Math.max(0, p.swing - dt);
+    if (p.toss > 0) p.toss = Math.max(0, p.toss - dt);
+  }
+  stepFx(world, b, dt);
+}
+
+/// 팔을 공에 맞춘다 — 휘두르는 사람은 공을 겨누고, 공중에서 공이 다가오는 사람은 팔을 젖힌다.
+///
+/// 젖힌 팔(p.cock)은 따로 주고받지 않는다. **공 자리와 사람 자리만으로 정해져서** 누구 화면에서
+/// 셈해도 같은 사람이 같은 때에 팔을 젖힌다.
+function arms(world, b, dt) {
+  const [bx, by] = shownBall(b);
+  const live = world.state === 'play' && !(b.wait > 0);
+  for (const p of [world.player, ...world.mp.others.values()]) {
+    // 휘두르는 중에는 젖힌 자세를 푼다 — 따라 휘기가 끝나면 그냥 공중 자세로 돌아가야 한다.
+    // **겨눈 자리(p.aim)는 맞은 자리에 굳혀 둔다.** 날아가는 공을 계속 겨누게 두면 이미 때린
+    // 팔이 공을 쫓아 홱 돌아간다 — 따라 휘기가 따라 휘기로 안 보인다.
+    let want = 0;
+    if (!(p.swing > 0) && live && !p.dead && !p.waiting && (p.air ?? 0) > 6) {
+      const near = Math.hypot(bx - p.x, by - (p.groundY - p.air - BODY_H * 0.7));
+      want = Math.max(0, Math.min(1, (COCK_FAR - near) / (COCK_FAR - COCK_NEAR)));
+    }
+    p.cock = (p.cock ?? 0) + (want - (p.cock ?? 0)) * Math.min(1, dt * 14);
+    if (p.cock < 0.002) p.cock = 0;
+  }
+}
+
+/// 공이 그려지는 자리. 방장 화면에서는 손끝으로 옮겨 붙인 공이 휘두름 두 프레임에 걸쳐
+/// 미끄러져 온다(손님은 꾸러미 오차를 녹이는 것으로 같은 일이 된다).
+function shownBall(b) {
+  const k = (b.ball.gT ?? 0) > 0 ? (b.ball.gT / HIT_WHIP) ** 2 : 0;
+  return [b.ball.x + (b.ball.gx ?? 0) * k, b.ball.y + (b.ball.gy ?? 0) * k];
+}
+
+// ── 타격 자국 ──────────────────────────────────────────────────────────────
+//
+// 파편·먼지·글자는 **화면마다 따로** 굴린다. 방장이 알려 주는 건 「언제 어디서 무엇이」뿐이고,
+// 파편 하나하나가 어디로 튀는지는 화면마다 달라도 아무도 모른다. 꾸러미를 무겁게 할 이유가 없다.
+
+/// 강타 자국. 손이 공에 닿는 순간(휘두름 두 프레임 뒤)에 터진다 — 누르는 순간에 터지면
+/// 팔이 아직 머리 뒤에 있는데 공이 먼저 터진다.
+function spawnHit(world, info, late = 0) {
+  const b = world.bag;
+  if (info.kind === 0) {
+    b.ball.hit = 1; b.ball.hitX = info.x; b.ball.hitY = info.y;
+    return;
+  }
+  const ace = info.kind === 2;
+  const bits = [];
+  const n = ace ? 12 : 8;
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = (ace ? 200 : 150) + Math.random() * (ace ? 240 : 150);
+    // 공이 가는 쪽으로 조금 더 쏠린다.
+    bits.push({ x: 0, y: 0, vx: Math.cos(a) * sp + info.face * 140, vy: Math.sin(a) * sp - 90,
+                len: 5 + Math.random() * 7, seed: 150 + i });
+  }
+  addFx(b, { k: 'hit', x: info.x, y: info.y, t: late - HIT_WHIP, life: ace ? 0.62 : 0.45,
+             ace, face: info.face, bits, shake: ace ? SHAKE_ACE : SHAKE_HIT, word: ace ? '쾅!' : null });
+}
+
+/// 달아오른 강타가 바닥에 꽂혔다. 먼지가 양옆으로 일고 바닥에 금이 간다.
+function spawnSlam(world, x, ace) {
+  const b = world.bag;
+  netEvent(world, [1, Math.round(x), 0, ace ? 1 : 0]);
+  const puffs = [];
+  const n = ace ? 10 : 7;
+  for (let i = 0; i < n; i++) {
+    const side = i % 2 ? 1 : -1;
+    puffs.push({ x: 0, y: 0, vx: side * (90 + Math.random() * (ace ? 260 : 170)),
+                 vy: -(20 + Math.random() * 70), r: 5 + Math.random() * 5, seed: 170 + i });
+  }
+  const cracks = [];
+  for (let i = 0; i < (ace ? 5 : 3); i++) {
+    const a = (i / (ace ? 4 : 2) - 0.5) * 2.2 + (Math.random() - 0.5) * 0.3;
+    cracks.push({ a, len: 14 + Math.random() * (ace ? 22 : 12), seed: 190 + i });
+  }
+  addFx(b, { k: 'slam', x, y: world.groundY, t: 0, life: 0.65, ace, bits: puffs, cracks,
+             shake: ace ? SHAKE_SLAM_ACE : SHAKE_SLAM, word: ace ? '쿵!' : null });
+}
+
+/// 달아오른 강타를 몸으로 받아 냈다. 받는 쪽도 칭찬을 받아야 한다.
+function spawnDig(world, x, y) {
+  netEvent(world, [2, Math.round(x), Math.round(y), 0]);
+  addFx(world.bag, { k: 'dig', x, y, t: 0, life: 0.55, word: '받았다!' });
+}
+
+/// 남의 화면에서도 같은 자국이 터지게 한 줄 남겨 둔다. 파편 하나하나가 어디로 튀는지는
+/// 화면마다 달라도 되지만 **언제 어디서 터졌나**는 같아야 한다. pack 이 한 번만 싣고 비운다.
+function netEvent(world, ev) {
+  if (world.mp.role === 'guest') return;       // 손님은 받기만 한다
+  const b = world.bag;
+  (b.events ??= []).push(ev);
+  if (b.events.length > 8) b.events.splice(0, b.events.length - 8);
+}
+
+function addFx(b, fx) {
+  b.fx ??= [];
+  b.fx.push(fx);
+  if (b.fx.length > FX_MAX) b.fx.splice(0, b.fx.length - FX_MAX);
+}
+
+function stepFx(world, b, dt) {
+  if (!b.fx?.length) return;
+  for (const f of b.fx) {
+    const was = f.t;
+    f.t += dt;
+    if (f.t < 0) continue;
+    if (f.shake && !f.shook) { world.shake = Math.max(world.shake ?? 0, f.shake); f.shook = true; }
+    const step = was < 0 ? f.t : dt;
+    const fall = f.k === 'slam' ? 120 : 900;           // 먼지는 거의 안 떨어진다
+    const drag = Math.exp(-step * (f.k === 'slam' ? 4.5 : 2.2));
+    for (const s of f.bits ?? []) {
+      s.vx *= drag; s.vy = s.vy * drag + fall * step;
+      s.x += s.vx * step; s.y += s.vy * step;
+    }
+  }
+  b.fx = b.fx.filter((f) => f.t < f.life);
+}
+
+/// 뒤에 깔리는 자국(고리·파편·먼지·금)과 위에 뜨는 글자를 따로 그린다.
+function drawFx(ctx, b, upright, front) {
+  for (const f of b.fx ?? []) {
+    if (f.t < 0) continue;
+    const g = Math.min(1, f.t / f.life);
+    const fade = 1 - g;
+    if (front) {
+      if (!f.word) continue;
+      // 톡 튀어나왔다가(0.08초) 떠오르며 옅어진다.
+      const pop = 1 + 0.55 * Math.max(0, 1 - f.t / 0.08);
+      const size = Math.round((f.k === 'dig' ? 14 : f.ace ? 22 : 17) * pop);
+      const y = f.y - (f.k === 'slam' ? 30 : 34) - 20 * (1 - (1 - g) ** 2);
+      const color = f.k === 'dig' ? INK : RED;
+      upright(f.x, y, () => text(ctx, f.word, f.x, y, {
+        font: `900 ${size}px ${HAN}`, color, align: 'center', halo: 4, alpha: Math.min(1, fade * 1.8),
+      }));
+      continue;
+    }
+    upright(f.x, f.y, () => {
+      if (f.k === 'hit') {
+        const e = 1 - (1 - g) ** 2;
+        circle(ctx, f.x, f.y, BALL_R * (1 + e * (f.ace ? 1.5 : 1.0)), {
+          width: 1 + 2.4 * fade, color: f.ace ? RED : INK, seed: 77, amp: 1.4, halo: false, alpha: 0.9 * fade,
+        });
+        if (f.ace) {
+          circle(ctx, f.x, f.y, BALL_R * (1 + e * 0.8), {
+            width: 1 + 1.6 * fade, color: INK, seed: 78, amp: 1.2, halo: false, alpha: 0.65 * fade,
+          });
+          // 번쩍임 살 — 원판의 그 번쩍임. 공 반지름의 절반쯤 되는 짧은 선 여덟.
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2 + 0.2;
+            const r0 = BALL_R * (1.15 + e * 0.8);
+            const r1 = r0 + 8 + e * 13;
+            stroke(ctx, [[f.x + Math.cos(a) * r0, f.y + Math.sin(a) * r0],
+                         [f.x + Math.cos(a) * r1, f.y + Math.sin(a) * r1]],
+                   { width: 2.2, color: RED, seed: 80 + i, amp: 0.8, halo: false, alpha: 0.85 * fade });
+          }
+        }
+        for (const s of f.bits) {
+          const sp = Math.hypot(s.vx, s.vy) || 1;
+          const x0 = f.x + s.x;
+          const y0 = f.y + s.y;
+          stroke(ctx, [[x0, y0], [x0 - s.vx / sp * s.len, y0 - s.vy / sp * s.len]],
+                 { width: 2.4, color: f.ace && s.seed % 2 ? RED : INK, seed: s.seed, amp: 0.5,
+                   halo: false, alpha: fade });
+        }
+      } else if (f.k === 'slam') {
+        for (const s of f.bits) {
+          circle(ctx, f.x + s.x, f.y - 4 + s.y, s.r * (1 + g * 1.6), {
+            width: 1.8, color: PENCIL, seed: s.seed, amp: 1.1, halo: false, alpha: 0.75 * fade,
+          });
+        }
+        // 바닥의 금. 지그재그 세 마디.
+        for (const c of f.cracks) {
+          const ux = Math.sin(c.a);
+          const uy = Math.abs(Math.cos(c.a)) * 0.45 + 0.1;     // 바닥 선 밑으로 비스듬히
+          const pts = [[f.x, f.y]];
+          for (let j = 1; j <= 3; j++) {
+            const d = (c.len * j) / 3;
+            pts.push([f.x + ux * d + (j % 2 ? 3 : -3) * uy, f.y + uy * d * 0.9]);
+          }
+          stroke(ctx, pts, { width: 2.2, color: INK, seed: c.seed, amp: 0.6, halo: false,
+                             alpha: Math.min(1, fade * 1.6), sharp: true });
+        }
+      } else if (f.k === 'dig') {
+        circle(ctx, f.x, f.y, BALL_R * (1.1 + g * 1.4), {
+          width: 2, color: PENCIL, seed: 79, amp: 1.2, halo: false, alpha: 0.7 * fade,
+        });
+      }
+    });
   }
 }
 
@@ -418,6 +741,11 @@ export default {
   /// ⌥Space 를 이 게임이 가져간다.
   action: (world) => spike(world),
 
+  /// 사람 그리는 법. 졸라맨 그대로인데 **치는 모션 스위치만 켠다.** 졸라맨은 다른 게임도
+  /// 쓰니 p.swing·p.toss·p.cock 을 아무나 읽게 두면, 휘두르던 사람이 판을 갈아 끼운 뒤
+  /// 다음 게임에서 그 자세로 굳는다. 켜고 끄는 자리를 여기 하나로 둔다.
+  figure: (ctx, p, time, seed, opts = {}) => drawStickman(ctx, p, time, seed, { ...opts, spike: true }),
+
   /// **네트는 못 넘는다.** 이게 팀전을 팀전으로 만든다 — 넘어 다닐 수 있으면 편이
   /// 이름뿐이고, 결국 다 같이 공 하나를 쫓는 게임이 된다. 언제나 자기 구역 안이다.
   /// 편을 바꾸려면 ⌥M → 편 바꾸기.
@@ -446,8 +774,13 @@ export default {
   },
 
   fresh: () => ({
-    ball: { x: 0, y: 0, vx: 0, vy: 0, spin: 0, spinV: 0, hit: 0, smash: 0, hitX: 0, hitY: 0 },
+    ball: { x: 0, y: 0, vx: 0, vy: 0, spin: 0, spinV: 0, hit: 0, smash: 0, hitX: 0, hitY: 0,
+            // 달아오른 강타: 남은 시간 · 정타인가 · 탑스핀인가. 친 사람 몸을 건너뛰는 몫(skip)과
+            // 손끝으로 미끄러져 오는 몫(g*) 도 여기 산다.
+            hot: 0, ace: false, topspin: false, skip: null, skipT: 0, gx: 0, gy: 0, gT: 0 },
     tail: [], tailT: 0,
+    // 타격 자국(각자 굴린다) · 남에게 알릴 한 줄짜리 일 · 히트스톱 남은 시간.
+    fx: [], events: [], stop: 0, stopHold: 0, mineAt: 9,
     score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false, emptyFor: 0,
     // 손님이 받은 공을 부드럽게 따라가려고 남겨 두는 것.
     age: 0, errorX: 0, errorY: 0, baseX: undefined,
@@ -477,6 +810,11 @@ export default {
         if (mine === 1 && world.player.x < half) world.player.x = half * 1.4;
       }
     }
+    // 자국·팔 동작·파편은 **판이 도는 것과 상관없이** 사그라든다. 서브를 기다리는 동안에도,
+    // 판이 끝난 뒤에도 돈다 — 안 그러면 마지막 점수를 낸 강타의 먼지와 「쿵!」이 끝난 판 위에
+    // 얼어붙은 채로 우승 화면까지 따라온다.
+    visuals(world, b, dt);
+    arms(world, b, dt);
     if (world.state !== 'play') return;
 
     // 손님은 방장이 뿌린 공을 따라 그리기만 한다. 판정도 방장이 한다.
@@ -488,16 +826,16 @@ export default {
       b.errorX *= Math.exp(-dt / 0.06);
       b.errorY *= Math.exp(-dt / 0.06);
       b.ball.x = b.baseX + b.baseVX * b.age + b.errorX;
-      b.ball.y = b.baseY + b.baseVY * b.age + 0.5 * GRAVITY * b.age * b.age + b.errorY;
+      // 탑스핀도 방장과 같은 식으로 이어 그린다. 안 그러면 달아오른 공만 손님 화면에서
+      // 조금 위로 뜨고, 그 차이가 꾸러미마다 다시 녹느라 공이 미세하게 떤다.
+      const g = GRAVITY + (b.ball.topspin ? TOPSPIN : 0);
+      b.ball.y = b.baseY + b.baseVY * b.age + 0.5 * g * b.age * b.age + b.errorY;
       b.ball.spin += b.ball.spinV * dt;
-      ball0(world, b, dt);
       trail(b, dt);
       report(world, b, dt);
       return;
     }
 
-    // 자국은 서브를 기다리는 동안에도 사그라든다. 안 그러면 그 자리에 얼어붙는다.
-    ball0(world, b, dt);
     // **판이 도는 중에 한쪽이 비면 거기서 끊는다.** 안 그러면 빈 코트에 공이 떨어지며
     // 혼자 남은 편이 다섯 점을 채운다 — 이긴 것도 아니고 진 것도 아닌 판이 된다.
     b.emptyFor = emptySide(world) ? (b.emptyFor ?? 0) + dt : 0;
@@ -511,7 +849,27 @@ export default {
     if (b.wait > 0) { b.wait -= dt; return; }
 
     const ball = b.ball;
-    ball.vy += GRAVITY * dt;
+
+    // **히트스톱.** 젖힌 팔이 공까지 내려오는 두 프레임 + 손이 공에 붙어 있는 두 프레임
+    // (정타는 세 프레임), 그동안 공은 제자리에서 돌기만 한다. 속도는 이미 실려 있고 자리만
+    // 멎어 있다 — 그 4~5프레임이 「쾅」 하는 손맛을 만든다. 공이 빨라지기만 해서는
+    // 세게 친 게 안 읽힌다는 말을 실제로 들었다.
+    if (b.stop > STOP_EPS) {
+      b.stop = Math.max(0, b.stop - dt);
+      ball.spin += ball.spinV * dt;
+      report(world, b, dt);
+      return;
+    }
+    // 친 사람 몸은 잠깐 공을 안 받는다 (SELF_SKIP).
+    ball.skipT = Math.max(0, (ball.skipT ?? 0) - dt);
+    if (ball.skipT <= 0) ball.skip = null;
+    // 달아오른 시간이 다 되면 그냥 공이다.
+    if (ball.hot > 0) {
+      ball.hot = Math.max(0, ball.hot - dt);
+      if (ball.hot <= 0) cool(ball);
+    }
+    // **탑스핀.** 앞으로 도는 강타는 중력의 1.45배로 떨어진다 — 포물선이 아니라 꺾여 꽂힌다.
+    ball.vy += (GRAVITY + (ball.topspin ? TOPSPIN : 0)) * dt;
 
     // 공기 저항. **빠를수록 많이 깎인다** (제곱 저항).
     //
@@ -520,7 +878,10 @@ export default {
     // 미사일처럼 날아간 공만 눈에 띄게 잦아든다 — 실제 공이 그렇다.
     const speed = Math.hypot(ball.vx, ball.vy);
     if (speed > 0) {
-      const lose = Math.min(0.5, DRAG * speed * dt);
+      // 달아오른 강타는 공기를 4할만 타고, 정타는 아예 안 탄다. 세게 친 공이 네트도 못 넘고
+      // 잦아들면 세게 친 보람이 없다 — 달아오른 0.7초 동안만 뚫고 간다.
+      const air = ball.hot > 0 ? (ball.ace ? 0 : HOT_DRAG) : 1;
+      const lose = Math.min(0.5, DRAG * speed * dt * air);
       ball.vx -= ball.vx * lose;
       ball.vy -= ball.vy * lose;
     }
@@ -546,7 +907,8 @@ export default {
               () => ball.vx, (v) => { ball.vx = v; })
       | reflect(CEIL, Infinity, () => ball.y, (v) => { ball.y = v; },
                 () => ball.vy, (v) => { ball.vy = v; });
-    if (bounced) { ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; }
+    // 벽에 한 번 닿으면 그냥 공이다. 벽을 맞고도 달아오른 채로 다니면 아무도 못 받는다.
+    if (bounced) { ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; cool(ball); }
 
     // 네트. 꼭대기는 넘어가고, 몸통에 맞으면 되돌아온다.
     const netX = world.w / 2;
@@ -555,6 +917,7 @@ export default {
     if (Math.abs(ball.x - netX) < BALL_R + NET_GAP && ball.y > netTop) {
       ball.x = netX + Math.sign(ball.x - netX || 1) * (BALL_R + NET_GAP);
       ball.vx = -ball.vx * 0.55;
+      cool(ball);
     }
 
     trail(b, dt);
@@ -563,12 +926,22 @@ export default {
     // 사람에게 맞았나. 살아 있는 사람만 친다.
     const bodies = [world.player, ...world.mp.others.values()].filter((p) => !p.dead && !p.waiting);
     for (const p of bodies) {
-      if (touches(ball, p)) { bounceOff(ball, p); break; }
+      // 머리 위 공을 내리꽂으면 공이 제 몸을 지나간다. 그 프레임에 몸에 맞아 도로 떠오르면
+      // **강타가 토스가 된다** (vy +1700 → -811 을 실제로 봤다). 친 사람만 잠깐 건너뛴다.
+      if (p === ball.skip || !touches(ball, p)) continue;
+      // **달아오른 강타를 몸으로 받아 냈다.** 아무리 세게 와도 몸에 맞은 공은 MAX_UP 까지만
+      // 떠오른다(bounceOff) — 정타가 사기가 안 되는 건 여기다. 받아 낸 쪽에 「받았다!」가 뜬다.
+      if (ball.hot > 0) spawnDig(world, ball.x, ball.y);
+      cool(ball);
+      bounceOff(ball, p);
+      break;
     }
 
     // 바닥에 **닿는 순간** 끝이다. 떨어진 자리에 자국만 남기고 곧바로 다음 서브로 넘어간다.
     if (ball.y + BALL_R >= world.groundY) {
       ball.hit = 1; ball.hitX = ball.x; ball.hitY = world.groundY - BALL_R * 0.3;
+      // 달아오른 채 꽂혔다. 먼지가 양옆으로 일고 바닥에 금이 간다 — 점수보다 이게 먼저 보인다.
+      if (ball.hot > 0) spawnSlam(world, ball.x, ball.ace);
       point(world, ball.x < netX ? 1 : 0);
       return;
     }
@@ -636,10 +1009,43 @@ export default {
       });
     }
 
-    // 공. 잉크 동그라미에 실밥 두 줄.
-    upright(b.ball.x, b.ball.y, () => {
+    // 타격 자국 — 고리·파편·먼지·금은 공 뒤에 깔린다.
+    drawFx(ctx, b, upright, false);
+
+    // 공이 그려지는 자리. 맞은 두 프레임 동안 손끝으로 미끄러져 온다.
+    const [bx, by] = shownBall(b);
+    const sp = Math.hypot(b.ball.vx, b.ball.vy);
+    // **속도선.** 달아오른 강타 뒤로 선 셋이 흐른다. 동그라미 하나는 아무리 빨라도
+    // 빨라 보이지 않는다 — 지나온 자리에 선을 그어야 속도가 보인다.
+    if (b.ball.hot > 0 && sp > 200 && !(b.stop > STOP_EPS)) {
+      const ux = b.ball.vx / sp;
+      const uy = b.ball.vy / sp;
+      const len = Math.min(95, sp * 0.045);
+      upright(bx, by, () => {
+        for (let i = 0; i < 3; i++) {
+          const off = (i - 1) * BALL_R * 0.66;          // 가운데 선이 제일 길다
+          const grow = 1 - Math.abs(i - 1) * 0.4;
+          const x0 = bx - uy * off - ux * BALL_R * 0.95;
+          const y0 = by + ux * off - uy * BALL_R * 0.95;
+          // **연필로 긋는다.** 빨강은 이미 타격 고리와 「쾅!」이 쓰고 있어서, 속도선까지
+          // 빨가면 셋이 한 덩어리로 뭉쳐 무엇이 무엇인지 안 갈린다.
+          stroke(ctx, [[x0, y0], [x0 - ux * len * grow, y0 - uy * len * grow]],
+                 { width: 2.2, color: PENCIL, seed: 95 + i, amp: 0.5, halo: false, alpha: 0.5 });
+        }
+      });
+    }
+
+    // 공. 잉크 동그라미에 실밥 두 줄. **빠른 공은 가는 쪽으로 늘어난다** — 한 프레임에
+    // 30픽셀을 가는 동그라미는 늘어나 있어야 그 속도로 읽힌다.
+    upright(bx, by, () => {
       ctx.save();
-      ctx.translate(b.ball.x, b.ball.y);
+      ctx.translate(bx, by);
+      // 멈춰 있는 동안은 안 늘인다. 안 가는 공이 늘어나 있으면 그냥 찌그러진 공이다.
+      if (sp > 600 && !(b.stop > STOP_EPS)) {
+        const k = Math.min(0.34, (sp - 600) / 3000);
+        const a = Math.atan2(b.ball.vy, b.ball.vx);
+        ctx.rotate(a); ctx.scale(1 + k, 1 - k * 0.55); ctx.rotate(-a);
+      }
       ctx.rotate(b.ball.spin);
       circle(ctx, 0, 0, BALL_R, { width: 3.4, color: INK, seed: 63, amp: 0.7 });
       stroke(ctx, [[-BALL_R * 0.82, -5], [0, -9], [BALL_R * 0.82, -5]],
@@ -648,6 +1054,9 @@ export default {
              { width: 2, color: PENCIL, seed: 65, amp: 0.5, halo: false });
       ctx.restore();
     });
+
+    // 「쾅!」·「받았다!」는 공 위에 뜬다.
+    drawFx(ctx, b, upright, true);
 
     // 내 슬라이딩 게이지. 남의 것은 안 그린다 — 오가는 값도 아니고, 알 필요도 없다.
     drawSlideGauge(ctx, world, upright);
@@ -678,7 +1087,7 @@ export default {
     });
 
     if (b.wait > 0) {
-      text(ctx, '서브', b.ball.x, b.ball.y - 30,
+      text(ctx, '서브', bx, by - 30,
            { font: `700 13px ${HAN}`, color: RED, align: 'center', halo: 3 });
     }
   },
@@ -694,8 +1103,8 @@ export default {
       if (!other || other.dead) return;
       if (Math.abs(other.x - msg.at.x) > 120) { world.debug && world.log?.(`손님타격 무시(자리차이) ${from}`); return; }
       const ok = applyHit(world, { x: other.x, air: other.air, groundY: world.groundY,
-                                   side: msg.at.side === 1 ? 1 : 0 }, msg.want);
-      if (ok && other.air > 0) other.swing = SWING_TIME;
+                                   side: msg.at.side === 1 ? 1 : 0 }, msg.want, other, from);
+      if (ok) startSwing(other, ok);
       world.debug && world.log?.(`손님타격 ${from} ${ok ? '먹힘' : '안닿음'}`);
       return;
     }
@@ -715,25 +1124,59 @@ export default {
     const sides = rosterSides(world);
     const flash = b.flash;
     b.flash = null;                              // 한 번만 보낸다
+    const events = b.events?.length ? b.events : null;
+    b.events = [];
+    // **히트스톱 중에는 속도도 0으로 보낸다.** 자리만 멎고 속도는 실어 보내면, 손님은 그
+    // 속도로 공을 이어 그려서 방장 화면만 멎고 손님 화면은 안 멎는다 — 멈춤이 반만 보인다.
+    const still = b.stop > STOP_EPS;
     return {
       tm: [...sides.entries()],
       b: [Math.round(b.ball.x * 10) / 10, Math.round(b.ball.y * 10) / 10,
-          Math.round(b.ball.vx), Math.round(b.ball.vy),
-          Math.round(b.ball.spin * 100) / 100, Math.round(b.ball.spinV * 100) / 100],
+          still ? 0 : Math.round(b.ball.vx), still ? 0 : Math.round(b.ball.vy),
+          Math.round(b.ball.spin * 100) / 100, Math.round(b.ball.spinV * 100) / 100,
+          // 일곱째 칸 — 달아오름(0 보통 · 1 강타 · 2 정타). 옛 손님은 여섯 칸만 읽고 지나간다.
+          b.ball.hot > 0 ? (b.ball.ace ? 2 : 1) : 0],
       s: b.score,
       w: Math.round(b.wait * 100) / 100,
       // 방금 터진 타격. 있을 때만 싣고 바로 비운다.
       f: flash ?? undefined,
+      // 바닥에 꽂힘·받아 냄. 같은 식으로 한 번만 싣는다.
+      e: events ?? undefined,
     };
   },
 
   unpack(world, data) {
     const b = world.bag;
-    // 방장 쪽에서 누가 때렸다. 번쩍임과 내리치는 팔을 같이 띄운다.
-    if (Array.isArray(data?.f) && data.f.length === 3 && data.f.every(Number.isFinite)) {
+    // 방장 쪽에서 누가 때렸다. 번쩍임·파편·흔들림과 내리치는 팔을 같이 띄운다.
+    //
+    // **늦게 온 만큼을 따로 앞당기지 않는다.** 손님 화면에서는 공도 사람도 같은 만큼 늦게
+    // 오니, 팔과 공이 서로 맞아 있으면 그걸로 맞는 것이다. 앞당기면 팔만 먼저 가서
+    // 허공을 친 뒤에 공이 튄다.
+    if (Array.isArray(data?.f) && data.f.length >= 3 && data.f.every(Number.isFinite)) {
       const [hx, hy, hard] = data.f;
-      b.ball.hit = 1; b.ball.hitX = hx; b.ball.hitY = hy; b.ball.smash = hard;
-      markSwing(world, hx, hy);
+      // 옛 모양([x, y, 세기])에는 번호도 종류도 없다. 세기로 강타인지 가리고 사람은 찾아 붙인다.
+      const old = data.f.length < 7;
+      const kind = old ? (hard > 0.05 ? 1 : 0) : data.f[4] | 0;
+      const who = old ? -1 : data.f[3] | 0;
+      const info = {
+        kind, ace: kind === 2, face: old ? 1 : (data.f[5] < 0 ? -1 : 1),
+        hold: kind === 2 ? ACE_HOLD : HIT_HOLD, stop: old ? 0 : data.f[6],
+        x: hx, y: hy, smash: hard,
+      };
+      // **내가 친 것이면 이미 내 화면에서 보여 줬다**(spike). 두 번 터뜨리지 않는다.
+      if (!(who >= 0 && who === world.mp.myId && (b.mineAt ?? 9) < 0.5)) {
+        const hitter = who >= 0
+          ? (who === world.mp.myId ? world.player : world.mp.others.get(who))
+          : nearestHitter(world, hx, hy, kind > 0);
+        startSwing(hitter, info);
+        spawnHit(world, info);
+      }
+    }
+    // 바닥에 꽂힘(1) · 받아 냄(2). 모르는 번호는 조용히 지나간다 — 나중에 늘어날 자리다.
+    for (const ev of Array.isArray(data?.e) ? data.e : []) {
+      if (!Array.isArray(ev) || ev.length < 4 || !ev.every(Number.isFinite)) continue;
+      if (ev[0] === 1) spawnSlam(world, ev[1], !!ev[3]);
+      else if (ev[0] === 2) spawnDig(world, ev[1], ev[2]);
     }
     // 방장이 나눠 준 편 명단. 내 편이 여기 적힌 대로 바뀐다.
     if (Array.isArray(data?.tm)) {
@@ -757,9 +1200,13 @@ export default {
       || !Number.isFinite(b.ball.x) || !Number.isFinite(b.ball.y);
     const showX = b.ball.x;
     const showY = b.ball.y;
-    const [x, y, vx, vy, spin, spinV] = data.b;
+    const [x, y, vx, vy, spin, spinV, hot] = data.b;
     b.baseX = x; b.baseY = y; b.baseVX = vx; b.baseVY = vy;
     b.ball.spin = spin; b.ball.spinV = spinV;
+    // 달아오름은 보이는 것(속도선·탑스핀)에만 쓴다. 판정은 어차피 방장이 한다.
+    b.ball.hot = hot > 0 ? HOT_TIME : 0;
+    b.ball.ace = hot === 2;
+    b.ball.topspin = hot > 0;
     b.age = 0;
     b.errorX = first ? 0 : showX - x;
     b.errorY = first ? 0 : showY - y;

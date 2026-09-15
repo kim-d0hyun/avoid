@@ -9,7 +9,9 @@ COL = {'#':'#141210','=':'#6b665c','H':'#8a7a5a','|':'#8a7a5a','-':'#2f6fb0','~'
        'x':'#8a5a2b','X':'#5a3a1b','r':'#d02f22','y':'#c9a000','b':'#2f6fb0','R':'#f0a8a0','Y':'#efe0a0','B':'#a8c4f0',
        'a':'#3f8f56','p':'#3f8f56','q':'#3f8f56','A':'#7fbf95','P':'#7fbf95','Q':'#7fbf95','n':'#3f8f56','M':'#2f6fb0','m':'#2f6fb0',
        'u':'#2f6fb0','U':'#2f6fb0','w':'#2f6fb0','W':'#2f6fb0','O':'#8a5bb5','{':'#d97b1f','}':'#d97b1f','1':'#3f8f56','2':'#d97b1f','3':'#7a4fb5','4':'#2f6fb0',
-       'c':'#2f9c9c','C':'#7fc9c9','t':'#d97b1f','T':'#f0c69a','l':'#2f9c9c','L':'#7fc9c9'}
+       'c':'#2f9c9c','C':'#7fc9c9','t':'#d97b1f','T':'#f0c69a','l':'#2f9c9c','L':'#7fc9c9',
+       'k':'#3f8f56','K':'#7fbf95','e':'#3f8f56','E':'#7fbf95','i':'#2f9c9c','I':'#7fc9c9','V':'#8a5bb5','N':'#8a5bb5',
+       'J':'#d97b1f','j':'#d97b1f','z':'#d02f22','d':'#d02f22','f':'#2f6fb0','g':'#3f8f56','Z':'#e0857c'}
 def pre_map(art):
     rows = []
     for row in art.split('\n'):
@@ -75,7 +77,10 @@ legend = ('<p class="sub">글자 하나가 한 칸. <b style="color:#141210">#</
           '<b style="color:#3f8f56">a p q</b> 스위치·누름판 / <b style="color:#7fbf95">A P Q</b> 셔터 · <b style="color:#3f8f56">n</b> <b style="color:#2f6fb0">M m</b> 나오는 발판 · '
           '<b style="color:#2f6fb0">u U w W</b> 포탈 · <b style="color:#8a5bb5">O</b> 출구 · <b style="color:#d97b1f">{ }</b> 통 · '
           '<b style="color:#2f9c9c">c</b> <b style="color:#7fc9c9">C</b> 집결판·집결문(체크포인트) · <b style="color:#d97b1f">t</b> <b style="color:#f0c69a">T</b> 10초 스위치·시한문 · '
-          '<b style="color:#2f9c9c">l</b> <b style="color:#7fc9c9">L</b> 구조 레버·접이식 사다리 · <b>1 2 3</b> 시작 자리.</p>')
+          '<b style="color:#2f9c9c">l</b> <b style="color:#7fc9c9">L</b> 구조 레버·접이식 사다리 · '
+          '<b style="color:#3f8f56">k e</b> <b style="color:#7fbf95">K E</b> 둘·셋이 밟는 판과 문 · <b style="color:#2f9c9c">i</b> <b style="color:#7fc9c9">I</b> 탑 감지기·문 · '
+          '<b style="color:#8a5bb5">V N</b> 승강기(둘·셋) · <b style="color:#d97b1f">J j</b> 분기 벨트 · <b style="color:#d02f22">z</b> 신호탑 · '
+          '<b style="color:#d02f22">d</b> <b style="color:#2f6fb0">f</b> <b style="color:#3f8f56">g</b> 신호 버튼 · <b style="color:#e0857c">Z</b> 신호문 · <b>1 2 3</b> 시작 자리.</p>')
 HTML = f"""<title>셋이서</title>
 {CSS}{EXTRA}
 <header>

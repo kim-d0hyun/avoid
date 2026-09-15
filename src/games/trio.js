@@ -29,4 +29,5 @@ export default makeCoop({
 export { STAGES, WORLDS, THEME };
 // 물리·타일은 넷이서와 같은 것을 쓴다. 봇과 시험이 `games/trio.js` 하나만 열어도 되게 그대로 내보낸다.
 export { T, move, rewind, loadStage, placeAt, exitState, stepObjects, blinkOn, tile, solidTile,
-         floorBelow, bodyBlocked, stageNo, makeCoop } from './coop.js';
+         floorBelow, bodyBlocked, stageNo, makeCoop,
+         beltDir, liftRect, stackUnder, rallyKey, SIGNALS, SIGNAL_TILES } from './coop.js';

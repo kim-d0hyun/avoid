@@ -6,7 +6,8 @@ import './dom-stub.mjs';
 const R = new URL('../src/', import.meta.url).href;
 const w = await import(R + 'game/world.js');
 const net = await import(R + 'game/net.js');
-const coop = (await import(R + 'games/coop.js')).default;
+const coopMod = await import(R + 'games/coop.js');
+const coop = coopMod.default;
 
 import { check, say, done } from './check.mjs';
 
@@ -87,6 +88,26 @@ say('방장이 홈으로 나가면 손님은 시작 화면에서 기다리고, �
   check('손님도 첫 판으로 되돌아왔다', guest.bag.stage, 0);
   check('손님은 시작 전 화면', guest.state, 'ready');
   check('구경 표시가 아니다', guest.mp.waiting, false);
+}
+
+say('넷이서에서 배구로 갈아 끼우면 코트가 화면 크기로 돌아온다 (네트가 오른쪽 끝으로 가던 것)');
+{
+  // 카메라가 있는 게임은 world.w 가 **판 크기**다 (넷이서 첫 판은 108칸 × 42px). 그대로 물려받으면
+  // 배구 코트가 4536px 이 되어 네트(코트 한가운데)가 화면 밖 오른쪽에 그려졌다.
+  const solo = w.createWorld({ ms: 0, dodged: 0 });
+  solo.onRecord = () => {}; solo.onGameOver = () => {};
+  solo.debug = true;
+  w.resize(solo, 1512, 944);
+  solo.screen = { w: 1512, h: 944 };        // 셸(main.js fit)이 남겨 두는 진짜 화면 크기
+  w.pickGame(solo, 'coop');
+  check('넷이서는 판 크기를 쓴다', [solo.w > 3000, solo.w === solo.bag.w * coopMod.T], [true, true]);
+  w.pickGame(solo, 'volley');
+  check('배구 코트는 화면 크기로', [solo.w, solo.h], [1512, 944]);
+  check('네트는 화면 한가운데', solo.w / 2, 756);
+  w.pickGame(solo, 'trio');
+  check('셋이서도 제 판 크기로', solo.w === solo.bag.w * coopMod.T, true);
+  w.pickGame(solo, 'dodge');
+  check('똥피하기도 화면 크기로', [solo.w, solo.h], [1512, 944]);
 }
 
 say('판 도중에 들어온 사람은 스스로 「구경」을 보고한다 — 방장은 그대로 전하고, 멀쩡한 사람은 안 덮는다');

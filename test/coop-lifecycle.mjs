@@ -55,6 +55,10 @@ for (const gameId of ['coop', 'trio']) {
   say(`${gameId} - actual pump, delayed packets and resets`);
   const sim = room(gameId), { host, worlds, shells } = sim;
   const game = w.gameOf(host);
+  // 스위치 a 가 있는 첫 판에서 — 되감은 뒤 옛 팀원 자리가 스위치를 다시 켜지 않는지 본다 (판을 다시 짜도 시험이 설 자리를 찾는다)
+  const withSwitch = host.bag.stages.findIndex((s) => s.art.some((r) => r.includes('a')));
+  const withBox = host.bag.stages.findIndex((s) => s.art.some((r) => /[xX]/.test(r)));
+  host.stage = Math.max(0, withSwitch);
   net.startRound(host, shells[0], { restart: w.restart });
   sim.advance(80, true);
   ok('시작 메시지를 놓쳐도 스냅샷으로 전원 참가', worlds.every((world) => world.state === 'play' && !world.mp.waiting && !world.player.dead));
@@ -153,7 +157,7 @@ for (const gameId of ['coop', 'trio']) {
     ok(`겹친 동료에게 걸어도 반대 방향으로 밀리지 않는다 (${direction})`, (p.x - startX) * direction >= 0);
     host.input.left = false; host.input.right = false;
   }
-  loadStage(worlds[1], 1); game.stand(worlds[1], 0);
+  loadStage(worlds[1], Math.max(0, withBox)); game.stand(worlds[1], 0);
   const guest = worlds[1], guestBox = guest.bag.boxes[0];
   guest.player.x = guestBox.x;
   guest.player.air = guest.groundY - (guestBox.y - T);

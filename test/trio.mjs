@@ -72,10 +72,19 @@ say('판 열셋 — 세계 넷, 시작 자리 셋, 글자 그림이 크기와 �
   check('판마다 시작 자리가 1·2·3 하나씩', badSpawn, []);
   check('판마다 출구 하나', badExit, []);
   check('네 번째 사람 자리는 없다', stray, []);
-  check('끝 조건 — 2-3 지하실과 3-3 방파제만 한 명', STAGES.map((s) => s.end),
-        ['all', 'all', 'all', 'all', 'all', 'all', 'one', 'all', 'all', 'all', 'one', 'all', 'all']);
+  // v3.11 — 지하실·방파제를 전원 출구로 바꿨다 (한 명이 독주하고 둘이 기다리던 판). 이제 열세 판 모두 셋이 다 모여야 끝.
+  check('끝 조건 — 전부 셋이 다 모여야', STAGES.map((s) => s.end), STAGES.map(() => 'all'));
   note(`한 명만 닿으면 끝인 판 — ${STAGES.filter((s) => s.end === 'one').map((s) => s.name).join('·')}`);
   note(`시간 제한 — ${STAGES.filter((s) => s.limit).map((s) => `${s.name} ${s.limit}초`).join(' · ')}`);
+}
+
+say('셋이서도 협동 엔진의 도우미를 다 내보낸다 — 봇이 games/trio.js 하나만 연다');
+{
+  // 빠지면 셋이서 봇이 승강기·신호탑·집결에서 「coopMod.xxx is not a function」으로 터진다 (v3.11 에서 한 번 그랬다)
+  const need = ['T', 'tile', 'solidTile', 'floorBelow', 'bodyBlocked', 'blinkOn', 'exitState', 'stepObjects', 'loadStage',
+                'beltDir', 'liftRect', 'stackUnder', 'rallyKey', 'SIGNALS', 'SIGNAL_TILES'];
+  check('빠진 것', need.filter((n) => trioMod[n] === undefined), []);
+  check('넷이서와 같은 것', need.filter((n) => trioMod[n] !== coopMod[n]), []);
 }
 
 say('내보낸 파일이 판과 맞는다 (trio-stages.js ↔ trio-moves.json)');
@@ -102,6 +111,11 @@ say('세계 색 — 네 세계가 다 있고, 도시 팔레트로 새지 않는�
 }
 
 // ── 셋이라는 사실 ────────────────────────────────────────────────────────────
+
+say('v3.11 — 지금 셋이서 판에는 판 전체 시간 제한이 없다 (박자는 10초 시한문·깜빡이 발판이 준다)');
+{
+  check('시간 제한이 남은 판', STAGES.filter((s) => s.limit).map((s) => s.name), []);
+}
 
 say('셋이어야 시작한다');
 {
@@ -135,8 +149,10 @@ say('출구 — 「셋」 판은 셋이 다, 「한 명」 판은 하나면');
   other(world, 3, b.exit.x + 1, b.exit.y);
   check('셋이면 된다', exitState(world), { inside: 3, need: 3, ready: true });
 
-  const one = STAGES.find((s) => s.end === 'one');
+  // 한 명 판이 하나도 안 남아도(판을 다시 짜면 그럴 수 있다) 규칙은 시험한다 — 없으면 첫 판을 「한 명」으로 연다
+  const one = STAGES.find((s) => s.end === 'one') ?? STAGES[0];
   const w1 = make(one.name, { mp: true });
+  w1.bag.end = 'one';
   other(w1, 2, 3, w1.bag.spawn[1].y); other(w1, 3, 5, w1.bag.spawn[2].y);
   setPos(w1, w1.bag.exit.x, w1.bag.exit.y);
   check(`한 명 판(${one.name})은 하나면 된다`, exitState(w1).need, 1);

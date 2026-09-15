@@ -209,6 +209,7 @@ let shared = null;
 /// 화면에 맞추는 배율. 자리는 가로·세로 따로 늘리고(화면을 꽉 채워야 하니까),
 /// 물건은 세로 배율 하나로만 그린다(안 그러면 27인치에서 졸라맨이 납작해진다).
 let view = { dpr: 1, sx: 1, sy: 1, screenW: 0, screenH: 0, squash: 1 };
+let fittedGame = null;   // fit() 을 마지막으로 부른 게임 — 갈아 끼우면 다시 맞춘다
 
 function fit() {
   // 5K 에서 3배로 그리면 픽셀만 늘고 보이는 건 같다. 2배에서 끊는다.
@@ -225,6 +226,9 @@ function fit() {
   // 아니라 「사람이 커진 게임」이 된다. 화면 전체로 볼 때와 같은 그림이어야 한다.
   const shrink = shared ? 1 : (world.size ?? 1);
   // 카메라가 있는 게임(넷이서)은 판이 화면보다 크다. 판 크기는 게임이 정하고, 창은 그 일부를 본다.
+  // 셸이 아는 **진짜 화면 크기**를 남겨 둔다. 카메라가 있는 게임은 world.w 가 판 크기로 덮이므로,
+  // 거기서 다른 게임으로 갈아 끼울 때 물려받을 화면 크기가 따로 있어야 한다 (world.js restart).
+  world.screen = { w: screenW / shrink, h: screenH / shrink };
   if (gameOf(world).camera) {
     const k = world.size ?? 1;
     view = { dpr, sx: k, sy: k, screenW, screenH, squash: 1 };
@@ -467,6 +471,11 @@ let last = performance.now();
 
 /// 한 걸음. draw 가 거짓이면 계산만 하고 그리지 않는다.
 function step(now, draw) {
+  // **게임이 바뀌면 판을 다시 맞춘다.** 카메라가 있는 게임(넷이서·셋이서)은 world.w 가 화면이 아니라 **판 크기**다 —
+  // 거기서 배구로 갈아 끼우면 restart 가 그 판 크기를 그대로 물려받아, 화면 배율은 1인데 판은 6000px 라
+  // 네트(판 한가운데)가 화면 오른쪽 끝 너머로 나갔다. 게임이 바뀐 프레임에 fit() 을 한 번 더 부른다.
+  // 메뉴·방장 바꾸기·손님이 방장을 따라가는 길이 다 여기를 지난다.
+  if (fittedGame !== world.gameId) { fittedGame = world.gameId; fit(); }
   // 숨어 있던 동안 쌓인 시간이 한 프레임에 몰리면 똥이 화면을 관통한다.
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;

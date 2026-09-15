@@ -2,7 +2,7 @@
 // 나머지는 그 자리에 선 남. coop-play.mjs(실전 시험)와 coop-render.mjs(영상)가 같이 쓴다.
 // 명단(IDS)은 게임에서 온다 — 넷이서면 넷, 셋이서면 셋.
 
-import { w, coop, T, G, floorBelow, bodyBlocked, HALF, BLOCK_H, HEAD, DT, IDS, col, row,
+import { w, coop, coopMod, T, G, floorBelow, bodyBlocked, HALF, BLOCK_H, HEAD, DT, IDS, col, row,
          makeWorld, puppet } from './coop-bot.mjs';
 
 export class PuppetSim {
@@ -23,6 +23,8 @@ export class PuppetSim {
     Object.assign(world.input, { left: false, right: false, jump: false, duck: false }, input);
     // 같이 미는 인형은 상자 뒤에 붙어 그쪽으로 걷는 시늉
     if (this.mates) for (const m of this.mates.ids) { this.place(m, this.mates.box.x - this.mates.dir * 40, this.mates.box.y); const o = world.mp.others.get(+m); if (o) o.vx = this.mates.dir * 4; }
+    // 승강기에 같이 탄 인형은 발판을 따라 옮긴다 (인형은 스스로 안 선다)
+    if (this.carrying) { const top = coopMod.liftRect(this.carrying.lf).top; for (const k of this.carrying.ids) this.place(k, this.at(k).x, top); }
     w.update(world, DT);
     this.frames++;
     this.onStep?.();
@@ -39,6 +41,9 @@ export class PuppetSim {
       world.mp.others.set(+this.active, puppet(world, +this.active, p.x, world.groundY - p.air));
     }
     world.mp.others.delete(+who);
+    // 내 번호도 차례가 된 사람 것으로 — 번호를 1 로 두면 인형 1번과 겹쳐, 무거운 상자를 미는 둘째가 1번일 때
+    // countPushers 가 둘을 한 명으로 셌다 (상자가 안 움직였다). 부활 자리(mySlot)도 이 번호로 잡는다.
+    world.mp.myId = +who;
     const at = this.pos[who];
     p.x = at.x; p.air = world.groundY - at.fy; p.vx = 0; p.vy = 0; p.grounded = !at.ladder; p.onLadder = !!at.ladder;
     p.crouch = 0; p.dead = false; p.stun = 0; p.knock = 0; p.jumpHeld = false; p.rideId = null; p.load = 0;
@@ -128,6 +133,7 @@ export class PuppetSim {
     on.forEach((o, k) => this.place(o, lay.base + lay.lean * 14 * k, me.fy - HEAD * k));
     return null;
   }
+  carry(ids, lf) { this.carrying = ids && ids.length ? { ids, lf } : null; }
   holdMates(mates, box, dir) { this.mates = mates.length ? { ids: mates, box, dir } : null; return null; }
   releaseMates(mates) {
     const world = this.host;

@@ -39,6 +39,12 @@ const BUMP_AT = BLOCK_W;                   // 두 몸 중심이 이보다 가까
 const PORTAL_COOL = 0.3;
 const RALLY_FOR = 0.3;
 const TIMED_FOR = 10;
+const COUNT_NEED = { k: 2, e: 3 };         // 사람 수 누름판 — k 는 둘 이상, e 는 셋 이상이 밟아야 눌린다 (상자는 안 센다)
+const LIFT_SPEED = 100;                    // 승강기 초당 2.4칸
+const LIFT_FOR = 0.3, LIFT_RETURN = 1.5;   // 정원이 0.3초 서 있으면 오르고, 위에서 1.5초 비면 도로 내려온다
+const SIGNAL_LOCK = 1.0;                   // 신호 버튼을 틀리면 1초 동안 안 먹는다
+const SIGNALS = [{ name: '세모', color: '#d02f22' }, { name: '동그라미', color: '#2f6fb0' }, { name: '네모', color: '#3f8f56' }];
+const SIGNAL_TILES = 'dfg';                // d 세모 · f 동그라미 · g 네모 — 신호탑 z 가 보여 주는 것을 ⌥↓ 로 누른다
 const EMOTES = ['여기로 와!', '먼저 가!', '기다려!', '도와줘!'];   // ⌥1~4 (또는 고정 모드에서 1~4). 머리 위에 3초.
 const EMOTE_T = 3;
 const ROT_AFTER = 0.5, ROT_GONE = 3;         // 삭은 발판: 0.5초 밟으면 부서지고 3초 뒤 돌아온다 — 한 명씩 건넌다
@@ -72,9 +78,12 @@ function loadStage(world, index) {
   b.clock = 0;
   b.opened = new Set();
   b.latched = false;
-  b.plates = { p: false, q: false };
-  b.rally = false; b.rallyT = 0; b.checkpoint = null;
+  b.plates = { p: false, q: false, k: false, e: false };
+  b.plateTiles = { p: [], q: [], k: [], e: [] };
+  b.rally = false; b.rallyT = 0; b.checkpoint = null; b.rallyDone = new Set();
   b.timed = 0; b.ladderOpen = false;
+  b.tower = false; b.lifts = [];
+  b.signal = 0; b.signalOk = false; b.signalLock = 0; b.signalPress = new Map(); b.signalAt = null;
   b.boxes = []; b.barrels = []; b.chutes = []; b.tracks = []; b.keys = {}; b.portals = {};
   b.rot = new Map();                       // 삭은 발판 — 'tx,ty' → { t: 밟은 시간, gone: 부서져 있는 남은 시간 }
   b.spawn = new Array(b.crew).fill(null);  // 시작 자리는 인원 수만큼. 넷이서는 넷, 셋이서는 셋.
@@ -99,8 +108,20 @@ function loadStage(world, index) {
       if (last && last.y === y && last.x1 === x - 1) last.x1 = x;
       else b.tracks.push({ x0: x, x1: x, y });
     }
+    else if (ch === 'V' || ch === 'N') {
+      // 승강기 길. 한 기둥으로 이어진 V(둘이 타야 오른다)·N(전원이 타야 오른다)이 길 하나 — 발판은 세 칸 폭.
+      // 아래 승강장은 맨 아래 칸 밑의 땅과 높이가 같고, 위 승강장은 맨 위 칸 윗면(그 줄 양옆의 바닥)과 같다.
+      const last = b.lifts.find((l) => l.x === x && l.y1 === y - 1);
+      if (last) last.y1 = y;
+      else b.lifts.push({ x, y0: y, y1: y, all: ch === 'N' });
+    }
+    else if (ch === 'z') { b.signalAt = { x, y }; }
+    if (b.plateTiles[ch]) b.plateTiles[ch].push({ x, y });
   }
   for (const tr of b.tracks) { tr.len = (tr.x1 - tr.x0 + 1) * T - TRACK_W; tr.pos = 0; }
+  for (const lf of b.lifts) { lf.len = (lf.y1 + 1 - lf.y0) * T; lf.pos = 0; lf.dir = 0; lf.t = 0; lf.idle = 0; }
+  // 신호는 방장이 고른다 — 손님은 꾸러미(sg)가 곧 덮는다.
+  if (b.signalAt) b.signal = Math.floor(Math.random() * SIGNALS.length);
   world.w = s.w * T; world.h = s.h * T; world.groundY = s.h * T;
   const ids = [world.mp.myId, ...world.mp.others.keys()].sort((a, c) => a - c);
   for (const [id, o] of world.mp.others) {
@@ -157,12 +178,31 @@ function solidTile(b, ch) {
   if (ch === 'm') return b.plates.q;         // 누름판 q 를 밟고 있는 동안 나오는 발판
   if (ch === 'C') return !b.rally;           // Opens permanently after the full-team rally.
   if (ch === 'T') return b.timed <= 0;        // Opens while the timed switch is active.
+  if (ch === 'K') return !b.plates.k;        // 둘 이상이 누름판 k 를 밟는 동안 열린다
+  if (ch === 'E') return !b.plates.e;        // 셋 이상이 누름판 e 를 밟는 동안 열린다
+  if (ch === 'I') return !b.tower;           // 전원 탑의 꼭대기가 감지기 i 에 닿으면 열린 채 남는다
+  if (ch === 'Z') return !b.signalOk;       // 신호탑이 보여 준 버튼을 누르면 열린 채 남는다
   return false;
+}
+/// 무빙워크의 방향. 분기 벨트 J·j 는 누름판 p·q 를 밟는 동안 오른쪽, 아니면 왼쪽(회수)으로 돈다.
+function beltDir(b, ch) {
+  if (ch === '>') return 1;
+  if (ch === '<') return -1;
+  if (ch === 'J') return b.plates.p ? 1 : -1;
+  if (ch === 'j') return b.plates.q ? 1 : -1;
+  return 0;
+}
+/// 집결판 무리의 이름 — 같은 줄에서 두 칸 안 틈으로 이어진 c 들이 한 무리다. 무리마다 한 번씩 체크포인트가 된다.
+function rallyKey(b, tx, ty) {
+  if (tile(b, tx, ty) !== 'c') return null;
+  let x = tx;
+  for (;;) { const prev = [x - 1, x - 2, x - 3].find((c) => tile(b, c, ty) === 'c'); if (prev === undefined) break; x = prev; }
+  return `${x},${ty}`;
 }
 function ladderTile(b, ch) { return ch === 'H' || ch === '|' || (ch === 'L' && b.ladderOpen); }
 /// 위에서만 딛는 칸인가 (밑에서는 통과).
 function onewayTile(b, ch, tx, ty) {
-  if (ch === '=' || ch === '>' || ch === '<' || ch === 'S') return true;
+  if (ch === '=' || ch === '>' || ch === '<' || ch === 'S' || ch === 'J' || ch === 'j') return true;
   if (ch === 'v') return !rotGone(b, tx, ty);
   if (ch === '~') return blinkOn(b);
   return false;
@@ -174,6 +214,15 @@ function trackRect(tr) {
   const x0 = tr.x0 * T + tr.pos;
   return { x0, x1: x0 + TRACK_W, top: tr.y * T + T * 0.3, bottom: tr.y * T + T * 0.7 };
 }
+/// 승강기 발판의 지금 자리. 길 기둥을 가운데 두고 세 칸 폭. pos 는 아래 승강장에서 올라온 픽셀.
+function liftRect(lf) {
+  const top = (lf.y1 + 1) * T - lf.pos;
+  return { x0: (lf.x - 1) * T, x1: (lf.x + 2) * T, top, bottom: top + T * 0.4 };
+}
+/// 승강기가 오르려면 몇 명이 타야 하나. 혼자 연습할 때는 한 명.
+function liftNeed(world, lf) { return !world.mp.on ? 1 : lf.all ? world.bag.crew : 2; }
+/// 사람 수 누름판이 몇 명을 원하나. 혼자 연습할 때는 한 명 (무거운 상자와 같은 규칙).
+function plateNeed(world, tag) { return !world.mp.on ? 1 : (COUNT_NEED[tag] ?? 1); }
 
 // ── 사람 물리 (내 것만) ───────────────────────────────────────────────────────
 
@@ -201,6 +250,10 @@ function floorBelow(world, x, fyOld, fyNew, halfW = HALF - 2, opt = {}) {
     const r = trackRect(tr);
     if (x + halfW > r.x0 && x - halfW < r.x1) take(r.top);
   }
+  for (const lf of b.lifts) {
+    const r = liftRect(lf);
+    if (x + halfW > r.x0 && x - halfW < r.x1) take(r.top);
+  }
   if (opt.people === false) return best;
   // 남의 머리. 웅크린 사람은 낮다 — 그래서 계단이 된다.
   for (const o of world.mp.others.values()) {
@@ -209,6 +262,10 @@ function floorBelow(world, x, fyOld, fyNew, halfW = HALF - 2, opt = {}) {
     const oh = blockSize(o).h;
     const top = o.groundY - o.air - oh - 3;
     if (top < fyOld - 4) continue;                   // 내 발보다 위에 있는 머리는 바닥이 아니다
+    // 내 발보다 **위로 솟은** 머리는 내가 딛고 있던 사람의 것일 때만 바닥이다 (그 사람이 웅크렸다 일어서면 같이 올라간다).
+    // 밑에서 뛰어오르는 남의 머리가 나를 들어 올리면 안 된다 — 사람 계단에서 가운데 받침이 오르는 사람 머리에 실려 한 몸 높이
+    // 솟았다가 떨어졌고, 오르는 사람 화면에서는 같은 순간 그 받침이 천장이라 머리를 찧었다. 두 화면이 딴 일을 겪는다.
+    if (opt.feet !== undefined && top < opt.feet - 0.5 && o.id !== opt.riseOnly) continue;
     take(top);
   }
   return best;
@@ -403,8 +460,7 @@ export function move(world, dt) {
   let drift = 0;
   if (grounded) {
     const under = tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T));
-    if (under === '>') drift += CONVEYOR * dt;
-    if (under === '<') drift -= CONVEYOR * dt;
+    drift += beltDir(b, under) * CONVEYOR * dt;
     for (const tr of b.tracks) {
       const r = trackRect(tr);
       if (Math.abs(fy - r.top) < 3 && p.x > r.x0 - HALF && p.x < r.x1 + HALF) drift += (tr.vx ?? 0) * dt;
@@ -417,6 +473,9 @@ export function move(world, dt) {
 
   // 남의 머리 위에 서 있으면 **그 사람이 걷는 만큼 같이 간다.** 안 그러면 밟힌 사람이 한 걸음 떼는
   // 순간 위 사람이 허공에 남았다가 떨어진다.
+  // 지난 프레임에 딛고 있던 사람 — 그 사람이 한 번에 일어서면 이번 프레임엔 머리가 떨어져 carrierUnder 가 못 찾는다.
+  // 아래 「발밑이 올라왔나」는 이 사람 머리만 따라 올라간다.
+  const rideBefore = p.rideId;
   const carrier = grounded ? carrierUnder(world, p.x, fy) : null;
   let ride = 0;
   if (carrier) {
@@ -506,7 +565,7 @@ export function move(world, dt) {
   if (p.grounded) {
     // 발밑이 사라졌나 (열쇠로 블록이 지워졌다, 발판이 꺼졌다, 상자가 밀려났다, 남이 움직였다).
     // 발밑이 **올라왔나** 도 본다 — 밟고 있던 사람이 일어서면 나도 같이 올라간다.
-    const under = floorBelow(world, p.x, fy - 28, fy + 6);
+    const under = floorBelow(world, p.x, fy - 28, fy + 6, HALF - 2, { feet: fy, riseOnly: rideBefore });
     if (under === null) p.grounded = false;
     else if (Math.abs(under - fy) > 0.5) fy = under;
   }
@@ -593,12 +652,17 @@ function countPushers(world, box, dir) {
   const meWalks = (dir > 0 ? world.input.right : world.input.left) || Math.sign(me.vx) === dir;
   if (!me.dead && level(meFy) && behind(me.x) && meWalks) people.set(world.mp.myId, me.x);
   for (const o of world.mp.others.values()) {
-    if (o.dead || o.waiting || !level(o.groundY - o.air) || !behind(o.x)) continue;
+    if (o.dead || o.waiting) continue;
     const want = world.bag.pushWants?.get(o.id);
     const asks = want && want.i === idx && want.d === dir && want.t > 0;
-    // 밀기 부탁을 보낸 손님은 자기 화면에서 상자에 붙어 있다 — 그 자리가 정답이다 (내 화면의 그 사람 자리는 뒤처질 수 있다)
-    if (asks) people.set(o.id, box.x - dir * (T / 2 + HALF));
-    else if (Math.sign(o.vx || 0) === dir) people.set(o.id, o.x);
+    // 밀기 부탁을 보낸 손님은 **자기 화면에서** 상자에 붙어 서 있다 — 그 자리가 정답이다.
+    // 자리로 걸러 내기 **전에** 봐야 한다. 내 화면의 그 사람은 마지막 꾸러미에서 속도로 이어 그린 유령이라,
+    // 상자에 막혀 선 사람도 vx 는 달리는 속도(290) 그대로여서 최대 0.18초치(52px = 1.24칸) 앞질러 그려진다.
+    // 미는 자리는 상자 가운데서 38px 뿐이라 유령이 상자를 **지나쳐** 보이고, 그 자리로 「상자 뒤에 있나」를 재면
+    // 미는 사람이 통째로 빠진다 — 둘이 방향키를 잡고 버텨도 무거운 상자가 영영 안 움직였다.
+    if (asks) { people.set(o.id, box.x - dir * (T / 2 + HALF)); continue; }
+    if (!level(o.groundY - o.air) || !behind(o.x)) continue;
+    if (Math.sign(o.vx || 0) === dir) people.set(o.id, o.x);
   }
   const xs = [...people.values()].sort((a, b) => Math.abs(box.x - a) - Math.abs(box.x - b));
   let n = 0, edge = box.x - dir * (T / 2);                                   // 상자의 미는 쪽 면
@@ -622,6 +686,17 @@ function everyone(world) {
   return list;
 }
 
+/// q 의 발밑으로 이어진 사람 사슬의 길이 (q 포함). 머리 꼭대기가 위 사람 발에 닿고 가로로 겹치면 이어진 것이다.
+function stackUnder(people, top) {
+  let n = 1, cur = top;
+  for (let guard = 0; guard < 8; guard++) {
+    const below = people.find((r) => r !== cur && Math.abs(r.x - cur.x) < BLOCK_W && Math.abs((r.fy - r.h - 3) - cur.fy) < 8);
+    if (!below) break;
+    n++; cur = below;
+  }
+  return n;
+}
+
 function stepObjects(world, dt) {
   const b = world.bag;
   const people = everyone(world);
@@ -636,13 +711,17 @@ function stepObjects(world, dt) {
     b.timed = next === 0 && occupied ? dt : next;
   }
 
-  // Boxes do not count: every active player must hold the rally pad for 0.3 seconds.
-  if (!b.rally) {
-    const gathered = people.length === b.crew && people.every((q) => tile(b, Math.floor(q.x / T), Math.floor((q.fy - 6) / T)) === 'c');
+  // 집결 — 살아 있는 전원이 **같은 무리의** 집결판 c 위에 0.3초 서면 그 무리가 체크포인트가 된다 (상자는 안 센다). 무리가 여럿이면
+  // 무리마다 한 번씩 — 긴 판의 두 번째 집결은 체크포인트를 앞으로 옮긴다. 첫 집결이 집결문 C 를 영구히 연다.
+  {
+    const keys = people.map((q) => rallyKey(b, Math.floor(q.x / T), Math.floor((q.fy - 6) / T)));
+    const key = keys[0];
+    const gathered = people.length === b.crew && key && !b.rallyDone.has(key) && keys.every((k) => k === key);
     b.rallyT = gathered ? b.rallyT + dt : 0;
-    if (b.rallyT >= RALLY_FOR) {
-      b.rally = true;
+    if (gathered && b.rallyT >= RALLY_FOR) {
+      b.rallyDone.add(key); b.rally = true; b.rallyT = 0;
       b.checkpoint = [...people].sort((a, c) => a.id - c.id).map((q) => [q.x, q.fy]);
+      b.flash = { x: people[0].x, y: people[0].fy - people[0].h, t: 0.6, color: '#2f9c9c' };
     }
   }
   // 손님의 밀기 부탁은 잠깐만 산다. 살아 있는 동안은 매 프레임 밀어 준다 (사람이 충분하면).
@@ -673,16 +752,45 @@ function stepObjects(world, dt) {
     else if (!stood.has(key)) r.t = Math.max(0, r.t - dt * 1.5);
     if (r.gone === 0 && r.t === 0) b.rot.delete(key);
   }
-  // 누름판 — 사람이든 상자든 위에 있으면 눌린다
-  for (const tag of ['p', 'q']) {
-    let held = false;
-    for (let y = 0; y < b.h && !held; y++) for (let x = 0; x < b.w && !held; x++) {
-      if (b.rows[y][x] !== tag) continue;
+  // 누름판 — p·q 는 사람이든 상자든 위에 있으면 눌린다. k·e 는 **서로 다른 사람** 둘·셋 이상이 밟아야 눌린다 (상자는 안 센다).
+  for (const tag of ['p', 'q', 'k', 'e']) {
+    const need = plateNeed(world, tag);
+    const on = new Set();
+    let box = false;
+    for (const { x, y } of b.plateTiles[tag]) {
       const cx = (x + 0.5) * T, top = (y + 1) * T;
-      for (const q of people) if (Math.abs(q.x - cx) < HALF + T / 2 && Math.abs(q.fy - top) < 4) held = true;
-      for (const bx of b.boxes) if (Math.abs(bx.x - cx) < T / 2 && Math.abs(bx.y - top) < 4) held = true;
+      // 사람을 한 번씩만 센다 — 두 칸에 걸쳐 선 사람도 한 명 (몸 하나가 목록에 한 번 있다)
+      for (const q of people) if (Math.abs(q.x - cx) < HALF + T / 2 && Math.abs(q.fy - top) < 4) on.add(q);
+      if (!COUNT_NEED[tag]) for (const bx of b.boxes) if (Math.abs(bx.x - cx) < T / 2 && Math.abs(bx.y - top) < 4) box = true;
     }
-    b.plates[tag] = held;
+    b.plates[tag] = box || on.size >= need;
+  }
+  // 탑 높이 감지기 — 몸이 감지기 i 에 닿은 사람이 **전원이 층층이 쌓인 탑**의 꼭대기면 켜진다. 한 번 켜지면 남는다.
+  // 혼자 뛰어올라 스치는 것으로는 안 켜진다 — 발밑으로 이어진 사람 사슬을 센다.
+  if (!b.tower) for (const q of people) {
+    const tx = Math.floor(q.x / T);
+    const hit = [Math.floor((q.fy - 6) / T), Math.floor((q.fy - q.h + 6) / T)].some((ty) => tile(b, tx, ty) === 'i');
+    if (!hit || stackUnder(people, q) < (world.mp.on ? b.crew : 1)) continue;
+    b.tower = true; b.flash = { x: q.x, y: q.fy - q.h, t: 0.6, color: '#2f9c9c' };
+    break;
+  }
+  // 승강기 — 아래 승강장에 정원(V 둘 · N 전원)이 0.3초 서 있으면 위로. 위에서 다 내리고 1.5초 비면 도로 내려온다 —
+  // 빈 승강기는 아래서 기다린다. 누가 아직 타고 있으면 위에서 기다린다 (먼저 내린 사람이 멀리 가도 남은 사람을 태운 채 떨어지지 않게).
+  // 오르다 누가 내려 정원이 모자라면 떨어뜨리지 않고 아래 승강장으로 돌아간다.
+  for (const lf of b.lifts) {
+    const r = liftRect(lf), need = liftNeed(world, lf);
+    // 움직이는 동안은 남의 발이 꾸러미만큼 늦다 — 발판 위아래로 넉넉히 본다
+    const slack = lf.dir !== 0 ? 4 + LIFT_SPEED * 0.25 : 4;
+    const riders = people.filter((q) => Math.abs(q.fy - r.top) < slack && q.x > r.x0 - 6 && q.x < r.x1 + 6).length;
+    if (lf.dir === 0) {
+      if (lf.pos <= 0) { lf.t = riders >= need ? lf.t + dt : 0; if (lf.t >= LIFT_FOR) { lf.dir = 1; lf.t = 0; } }
+      else { lf.idle = riders === 0 ? lf.idle + dt : 0; if (lf.idle >= LIFT_RETURN) { lf.dir = -1; lf.idle = 0; } }
+    } else if (lf.dir > 0 && riders < need) lf.dir = -1;
+    if (lf.dir !== 0) {
+      lf.pos += lf.dir * LIFT_SPEED * dt;
+      if (lf.pos >= lf.len) { lf.pos = lf.len; lf.dir = 0; }
+      if (lf.pos <= 0) { lf.pos = 0; lf.dir = 0; }
+    }
   }
   // 스위치 · 열쇠 — 몸이 닿으면
   for (const q of people) {
@@ -698,12 +806,37 @@ function stepObjects(world, dt) {
       }
     }
   }
+  // 신호 버튼 d·f·g — 그 위에서 ⌥↓(웅크리기)로 누른다. 걸어 지나가는 것은 안 누른 것이다. 신호탑 z 가 보여 주는 것을 누르면
+  // 신호문 Z 가 열린 채 남는다. 틀리면 신호가 바뀌고 1초 동안 안 먹는다 — 신호탑 앞 사람에게 다시 물어야 한다.
+  b.signalLock = Math.max(0, b.signalLock - dt);
+  if (b.signalAt && !b.signalOk) {
+    const pressing = new Map();
+    for (const q of people) {
+      const ch = tile(b, Math.floor(q.x / T), Math.floor((q.fy - 6) / T));
+      if (SIGNAL_TILES.includes(ch) && q.h < BLOCK_H - 8) pressing.set(q.id, ch);
+    }
+    for (const [id, ch] of pressing) {
+      if (b.signalPress.get(id) === ch || b.signalLock > 0) continue;       // 누르고 있는 채로는 한 번뿐
+      const q = people.find((r) => r.id === id);
+      if (SIGNAL_TILES.indexOf(ch) === b.signal) { b.signalOk = true; b.flash = { x: q.x, y: q.fy - q.h, t: 0.6, color: SIGNALS[b.signal].color }; break; }
+      b.signal = (b.signal + 1 + Math.floor(Math.random() * (SIGNALS.length - 1))) % SIGNALS.length;
+      b.signalLock = SIGNAL_LOCK; b.flash = { x: q.x, y: q.fy - q.h, t: 0.6, color: RED };
+    }
+    b.signalPress = pressing;
+  }
   // 상자 — 밀리고, 무빙워크에 실려 가고, 떨어지고, 포탈을 지난다
   for (const bx of b.boxes) bx.xPrev = bx.x;
   for (const bx of b.boxes) {
     // 무빙워크 위의 상자는 혼자 간다 — 사람 걷는 속도의 절반. 밀지 않아도 누름판까지 실어다 준다.
+    // **상자 정차대** — 누름판 p·q 위에 든 상자는 밀지 않는 동안 판 가운데로 자리를 잡고, 벨트도 더 싣고 가지 않는다.
+    // 손님의 밀기 부탁이 0.1초 늦게 끝나 몇 픽셀 지나쳐도 누름판을 놓치지 않는다.
     const belt = tile(b, Math.floor(bx.x / T), Math.floor((bx.y + 2) / T));
-    const drift = bx.px ? bx.px * PUSH : belt === '>' ? CONVEYOR * 0.5 : belt === '<' ? -CONVEYOR * 0.5 : 0;
+    const plateUnder = tile(b, Math.floor(bx.x / T), Math.floor((bx.y - T / 2) / T));
+    // 밀던 손이 떨어지고 0.3초 지나야 선다 — 누름판을 **지나가게** 미는 중에는 서지 않는다 (미는 틈마다 판 가운데로 끌려오면 못 넘긴다)
+    bx.pushAgo = bx.px ? 0 : (bx.pushAgo ?? 1) + dt;
+    const parked = bx.pushAgo > 0.3 && (plateUnder === 'p' || plateUnder === 'q');
+    if (parked && (bx.vy ?? 0) === 0) { const cx = (Math.floor(bx.x / T) + 0.5) * T; bx.x += (cx - bx.x) * Math.min(1, dt * 10); }
+    const drift = bx.px ? bx.px * PUSH : parked ? 0 : beltDir(b, belt) * CONVEYOR * 0.5;
     if (drift) {
       const dir = Math.sign(drift);
       const nx = bx.x + drift * dt;
@@ -785,6 +918,8 @@ function boxFloor(world, box, y = box.y) {
   }
   for (const o of b.boxes) if (o !== box && Math.abs(o.x - box.x) < T - 2 && o.y - T >= y - 1) take(o.y - T);
   for (const tr of b.tracks) { const r = trackRect(tr); if (box.x > r.x0 && box.x < r.x1 && r.top >= y - 1) take(r.top); }
+  // 승강기 발판은 오르는 중이면 상자 밑면보다 조금 위에 있다 — 그래도 그 위에 앉은 것이다 (같이 올라간다)
+  for (const lf of b.lifts) { const r = liftRect(lf); if (box.x > r.x0 && box.x < r.x1 && r.top >= y - 6 && (best === null || r.top < best)) best = r.top; }
   return best;
 }
 
@@ -850,7 +985,7 @@ function drawTiles(ctx, world, time, boil) {
   const on = blinkOn(b), warn = blinkWarn(b);
   for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
     const ch = b.rows[ty][tx];
-    if (ch === '.' || ch === '-') continue;
+    if (ch === '.' || ch === '-' || ch === 'V' || ch === 'N') continue;
     const x = tx * T, y = ty * T;
     switch (ch) {
       case '#': {
@@ -942,10 +1077,10 @@ function drawTiles(ctx, world, time, boil) {
         }
         break;
       }
-      case 'A': case 'P': case 'Q': case 'C': case 'T': {
+      case 'A': case 'P': case 'Q': case 'C': case 'T': case 'K': case 'E': case 'I': case 'Z': {
         const open = !solidTile(b, ch);
         // 롤 셔터. 열리면 위 통으로 말려 올라간다 — 위 칸(통)이 있을 때만 통을 그린다.
-        const topMost = !'APQCT'.includes(tile(b, tx, ty - 1));
+        const topMost = !'APQCTKEIZ'.includes(tile(b, tx, ty - 1));
         if (topMost) stroke(ctx, [[x - 3, y - 2], [x + T + 3, y - 2], [x + T + 3, y + 6], [x - 3, y + 6]], { width: 2.4, color: INK, seed: tx, amp: 0.5, close: true, halo: false, fill: PAPER_SOLID });
         if (!open) {
           ctx.fillStyle = '#6b665c'; ctx.globalAlpha = 0.25; ctx.fillRect(x + 3, y, T - 6, T); ctx.globalAlpha = 1;
@@ -963,12 +1098,27 @@ function drawTiles(ctx, world, time, boil) {
         circle(ctx, x + T / 2, y + T - 22 + down, 2.6, { width: 1.4, color: INK, fill: b.latched ? '#3f8f56' : PAPER_SOLID, halo: false, seed: tx, amp: 0.1 });
         break;
       }
-      case 'p': case 'q': case 'c': {
-        const held = ch === 'c' ? b.rallyT > 0 || b.rally : b.plates[ch];
+      case 'p': case 'q': case 'c': case 'k': case 'e': {
+        const held = ch === 'c' ? b.rallyT > 0 || b.rallyDone.has(rallyKey(b, tx, ty)) : b.plates[ch];
         const dy = held ? 4 : 0;
         const fill = ch === 'c' ? 'rgba(47,156,156,.65)' : held ? 'rgba(63,143,86,.7)' : 'rgba(63,143,86,.4)';
         stroke(ctx, [[x + 2, y + T - 8 + dy], [x + T - 2, y + T - 8 + dy], [x + T - 2, y + T], [x + 2, y + T]], { width: 2.2, color: INK, seed: tx * 3 + ty, amp: 0.4, close: true, halo: false, fill, sharp: true });
         for (const k of [8, T / 2, T - 8]) circle(ctx, x + k, y + T - 4 + dy, 1.4, { width: 1, color: INK, fill: INK, halo: false, seed: 1, amp: 0 });
+        if (COUNT_NEED[ch]) {
+          // 「2명」「3명」 — 서로 다른 사람이 그만큼 밟아야 눌린다
+          ctx.save(); ctx.font = '700 10px "Apple SD Gothic Neo", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = PAPER_SOLID; ctx.globalAlpha = 0.9; ctx.fillRect(x + T / 2 - 11, y + T - 24 + dy, 22, 13); ctx.globalAlpha = 1;
+          ctx.fillStyle = held ? '#3f8f56' : RED; ctx.fillText(`${COUNT_NEED[ch]}명`, x + T / 2, y + T - 17 + dy);
+          ctx.restore();
+        }
+        break;
+      }
+      case 'i': {
+        // 탑 감지기 — 벽에 붙은 눈. 전원이 쌓인 탑의 꼭대기 사람이 닿으면 켜져서 남는다.
+        const lit = b.tower;
+        stroke(ctx, [[x + 7, y + 6], [x + T - 7, y + 6], [x + T - 7, y + T - 6], [x + 7, y + T - 6]], { width: 2, color: INK, seed: tx + ty, amp: 0.4, close: true, halo: false, fill: lit ? 'rgba(47,156,156,.55)' : 'rgba(107,102,92,.25)' });
+        circle(ctx, x + T / 2, y + T / 2, 6.5, { width: 2, color: INK, fill: lit ? '#2f9c9c' : PAPER_SOLID, halo: false, seed: tx, amp: 0.3 });
+        circle(ctx, x + T / 2, y + T / 2, 2.2, { width: 1, color: INK, fill: INK, halo: false, seed: tx + 1, amp: 0.1 });
         break;
       }
       case 't': case 'l': {
@@ -988,6 +1138,31 @@ function drawTiles(ctx, world, time, boil) {
         stroke(ctx, [[x, y], [x + T, y]], { width: 2.4, color: INK, seed: tx, amp: 0.4, halo: false });
         const ph = ((time * (ch === '>' ? 1 : -1) * 40) % T + T) % T;
         stroke(ctx, [[x + ph - 6, y + T / 2], [x + ph, y + T / 2 - (ch === '>' ? 5 : -5) * 0 + 0], [x + ph - 6, y + T / 2 + 6]].map(([a, c]) => [a, c]), { width: 1.6, color: '#2f6fb0', seed: tx, amp: 0.2, halo: false, alpha: 0.9 });
+        break;
+      }
+      case 'z': {
+        // 신호탑 — 판자 위에 지금 신호(모양 + 색). 누르는 사람 화면에서는 멀어서 안 보인다 — 여기 선 사람이 말해 줘야 한다.
+        const s = SIGNALS[b.signal] ?? SIGNALS[0];
+        stroke(ctx, [[x + T / 2, y + T], [x + T / 2, y + T * 0.45]], { width: 3, color: INK, seed: tx, amp: 0.3, halo: false });
+        stroke(ctx, [[x - 4, y - T * 0.35], [x + T + 4, y - T * 0.35], [x + T + 4, y + T * 0.45], [x - 4, y + T * 0.45]], { width: 2.6, color: INK, seed: tx + ty, amp: 0.5, close: true, halo: false, fill: PAPER_SOLID, sharp: true });
+        if (b.signalOk) stroke(ctx, [[x + 8, y + 2], [x + T / 2 - 2, y + 12], [x + T - 6, y - 8]], { width: 3.4, color: '#3f8f56', seed: tx, amp: 0.3, halo: false });
+        else drawSignal(ctx, x + T / 2, y + 2, b.signal, 13, tx);
+        break;
+      }
+      case 'd': case 'f': case 'g': {
+        // 신호 버튼 — 바닥의 둥근 버튼 위에 모양. ⌥↓ 로 누른다.
+        const k = SIGNAL_TILES.indexOf(ch), pressed = [...b.signalPress.values()].includes(ch);
+        stroke(ctx, [[x + 4, y + T - 9 + (pressed ? 3 : 0)], [x + T - 4, y + T - 9 + (pressed ? 3 : 0)], [x + T - 4, y + T], [x + 4, y + T]], { width: 2.2, color: INK, seed: tx * 3 + ty, amp: 0.4, close: true, halo: false, fill: 'rgba(107,102,92,.25)', sharp: true });
+        drawSignal(ctx, x + T / 2, y + T - 20, k, 8, tx);
+        break;
+      }
+      case 'J': case 'j': {
+        // 분기 벨트 — 누름판을 밟는 동안만 앞으로, 아니면 되돌아오는 쪽으로. 주황.
+        const d = beltDir(b, ch);
+        ctx.fillStyle = '#d97b1f'; ctx.globalAlpha = 0.3; ctx.fillRect(x, y, T, T); ctx.globalAlpha = 1;
+        stroke(ctx, [[x, y], [x + T, y]], { width: 2.4, color: INK, seed: tx, amp: 0.4, halo: false });
+        const ph = ((time * d * 40) % T + T) % T;
+        stroke(ctx, [[x + ph - 6 * d, y + T / 2 - 6], [x + ph, y + T / 2], [x + ph - 6 * d, y + T / 2 + 6]], { width: 1.6, color: '#d97b1f', seed: tx, amp: 0.2, halo: false, alpha: 0.9 });
         break;
       }
       case 'u': case 'U': case 'w': case 'W': {
@@ -1020,6 +1195,21 @@ function drawTiles(ctx, world, time, boil) {
     ctx.fillStyle = '#c9a86a'; ctx.globalAlpha = 0.5; ctx.fillRect(r.x0, r.top, TRACK_W, r.bottom - r.top); ctx.globalAlpha = 1;
     stroke(ctx, [[r.x0, r.top], [r.x1, r.top], [r.x1, r.bottom], [r.x0, r.bottom]], { width: 2.4, color: INK, seed: tr.x0, amp: 0.5, close: true, halo: false, sharp: true });
   }
+  // 승강기 — 길 양쪽 점선, 발판, 아래서 기다릴 때 「2명」
+  for (const lf of b.lifts) {
+    const cx = (lf.x + 0.5) * T;
+    ctx.save(); ctx.setLineDash([5, 5]); ctx.strokeStyle = '#8a5bb5'; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.55;
+    ctx.beginPath(); ctx.moveTo(cx - T * 1.5, lf.y0 * T + T * 0.3); ctx.lineTo(cx - T * 1.5, (lf.y1 + 1) * T); ctx.moveTo(cx + T * 1.5, lf.y0 * T + T * 0.3); ctx.lineTo(cx + T * 1.5, (lf.y1 + 1) * T); ctx.stroke(); ctx.restore();
+    const r = liftRect(lf);
+    ctx.fillStyle = '#8a5bb5'; ctx.globalAlpha = 0.35; ctx.fillRect(r.x0, r.top, r.x1 - r.x0, r.bottom - r.top); ctx.globalAlpha = 1;
+    stroke(ctx, [[r.x0, r.top], [r.x1, r.top], [r.x1, r.bottom], [r.x0, r.bottom]], { width: 2.4, color: INK, seed: lf.x, amp: 0.5, close: true, halo: false, sharp: true });
+    if (lf.dir === 0 && lf.pos <= 0) {
+      ctx.save(); ctx.font = '700 11px "Apple SD Gothic Neo", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const need = liftNeed(world, lf), label = lf.all ? `${need}명 다` : `${need}명`, tw = ctx.measureText(label).width;
+      ctx.fillStyle = PAPER_SOLID; ctx.globalAlpha = 0.9; ctx.fillRect(cx - tw / 2 - 3, r.top - 17, tw + 6, 14); ctx.globalAlpha = 1;
+      ctx.fillStyle = RED; ctx.fillText(label, cx, r.top - 10); ctx.restore();
+    }
+  }
 }
 
 function drawPortal(ctx, cx, bottom, color, time, exit, lit = false) {
@@ -1043,6 +1233,14 @@ function drawKey(ctx, cx, cy, color, seed) {
   stroke(ctx, [[cx - 2, cy], [cx + 13, cy]], { width: 3, color, seed: seed + 2, amp: 0.3, halo: false });
   stroke(ctx, [[cx + 8, cy], [cx + 8, cy + 5]], { width: 3, color, seed: seed + 3, amp: 0.2, halo: false });
   stroke(ctx, [[cx + 12, cy], [cx + 12, cy + 4]], { width: 3, color, seed: seed + 4, amp: 0.2, halo: false });
+}
+
+/// 신호 모양 — 세모·동그라미·네모. 색만으로 가르지 않는다 (색을 못 가르는 사람도 있다).
+function drawSignal(ctx, cx, cy, k, r, seed) {
+  const s = SIGNALS[k] ?? SIGNALS[0];
+  if (k === 0) stroke(ctx, [[cx, cy - r], [cx + r * 0.95, cy + r * 0.7], [cx - r * 0.95, cy + r * 0.7]], { width: 2.6, color: INK, seed, amp: 0.4, close: true, halo: false, fill: s.color, sharp: true });
+  else if (k === 1) circle(ctx, cx, cy, r * 0.85, { width: 2.6, color: INK, fill: s.color, halo: false, seed, amp: 0.4 });
+  else stroke(ctx, [[cx - r * 0.8, cy - r * 0.8], [cx + r * 0.8, cy - r * 0.8], [cx + r * 0.8, cy + r * 0.8], [cx - r * 0.8, cy + r * 0.8]], { width: 2.6, color: INK, seed, amp: 0.4, close: true, halo: false, fill: s.color, sharp: true });
 }
 
 function drawBox(ctx, bx, seed) {
@@ -1193,6 +1391,8 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
     } else {
       // 손님도 통과 왕복 발판은 같은 식으로 굴려서 매끈하게 보인다 (방장 꾸러미가 자리를 잡아 준다)
       for (const tr of b.tracks) { tr.dir = tr.dir ?? 1; const before = tr.pos; tr.pos += tr.dir * TRACK_SPEED * dt; if (tr.pos >= tr.len) { tr.pos = tr.len; tr.dir = -1; } if (tr.pos <= 0) { tr.pos = 0; tr.dir = 1; } tr.vx = dt > 0 ? (tr.pos - before) / dt : 0; }
+      // 승강기도 방장이 준 방향으로 이어 굴린다 — 그래야 타고 있는 내 발이 꾸러미 사이에서 안 튄다
+      for (const lf of b.lifts) if (lf.dir) lf.pos = Math.max(0, Math.min(lf.len, lf.pos + lf.dir * LIFT_SPEED * dt));
       for (const br of b.barrels) { if (!br.dead) { br.x += br.vx * dt; br.spin += br.vx * dt / BARREL_R; } }
       if (meAtExit(world) && world.input.jump && !b.asked) { world.send?.({ t: 'gm', k: 'exit', ep: world.mp.stageEpoch }); b.asked = true; }
       if (!world.input.jump) b.asked = false;
@@ -1312,8 +1512,10 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
     if (!b?.rows) return null;
     return {
       st: b.stage, rs: b.resets, ep: world.mp.stageEpoch, ck: Math.round(b.clock * 100) / 100,
-      ks: [...b.opened].join(''), la: b.latched ? 1 : 0, pl: (b.plates.p ? 'p' : '') + (b.plates.q ? 'q' : ''),
-      ra: b.rally ? 1 : 0, cp: b.checkpoint?.map((p) => p.map(Math.round)) ?? null,
+      ks: [...b.opened].join(''), la: b.latched ? 1 : 0, pl: (b.plates.p ? 'p' : '') + (b.plates.q ? 'q' : '') + (b.plates.k ? 'k' : '') + (b.plates.e ? 'e' : ''),
+      tw: b.tower ? 1 : 0, lf: b.lifts.map((l) => [Math.round(l.pos), l.dir]),
+      sg: b.signal, so: b.signalOk ? 1 : 0, sl: Math.round(b.signalLock * 100) / 100,
+      ra: [...b.rallyDone], cp: b.checkpoint?.map((p) => p.map(Math.round)) ?? null,
       tm: Math.round(b.timed * 100) / 100, ld: b.ladderOpen ? 1 : 0,
       bx: b.boxes.map((x) => [Math.round(x.x), Math.round(x.y)]),
       br: b.barrels.filter((r) => !r.dead).map((r) => [Math.round(r.x), Math.round(r.y), Math.round(r.vx), r.falls]),
@@ -1351,8 +1553,23 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
     if (typeof d.ks === 'string') b.opened = new Set(d.ks.split('').filter((c) => 'ryb'.includes(c)));
     for (const k of Object.keys(b.keys)) b.keys[k].taken = b.opened.has(k);
     b.latched = !!d.la;
-    if (typeof d.pl === 'string') { b.plates.p = d.pl.includes('p'); b.plates.q = d.pl.includes('q'); }
-    b.rally = !!d.ra;
+    if (typeof d.pl === 'string') { b.plates.p = d.pl.includes('p'); b.plates.q = d.pl.includes('q'); b.plates.k = d.pl.includes('k'); b.plates.e = d.pl.includes('e'); }
+    b.tower = !!d.tw;
+    if (Number.isInteger(d.sg) && d.sg >= 0 && d.sg < SIGNALS.length) b.signal = d.sg;
+    b.signalOk = !!d.so;
+    if (Number.isFinite(d.sl)) b.signalLock = Math.max(0, Math.min(SIGNAL_LOCK, d.sl));
+    if (Array.isArray(d.lf)) d.lf.forEach((row, i) => {
+      const lf = b.lifts[i];
+      if (!lf || !Array.isArray(row) || row.length < 2 || !row.every(Number.isFinite)) return;
+      const target = Math.max(0, Math.min(lf.len, row[0]));
+      lf.dir = row[1] < 0 ? -1 : row[1] > 0 ? 1 : 0;
+      // 톡 옮기지 않고 녹인다 — 타고 있는 사람의 발이 튀지 않게. 많이 벌어졌으면 맞춘다.
+      if (Math.abs(target - lf.pos) > 60) lf.pos = target; else lf.pos += (target - lf.pos) * 0.35;
+    });
+    // 집결한 무리들. 옛 꼴(0/1)도 받는다 — 무리 이름이 없으면 「한 번 집결했다」로만 친다.
+    if (Array.isArray(d.ra)) b.rallyDone = new Set(d.ra.filter((k) => typeof k === 'string' && /^\d+,\d+$/.test(k) && +k.split(',')[0] < b.w && +k.split(',')[1] < b.h));
+    else if (!d.ra) b.rallyDone = new Set();
+    b.rally = b.rallyDone.size > 0 || (!Array.isArray(d.ra) && !!d.ra);
     if (Array.isArray(d.cp) && d.cp.length === b.crew && d.cp.every((p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite))) {
       b.checkpoint = d.cp.map((p) => [Math.max(HALF, Math.min(world.w - HALF, p[0])), Math.max(T, Math.min(world.groundY, p[1]))]);
     } else if (!b.rally) b.checkpoint = null;
@@ -1441,4 +1658,4 @@ export function rewind(world, why) {
   say(world, why ? `${why} — 판을 되감았다` : '판을 되감았다', 2.5);
 }
 
-export { loadStage, placeAt, exitState, stepObjects, blinkOn, tile, solidTile, floorBelow, bodyBlocked, stageNo, STAGES, WORLDS };
+export { loadStage, placeAt, exitState, stepObjects, blinkOn, tile, solidTile, floorBelow, bodyBlocked, stageNo, beltDir, liftRect, stackUnder, rallyKey, SIGNALS, SIGNAL_TILES, STAGES, WORLDS };
