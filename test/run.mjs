@@ -21,7 +21,8 @@ const SUITES = [
   ['coop-play.mjs', '넷이서 실전', '판마다 풀이 그대로 키를 눌러 넷이 실제로 깬다'],
   ['coop-sync.mjs', '싱크 넷이서', '재접속·비대칭 지연·패킷 손실·연속 전환에도 모두 같은 판·서로 다 보인다'],
   ['coop-sync.mjs', '싱크 셋이서', '같은 검사를 셋이서로', { GAME: 'trio' }],
-  ['trio.mjs', '셋이서', '판 열둘 · 시작 자리 셋 · 셋이어야 시작 · 출구 · 세계 색 · 게임 갈아 끼우기'],
+  ['coop-lifecycle.mjs', '협동 초기화', '실제 전송 · 이전 판 메시지 · 재시작 · 시작 카메라 · 발판 · 부활'],
+  ['trio.mjs', '셋이서', '판 열셋 · 시작 자리 셋 · 셋이어야 시작 · 출구 · 세계 색 · 게임 갈아 끼우기'],
   ['coop-play.mjs', '셋이서 실전', '판마다 풀이 그대로 키를 눌러 셋이 실제로 깬다', { GAME: 'trio' }],
 ];
 
@@ -40,8 +41,9 @@ for (const [file, name, what, env] of SUITES) {
   const tally = lines.find((l) => l.startsWith('::결과'));
   // 이름에 빈칸이 들어 있다 (「판 안의 규칙」). 숫자는 맨 뒤 한 토막이다.
   const [passed, total] = (tally?.trim().split(' ').pop() ?? '0/0').split('/').map(Number);
-  cases += total;
-  bad += total - passed;
+  const crashed = !tally || (run.status !== 0 && passed === total);
+  cases += total + (crashed ? 1 : 0);
+  bad += total - passed + (crashed ? 1 : 0);
 
   // 확인한 것들을 묶음 제목과 함께 그대로 옮겨 적는다.
   const rows = [];
@@ -54,10 +56,10 @@ for (const [file, name, what, env] of SUITES) {
     // 재 본 값 (note). 통과·실패는 아니지만 남겨 둘 값이다.
     if (line.startsWith('     ')) rows.push({ note: line.trim() });
   }
-  report.push({ file, name, what, passed, total, rows, crashed: !tally });
+  report.push({ file, name, what, passed, total, rows, crashed: !tally || crashed });
 
-  const mark = !tally ? '터짐' : passed === total ? '통과' : `${total - passed}개 실패`;
-  console.log(`${passed === total && tally ? '  ok  ' : '  FAIL'} ${name.padEnd(16)} ${passed}/${total} ${mark}`);
+  const mark = !tally || crashed ? '터짐' : passed === total ? '통과' : `${total - passed}개 실패`;
+  console.log(`${passed === total && tally && !crashed ? '  ok  ' : '  FAIL'} ${name.padEnd(16)} ${passed}/${total} ${mark}`);
   if (!tally) console.log(run.stdout + run.stderr);
   else for (const l of lines) if (l.includes('FAIL')) console.log(`        ${l.trim()}`);
 }

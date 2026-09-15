@@ -11,6 +11,7 @@
   u U · w W  포탈 한 쌍       -  왕복 발판이 오가는 길(어디서든 탈 수 있다)   |  리프트
   { }  통이 굴러 나오는 구멍(왼쪽/오른쪽으로)     >  <  컨베이어     v  삭은 발판
   ~  깜빡이는 발판 — 2초 켜지고 2초 꺼진다. 켜진 동안 건널 수 있는 폭이다
+  c/C  전원 집결판/문     t/T  10초 스위치/문     l/L  구조 레버/접이식 사다리
   1 2 3  시작 자리          O  출구 포탈
 """
 SCREEN_W, SCREEN_H = 36, 22
@@ -100,4 +101,8 @@ def check(g):
         made = {'a': 'n', 'p': 'M', 'q': 'm'}[sw]
         if a.count(sw) == 1 and a.count(sw.upper()) == 0 and a.count(made) == 0: bad.append(f"'{sw}' 는 있는데 '{sw.upper()}' 도 '{made}' 도 없다")
         if a.count(made) and a.count(sw) == 0: bad.append(f"발판 '{made}' 는 있는데 '{sw}' 가 없다")
+    if a.count('C') and a.count('c') < len(CREW): bad.append("집결문 C 에 필요한 c 가 인원보다 적다")
+    for switch, made in (('t', 'T'), ('l', 'L')):
+        if a.count(switch) > 1: bad.append(f"'{switch}' 가 둘")
+        if a.count(made) and not a.count(switch): bad.append(f"'{made}' 는 있는데 '{switch}' 가 없다")
     return bad

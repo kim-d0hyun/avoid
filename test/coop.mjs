@@ -45,10 +45,10 @@ const other = (world, id, tx, ty, extra = {}) => {
   world.mp.others.set(id, o); return o;
 };
 
-say('판 — 열넷이 다 열리고 크기가 맞다');
+say('판 — 열다섯이 다 열리고 크기가 맞다');
 {
   const world = make();
-  check('판 수', STAGES.length, 14);
+  check('판 수', STAGES.length, 15);
   for (const s of STAGES) {
     const world2 = make(s.name);
     const b = world2.bag;
@@ -57,7 +57,7 @@ say('판 — 열넷이 다 열리고 크기가 맞다');
     if (!b.spawn.every(Boolean)) check(`${s.name} 시작 자리 넷`, b.spawn.every(Boolean), true);
     if (world2.w !== s.w * T || world2.groundY !== s.h * T) check(`${s.name} 판 크기`, [world2.w, world2.groundY], [s.w * T, s.h * T]);
   }
-  ok('열넷 다 열렸다', true);
+  ok('열다섯 다 열렸다', true);
   check('첫 판은 뒷마당 표지판', [world.bag.def.world, world.bag.def.name], ['뒷마당', '표지판']);
   check('내 발이 시작 줄에 선다', feetRow(world), 18);
   check('시작 자리 칸', col(world), 20);
@@ -367,7 +367,7 @@ say('출구 — 「넷」 판은 넷이 다, 「한 명」 판은 하나면');
 
 say('마지막 판을 깨면 끝');
 {
-  const world = make('종점', { mp: true });
+  const world = make('마지막 열차', { mp: true });
   const b = world.bag;
   setPos(world, b.exit.x, b.exit.y);
   other(world, 2, b.exit.x, b.exit.y); other(world, 3, b.exit.x, b.exit.y); other(world, 4, b.exit.x, b.exit.y);
@@ -467,7 +467,7 @@ say('손님 — 밀기와 출구는 방장에게 부탁한다');
   other(host, 2, 10, 18, { vx: 4 });
   const box = host.bag.boxes.find((b) => Math.round(b.y / T) === 19);
   const bx0 = box.x;
-  coop.message(host, 2, { k: 'push', i: host.bag.boxes.indexOf(box), d: 1 });
+  coop.message(host, 2, { k: 'push', i: host.bag.boxes.indexOf(box), d: 1, ep: host.mp.stageEpoch });
   tick(host, 30, {});
   ok('방장이 대신 민다', box.x > bx0 + 10);
   // 출구 부탁
@@ -930,6 +930,48 @@ say('열린 판 — 방장이 판을 깨면 다음 판까지 열리고 셸에 �
   check('다음 판이 열렸다', b.stage, 1);
   check('열린 판이 1까지', world.progress.coop, 1);
   check('셸에도 남겼다', saved, [['coop', 1]]);
+}
+
+say('새 협동 장치 — 전원 집결 체크포인트, 시한문, 구조 사다리');
+{
+  const world = make('표지판', { mp: true, host: true });
+  world.bag.chutes = [];
+  for (let x = 5; x <= 8; x++) world.bag.rows[18][x] = 'c';
+  for (let y = 16; y <= 18; y++) world.bag.rows[y][12] = 'C';
+  setPos(world, 5, 18);
+  for (const [id, x] of [[2, 6], [3, 7], [4, 8]]) other(world, id, x, 18);
+  tick(world, 17, {});
+  ok('0.3초 전에는 집결문이 닫혀 있다', coopMod.solidTile(world.bag, 'C'));
+  tick(world, 2, {});
+  ok('넷이 모이면 집결문이 열린다', !coopMod.solidTile(world.bag, 'C') && world.bag.rally);
+  const checkpointX = world.player.x;
+  setPos(world, 20, 18); world.player.dead = true; world.player.deadFor = 0;
+  tick(world, 50, {});
+  check('사망하면 집결 지점에서 부활한다', Math.round(world.player.x), Math.round(checkpointX));
+  const cam = coop.camera(world, 600, 400);
+  ok('부활 화면은 집결 자리를 가운데 둔다 (출발 자리로 튀지 않는다)', Math.abs((cam.x + 300) - (checkpointX + 1.5 * T)) < T * 2);
+
+  world.bag.rows[18][22] = 't';
+  for (let y = 16; y <= 18; y++) world.bag.rows[y][25] = 'T';
+  setPos(world, 22, 18); tick(world, 1, {});
+  ok('시한 스위치가 문을 연다', world.bag.timed > 9 && !coopMod.solidTile(world.bag, 'T'));
+  setPos(world, 25, 18); world.bag.timed = 1 / 120; tick(world, 2, {});
+  ok('사람이 문 안에 있으면 닫히지 않는다', world.bag.timed > 0 && !coopMod.solidTile(world.bag, 'T'));
+
+  world.bag.rows[18][28] = 'l';
+  for (let y = 15; y <= 18; y++) world.bag.rows[y][30] = 'L';
+  setPos(world, 30, 18); tick(world, 1, { jump: true });
+  ok('펼치기 전 구조 사다리는 잡히지 않는다', !world.player.onLadder);
+  setPos(world, 28, 18); tick(world, 1, {});
+  ok('구조 스위치를 밟으면 사다리가 펼쳐진다', world.bag.ladderOpen);
+  setPos(world, 30, 18); tick(world, 1, { jump: true });
+  ok('펼친 구조 사다리를 잡는다', world.player.onLadder);
+
+  const guest = make('표지판', { mp: true, host: false });
+  world.bag.timed = 4;
+  coop.unpack(guest, coop.pack(world));
+  ok('신규 장치 상태와 체크포인트가 동기화된다', guest.bag.rally && guest.bag.timed > 0
+    && guest.bag.ladderOpen && guest.bag.checkpoint?.length === 4);
 }
 
 say('대기방 — 인원이 다 안 차면 뜬다 (인원으로 막는 게임에만)');

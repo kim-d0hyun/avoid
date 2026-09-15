@@ -526,7 +526,7 @@ say('판 고르기 — 방장은 판을 골라 바로 그 판부터 한다');
   into(w, 'together');
   check('방장 메뉴에 판 고르기가 있다', labels(w).includes('판 고르기'), true);
   into(w, 'stage');
-  check('열넷 다 목록에 있다', menuItems(w).length, 14);
+  check('열다섯 다 목록에 있다', menuItems(w).length, 15);
   check('라벨은 월드 번호 · 이름', menuItems(w)[0].label, '1-1 · 표지판');
   const locked = menuItems(w).map((i) => !!i.locked);
   check('셋까지 열리고 넷째부터 잠긴다', [locked[0], locked[2], locked[3], locked[13]], [false, false, true, true]);

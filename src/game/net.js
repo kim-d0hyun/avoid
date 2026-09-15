@@ -156,13 +156,14 @@ export function interpolate(world, dt) {
 ///
 /// 칸: x, vx, air, vy, crouch, facing, 상태, 잡은사람, 뿌리친횟수, 피한수
 /// 상태는 0 살아있음 · 1 죽음 · 2 다음판대기.
-function myPacket(world) {
+export function myPacket(world) {
   const p = world.player;
   const r1 = (v) => Math.round(v * 10) / 10;
   const state = world.mp.waiting ? 2 : (p.dead ? 1 : 0);   // 구경 중이면 늘 2 — 명단 없이도 각자 자기 상태로 보이고 숨는다
   return ['p', r1(p.x), r1(p.vx), r1(p.air), r1(p.vy),
           Math.round(p.crouch * 100) / 100, p.facing, state,
-          p.grabbing, p.escapes, world.dodged];
+          p.grabbing, p.escapes, world.dodged,
+          gameOf(world).rewindable ? [world.gameId, world.mp.stageEpoch] : null];
 }
 
 export function pump(world, dt, shell) {
@@ -210,7 +211,7 @@ export function pump(world, dt, shell) {
   }
 
   // 방장: 모두의 자리 + 이번에 새로 뿌린 똥.
-  const players = [[mp.myId, ...myPacket(world).slice(1)]];
+  const players = [[mp.myId, ...myPacket(world).slice(1, 11)]];
   for (const other of mp.others.values()) {
     // 손님에게서 **받은 그대로** 넘긴다. 여기서 보간한 값을 실으면 방장을 거칠 때마다
     // 한 번 더 늦어져서, 손님끼리는 서로 두 배로 늦게 보인다.
@@ -226,6 +227,7 @@ export function pump(world, dt, shell) {
                   Math.round(other.age * 1000) / 1000]);
   }
   const snapshot = {
+    sq: mp.snapshotSeq = (mp.snapshotSeq ?? 0) + 1,
     t: 's', ms: Math.round(world.elapsed * 1000), st: world.state, r: mp.round, pl: players,
     // **판의 크기.** 손님은 이 크기로 세계를 굴리고, 그리는 순간에만 자기 화면에 맞춘다.
     // 각자 자기 화면 크기로 굴리면 똥 떨어지는 자리도, 남이 서 있는 자리도 서로 어긋난다.
@@ -272,6 +274,8 @@ export function handleMessage(world, shell, from, message, api) {
   // 손님이 보내는 자리 꾸러미. 배열로 와서 첫 칸이 종류다.
   if (Array.isArray(message) && message[0] === 'p') {
     if (mp.role !== 'host') return;
+    if (gameOf(world).rewindable && (!Array.isArray(message[11])
+        || message[11][0] !== world.gameId || message[11][1] !== mp.stageEpoch)) return;
     const other = mp.others.get(from) ?? blankOther(from, mp.names.get(from) ?? '누군가');
     applyPacket(other, message, other.rtt / 2);   // 상태(구경/죽음/삶)는 보낸 사람이 정한다 — 여기서 안 덮는다
     mp.others.set(from, other);
@@ -327,6 +331,14 @@ export function handleMessage(world, shell, from, message, api) {
   switch (message.t) {
     case 's': {
       if (mp.role !== 'guest') return;
+      // Reject old snapshots before they can change geometry or player state.
+      if (Number.isInteger(message.sq)) {
+        if (message.sq <= (mp.lastSnapshotSeq ?? -1)) return;
+        mp.lastSnapshotSeq = message.sq;
+      }
+      if (message.g === world.gameId && Number.isInteger(message.x?.ep)
+          && message.x.ep < (mp.stageEpoch ?? 0)) return;
+      const newRound = message.r > mp.round;
       // 방장이 쓰는 판 크기를 그대로 따라간다. 이게 맞아야 모두 같은 화면을 본다.
       if (message.vw && (message.vw !== world.w || message.vh !== world.h)) {
         api.setSize(message.vw, message.vh);
@@ -374,6 +386,15 @@ export function handleMessage(world, shell, from, message, api) {
 
       // **모양을 안 믿는다.** 남이 보낸 글자다 — 줄이 잘렸거나, 다음 버전이 칸을 바꿨거나,
       // 아무거나 올 수 있다. 여기서 터지면 그 프레임 처리가 통째로 날아간다.
+      const joiningRound = newRound && message.st === 'play'
+        && Array.isArray(message.pl) && message.pl.some((row) => Array.isArray(row) && row[0] === mp.myId && row[7] === 0);
+      if (joiningRound) {
+        mp.waiting = false;
+        api.restart(world);
+        world.state = 'play';
+      }
+      // Load the new map before applying positions expressed in its coordinates.
+      if (message.x && typeof message.x === 'object') gameOf(world).unpack?.(world, message.x);
       const seen = new Set();
       for (const row of Array.isArray(message.pl) ? message.pl : []) {
         if (!Array.isArray(row) || row.length < 8) continue;
@@ -407,8 +428,10 @@ export function handleMessage(world, shell, from, message, api) {
         mp.waiting = true;
         world.player.dead = true;
       }
-      if (message.x && typeof message.x === 'object') gameOf(world).unpack?.(world, message.x);
       if (message.st === 'ready' && world.state !== 'ready') world.state = 'ready';
+      if (message.st === 'over' && gameOf(world).rewindable && world.state !== 'over') {
+        world.state = 'over'; world.overFor = 0;
+      }
       return;
     }
     // 게임이 자기끼리 주고받는 말. 셸도 net 도 안을 열어 보지 않는다.
@@ -416,10 +439,16 @@ export function handleMessage(world, shell, from, message, api) {
       gameOf(world).message?.(world, from, message);
       return;
     case 'go':
+      if (mp.role !== 'guest' || message.r <= mp.round) return;
+      if (typeof message.g === 'string' && games.some((g) => g.id === message.g)) {
+        if (message.g !== world.gameId) pickGame(world, message.g);
+        if (Number.isFinite(message.gs)) mp.hostGameGen = message.gs;
+      }
       mp.round = message.r;
       mp.results = null;
       mp.waiting = false;
       api.restart(world);
+      if (message.x) gameOf(world).unpack?.(world, message.x);
       world.state = 'play';
       return;
     case 'over':
@@ -561,10 +590,11 @@ export function startRound(world, shell, api) {
     const other = mp.others.get(id);
     other.dead = false;
     other.deadFor = 0;
+    other.waiting = false; other.state = 0;
   }
   api.restart(world);
   world.state = 'play';
-  shell.net.send({ t: 'go', r: mp.round });
+  shell.net.send({ t: 'go', r: mp.round, g: world.gameId, gs: world.gameGen ?? 0, x: gameOf(world).pack?.(world) });
 }
 
 /// 방장에게 내가 죽었다고 알린다. 방장이면 자기 장부에 적는다.
@@ -618,6 +648,8 @@ export function roleChanged(world, role, code, myId, myName) {
   mp.lost = false;
   mp.namesSent = '';
   mp.hostGameGen = undefined;
+  mp.stageEpoch = 0; mp.snapshotSeq = 0; mp.lastSnapshotSeq = -1;
+  mp.round = 0;
   mp.role = role;
   mp.code = code;
   mp.myId = myId;

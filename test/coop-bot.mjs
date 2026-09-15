@@ -8,7 +8,7 @@
 // **어느 게임인지는 GAME 이 정한다** — 기본은 넷이서(coop), `GAME=trio` 면 셋이서. 명단(IDS)·판 묶음·
 // 풀이 파일이 전부 그 게임에서 나온다. 물리는 둘이 같은 것을 쓴다 (coop.js 의 makeCoop).
 //
-// 걸음(verb)은 solve.py 와 같다: walk jump hop climb boost stairs push ride take switch need_plate portal box_portal spring.
+// 걸음(verb)은 solve.py 와 같다: walk jump hop climb boost stairs push ride take switch need_plate rally timer deploy portal box_portal spring.
 
 import './dom-stub.mjs';
 import { readFileSync } from 'node:fs';
@@ -411,6 +411,18 @@ export function play(stage, moves, sim) {
       case 'need_plate': {
         for (let f = 0; f < 30 && !b.plates[a[0]]; f++) sim.step(world, {});
         if (!b.plates[a[0]]) err = `누름판 ${a[0]} 가 안 눌려 있다 — ${IDS.map((k) => { const q = sim.at(k); return `${k}:(${col(q.x)},${row(q.fy)})`; }).join(' ')} 상자 ${b.boxes.map((x) => `(${col(x.x)},${Math.round(x.y / T) - 1})`).join(' ')}`;
+        break;
+      }
+      case 'rally': {
+        for (let f = 0; f < 30 && !b.rally; f++) sim.step(world, {});
+        if (!b.rally) err = `전원 집결판이 안 켜졌다 — ${IDS.map((k) => { const q = sim.at(k); return `${k}:(${col(q.x)},${row(q.fy)})`; }).join(' ')}`;
+        break;
+      }
+      case 'timer': case 'deploy': {
+        err = go(a[0]); if (err) break;
+        const ready = () => verb === 'timer' ? b.timed > 0 : b.ladderOpen;
+        for (let f = 0; f < 30 && !ready(); f++) sim.step(world, {});
+        if (!ready()) err = `${verb === 'timer' ? '시한 스위치' : '구조 사다리'}가 작동하지 않았다 ${where(world)}`;
         break;
       }
       case 'portal': {

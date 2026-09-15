@@ -28,13 +28,13 @@ const shell = { net: { send() {} }, log() {} }, api = { setSize() {}, restart() 
 const queue = []; let frame = 0;
 for (const [wd, jd] of [[A, 2], [B, 1]]) { wd.mp.rtt = 2 * LAG * DT; wd.mp.names.set(jd, `${jd}번`); wd.mp.others.set(jd, puppet(wd, jd, 0, wd.groundY)); }
 for (const wd of [A, B]) wd.send = (m, to) => { const tgt = wd.mp.role === 'host' ? String(to) : '1'; const t = tgt === '1' ? A : B; queue.push({ due: frame + LAG, to: t, from: wd.mp.myId, msg: JSON.parse(JSON.stringify(m)) }); };
-const packetOf = (wd) => { const p = wd.player, r1 = (v) => Math.round(v * 10) / 10; return ['p', r1(p.x), r1(p.vx), r1(p.air), r1(p.vy), Math.round(p.crouch * 100) / 100, p.facing, p.dead ? 1 : 0, p.grabbing, p.escapes, wd.dodged]; };
+const packetOf = netjs.myPacket;
 function step(ai, bi) {
   Object.assign(A.input, { left: false, right: false, jump: false, duck: false }, ai);
   Object.assign(B.input, { left: false, right: false, jump: false, duck: false }, bi);
   w.update(A, DT); w.update(B, DT);
   queue.push({ due: frame + LAG, to: A, from: 2, msg: packetOf(B) });
-  const players = [[1, ...packetOf(A).slice(1)]];
+  const players = [[1, ...packetOf(A).slice(1, 11)]];
   const o = A.mp.others.get(2); players.push([2, o.baseX, o.vx, o.baseAir, o.vy, o.tcrouch, o.facing, o.state ?? 0, o.grabbing, o.escapes, o.dodged ?? 0, Math.round(o.age * 1000) / 1000]);
   queue.push({ due: frame + LAG, to: B, from: 1, msg: JSON.stringify({ t: 's', ms: 0, st: 'play', r: 0, pl: players, vw: Math.round(A.w), vh: Math.round(A.h), g: A.gameId, h: 1, x: coop.pack(A) }) });
   const rest = []; for (const it of queue) { if (it.due > frame) { rest.push(it); continue; } netjs.handleMessage(it.to, shell, it.from, typeof it.msg === 'string' ? JSON.parse(it.msg) : it.msg, api); }

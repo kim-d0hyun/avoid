@@ -20,6 +20,9 @@ class Run:
         for i, (x, y) in enumerate(g.find('X')): self.boxes[f'X{i}'] = (x, y, 2)
         self.latched = set()      # 밟은 스위치 a
         self.opened = set()       # 집은 색 열쇠 r y b
+        self.rallied = False
+        self.timed = False
+        self.ladder_open = False
         self.log = []
 
     # ── 지형 ──
@@ -35,10 +38,13 @@ class Run:
         if ch == 'M': return self.plate_held('p')          # 누름판으로 나오는 발판
         if ch == 'm': return self.plate_held('q')
         if ch in 'PQ': return not self.plate_held(ch.lower())
+        if ch == 'C': return not self.rallied
+        if ch == 'T': return not self.timed
         return self.box_at(x, y)
     def support(self, x, y):
         below, here = self.g.get(x, y + 1), self.g.get(x, y)
-        return self.solid(x, y + 1) or below in '=<>v-~' or here in 'H|' or below in 'H|'
+        ladder = 'H|' + ('L' if self.ladder_open else '')
+        return self.solid(x, y + 1) or below in '=<>v-~' or here in ladder or below in ladder
     def free(self, x, y):
         if self.g.get(x, y) == '^' or self.g.get(x, y - 1) == '^': return False
         return not self.solid(x, y) and not self.solid(x, y - 1)
@@ -128,9 +134,10 @@ class Run:
 
     def climb(self, who, y1):
         x, y = self.p[who]; lo, hi = sorted((y, y1))
+        ladder = 'H|' + ('L' if self.ladder_open else '')
         for cy in range(lo, hi + 1):
             if cy == y1 and self.standable(x, y1): continue
-            if self.g.get(x, cy) not in 'H|' and self.g.get(x, cy + 1) not in 'H|':
+            if self.g.get(x, cy) not in ladder and self.g.get(x, cy + 1) not in ladder:
                 raise Bad(f'{who} 사다리 {x}칸 줄{cy}에 사다리·리프트가 없다')
         self.p[who] = (x, y1); self.say(who, f'{"사다리" if self.g.get(x, y) == "H" else "리프트"}로 줄{y1}까지')
 
@@ -192,6 +199,18 @@ class Run:
         held_by = [w for w, pos in self.p.items() if pos in self.g.find(tag)]
         what = ('셔터 ' + tag.upper() + ' 가 열려 있다') if self.g.find(tag.upper()) else ('발판 ' + ('M' if tag == 'p' else 'm') + ' 이 나와 있다')
         self.say('', f'누름판 {tag} 가 눌려 {what}' + (f' ({"·".join(held_by)} 가 밟고 있다)' if held_by else ' (상자)'))
+
+    def rally(self):
+        if not all(pos in self.g.find('c') for pos in self.p.values()): raise Bad('전원이 집결판 c 위에 있지 않다')
+        self.rallied = True; self.say('1·2·3', '전원 집결 → 체크포인트 저장, 집결문 C 개방')
+
+    def timer(self, who):
+        if self.p[who] not in self.g.find('t'): raise Bad(f'{who} 가 시한 스위치 t 위에 없다')
+        self.timed = True; self.say(who, '시한 스위치 → 10초 동안 T 개방')
+
+    def deploy(self, who):
+        if self.p[who] not in self.g.find('l'): raise Bad(f'{who} 가 구조 레버 l 위에 없다')
+        self.ladder_open = True; self.say(who, '구조 레버 → 접이식 사다리 L 전개')
 
     def spring(self, who, x1, y1):
         x, y = self.p[who]

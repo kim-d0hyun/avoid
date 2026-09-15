@@ -4,7 +4,7 @@
 // 판 묶음(trio-stages.js), 인원 셋, 그리고 세 세계의 색.
 //
 // 사람이 하나 줄면 규칙이 달라진다. 무거운 상자를 둘이 밀면 남는 건 하나, 어깨를 둘이 받치면
-// 올라가는 것도 하나다. 열두 판이 전부 「손이 하나 모자란다」는 전제 위에 서 있다.
+// 올라가는 것도 하나다. 열세 판이 전부 「손이 하나 모자란다」는 전제 위에 서 있다.
 
 import { makeCoop } from './coop.js';
 import { STAGES, WORLDS } from './trio-stages.js';
@@ -15,12 +15,13 @@ const THEME = {
   '놀이공원':  { ground: '#c0533f', edge: '#e0b13c', hatch: '#8a3a2c', barrel: '팝콘통' },
   '유령 저택': { ground: '#584a5e', edge: null,      hatch: '#3a3040', barrel: '술통' },
   '항구':      { ground: '#6f8790', edge: '#1f6f7a', hatch: '#46555c', barrel: '드럼통' },
+  '종탑':      { ground: '#66586b', edge: '#d4a72c', hatch: '#403746', barrel: '종 부품' },
 };
 
 export default makeCoop({
   id: 'trio',
   name: '셋이서',
-  line: '셋이 열쇠를 찾아 포탈에 모인다. 손이 하나 모자라게 만든 판 열둘.',
+  line: '셋이 열쇠를 찾아 포탈에 모인다. 손이 하나 모자라게 만든 판 열셋.',
   crew: 3, crewWord: '셋', inviteWord: '둘',
   stages: STAGES, worlds: WORLDS, themes: THEME, fallbackTheme: THEME['항구'],
 });

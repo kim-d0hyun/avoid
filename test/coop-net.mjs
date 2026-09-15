@@ -37,6 +37,7 @@ class NetSim {
       }
       wk.send = (m, to) => this.route(wk, m, to);
     }
+    for (const k of GUESTS) coop.unpack(this.worlds[k], coop.pack(this.host));
     this.queue = [];                                      // { due, to, from, msg }
     this.held = {};                                       // k → input 을 계속 누르고 있는 사람
     this.shell = { net: { send: () => {} }, log: () => {} };
@@ -61,15 +62,11 @@ class NetSim {
     }
     for (const k of IDS) w.update(this.worlds[k], DT);
     // 자리 꾸러미 — 손님 → 방장 (net.js 의 myPacket 과 같은 모양)
-    const packetOf = (wk) => {
-      const p = wk.player, r1 = (v) => Math.round(v * 10) / 10;
-      const state = p.dead ? (wk.mp.waiting ? 2 : 1) : 0;
-      return ['p', r1(p.x), r1(p.vx), r1(p.air), r1(p.vy), Math.round(p.crouch * 100) / 100, p.facing, state, p.grabbing, p.escapes, wk.dodged];
-    };
+    const packetOf = netjs.myPacket;
     for (const k of GUESTS) this.queue.push({ due: this.frames + LAG, to: '1', from: +k, msg: packetOf(this.worlds[k]) });
     // 방장 스냅샷 — 방장 → 손님 (net.js 의 pump 와 같은 모양: 내 자리 + 남들에게서 받은 그대로 + 게임 꾸러미)
     const host = this.host, mp = host.mp;
-    const players = [[1, ...packetOf(host).slice(1)]];
+    const players = [[1, ...packetOf(host).slice(1, 11)]];
     for (const o of mp.others.values()) {
       players.push([o.id, o.baseX, o.vx, o.baseAir, o.vy, o.tcrouch, o.facing, o.state ?? 0, o.grabbing, o.escapes, o.dodged ?? 0, Math.round(o.age * 1000) / 1000]);
     }

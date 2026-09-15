@@ -23,13 +23,13 @@ function spawn(k) {
   W[k] = x;
 }
 const connect = (k) => { for (const j of ids) { if (j === k || !present.has(j)) continue; net.peerChanged(W[j], SH, +k, k + '번', true, { spread: w.spread }); net.peerChanged(W[k], SH, +j, j + '번', true, { spread: w.spread }); } };
-const pk = (x) => { const p = x.player, r = (v) => Math.round(v * 10) / 10; const st = x.mp.waiting ? 2 : (p.dead ? 1 : 0); return ['p', r(p.x), r(p.vx), r(p.air), r(p.vy), Math.round(p.crouch * 100) / 100, p.facing, st, p.grabbing, p.escapes, x.dodged]; };
+const pk = net.myPacket;
 const host = () => W['1'];
 function step(inp = {}, drop = 0.1) {
   for (const k of ids) if (present.has(k)) { Object.assign(W[k].input, { left: false, right: false, jump: false, duck: false }, inp[k] || {}); w.update(W[k], DT); }
   for (const k of ids.slice(1)) if (present.has(k) && rnd() > drop) q.push({ due: fr + LAGS[k], to: '1', from: +k, msg: pk(W[k]) });
   if (present.has('1')) {
-    const mp = host().mp, players = [[1, ...pk(host()).slice(1)]];
+    const mp = host().mp, players = [[1, ...pk(host()).slice(1, 11)]];
     for (const o of mp.others.values()) players.push([o.id, o.baseX, o.vx, o.baseAir, o.vy, o.tcrouch, o.facing, o.state ?? 0, o.grabbing, o.escapes, o.dodged ?? 0, Math.round(o.age * 1000) / 1000]);
     const snap = JSON.stringify({ t: 's', ms: 0, st: host().state, r: mp.round, pl: players, vw: 1512, vh: 944, g: GAME, h: 1, x: coop.pack(host()) });
     for (const k of ids.slice(1)) if (present.has(k) && rnd() > drop) q.push({ due: fr + LAGS[k], to: k, from: 1, msg: snap });

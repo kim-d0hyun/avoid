@@ -152,5 +152,16 @@
   "parallel": 43.5,
   "limit": 180,
   "fail": null
+ },
+ {
+  "no": "5-1",
+  "name": "마지막 열차",
+  "world": "환승역",
+  "ok": true,
+  "steps": 62,
+  "seconds": 114.4,
+  "parallel": 32,
+  "limit": 0,
+  "fail": null
  }
 ]

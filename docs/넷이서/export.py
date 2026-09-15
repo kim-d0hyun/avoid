@@ -1,7 +1,7 @@
 # stages.py → src/games/coop-stages.js. 판을 고치면 `python3 run.py` 로 확인하고 이걸 돌린다.
 import json, os
 from stages import S, WORLDS
-out = ["// 넷이서 — 판 열둘. docs/넷이서/stages.py 가 만든다. 손으로 고치지 않는다 (python3 export.py).\n",
+out = ["// 넷이서 — 판 열다섯. docs/넷이서/stages.py 가 만든다. 손으로 고치지 않는다 (python3 export.py).\n",
        "//\n// 한 글자가 한 칸(42px). 글자의 뜻은 coop.js 의 TILES 에 있다.\n\n",
        "export const WORLDS = " + json.dumps([{'name': n, 'line': d} for n, d in WORLDS], ensure_ascii=False, indent=2) + ";\n\n"]
 rows = [{'world': s['world'], 'name': s['name'], 'shape': s['shape'], 'end': s['end'], 'pattern': s['pattern'],

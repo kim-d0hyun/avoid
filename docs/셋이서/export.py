@@ -5,7 +5,7 @@
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stages import S, WORLDS
-out = ["// 셋이서 — 판 열둘. docs/셋이서/stages.py 가 만든다. 손으로 고치지 않는다 (python3 export.py).\n",
+out = ["// 셋이서 — 판 열셋. docs/셋이서/stages.py 가 만든다. 손으로 고치지 않는다 (python3 export.py).\n",
        "//\n// 한 글자가 한 칸(42px). 글자의 뜻은 coop.js 에 있다 — 넷이서와 같은 타일 사전이다.\n\n",
        "export const WORLDS = " + json.dumps([{'name': n, 'line': d} for n, d in WORLDS], ensure_ascii=False, indent=2) + ";\n\n"]
 rows = [{'world': s['world'], 'name': s['name'], 'shape': s['shape'], 'end': s['end'], 'pattern': s['pattern'],

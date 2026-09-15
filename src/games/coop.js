@@ -37,6 +37,8 @@ const KNOCK = 380, STUN = 0.5;             // 통에 맞으면 세 칸 밀려나
 const BUMP_SEP = 300;                      // 사람끼리 부딪힐 때 벌어지는 힘. 걷는 속도(290)보다 조금 세서, 막되 뒤에서 밀면 조금씩 나아간다
 const BUMP_AT = BLOCK_W;                   // 두 몸 중심이 이보다 가까우면 겹친 것 (몸 폭 34)
 const PORTAL_COOL = 0.3;
+const RALLY_FOR = 0.3;
+const TIMED_FOR = 10;
 const EMOTES = ['여기로 와!', '먼저 가!', '기다려!', '도와줘!'];   // ⌥1~4 (또는 고정 모드에서 1~4). 머리 위에 3초.
 const EMOTE_T = 3;
 const ROT_AFTER = 0.5, ROT_GONE = 3;         // 삭은 발판: 0.5초 밟으면 부서지고 3초 뒤 돌아온다 — 한 명씩 건넌다
@@ -51,6 +53,7 @@ const THEME = {
   '학교':   { ground: '#b8912a', edge: null,      hatch: '#7a6020', barrel: '가방' },
   '도시':   { ground: '#6b665c', edge: null,      hatch: '#4a463f', barrel: '파이프' },
   '지하철': { ground: '#55606c', edge: '#2f9c9c', hatch: '#39434d', barrel: '카트' },
+  '환승역': { ground: '#59636a', edge: '#d4a72c', hatch: '#343b40', barrel: '화물통' },
 };
 
 // ── 판 살림살이 ──────────────────────────────────────────────────────────────
@@ -58,6 +61,8 @@ const THEME = {
 function loadStage(world, index) {
   const b = world.bag;
   const s = b.stages[Math.max(0, Math.min(b.stages.length - 1, index))];
+  // Invalidate movement and interactions sent before this stage was loaded.
+  if (!world.mp.on || world.mp.role === 'host') world.mp.stageEpoch = (world.mp.stageEpoch ?? 0) + 1;
   b.stage = index;
   b.def = s;
   b.w = s.w; b.h = s.h;
@@ -68,6 +73,8 @@ function loadStage(world, index) {
   b.opened = new Set();
   b.latched = false;
   b.plates = { p: false, q: false };
+  b.rally = false; b.rallyT = 0; b.checkpoint = null;
+  b.timed = 0; b.ladderOpen = false;
   b.boxes = []; b.barrels = []; b.chutes = []; b.tracks = []; b.keys = {}; b.portals = {};
   b.rot = new Map();                       // 삭은 발판 — 'tx,ty' → { t: 밟은 시간, gone: 부서져 있는 남은 시간 }
   b.spawn = new Array(b.crew).fill(null);  // 시작 자리는 인원 수만큼. 넷이서는 넷, 셋이서는 셋.
@@ -76,6 +83,8 @@ function loadStage(world, index) {
   b.done = 0;                              // 다음 판으로 넘어가는 중이면 남은 시간
   b.portalCool = 0;
   b.cam = null;
+  b.cameraStart = true;
+  b.pushWants = new Map(); b.exitAsk = 0; b.asked = false; b.flash = null;
   for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
     const ch = b.rows[y][x];
     if (ch >= '1' && +ch <= b.crew) { b.spawn[+ch - 1] = { x, y }; b.rows[y][x] = '.'; }
@@ -93,6 +102,13 @@ function loadStage(world, index) {
   }
   for (const tr of b.tracks) { tr.len = (tr.x1 - tr.x0 + 1) * T - TRACK_W; tr.pos = 0; }
   world.w = s.w * T; world.h = s.h * T; world.groundY = s.h * T;
+  const ids = [world.mp.myId, ...world.mp.others.keys()].sort((a, c) => a - c);
+  for (const [id, o] of world.mp.others) {
+    placeAt(world, o, ids.indexOf(id));
+    o.baseX = o.x; o.baseAir = o.air; o.age = 0; o.errorX = 0;
+    o.tcrouch = 0; o.vyDraw = 0; o.fyPrev = undefined;
+    o.state = o.waiting ? 2 : 0;
+  }
   b.deaths = b.deaths ?? 0;
   b.resets = b.resets ?? 0;
 }
@@ -100,11 +116,18 @@ function loadStage(world, index) {
 /// 시작 자리에 세운다. slot 은 번호 순서 (방장 0).
 function placeAt(world, p, slot) {
   const b = world.bag;
-  const sp = b.spawn[Math.max(0, Math.min(b.crew - 1, slot))] ?? b.spawn.find(Boolean) ?? { x: 2, y: b.h - 3 };
-  p.x = (sp.x + 0.5) * T;
-  p.air = world.groundY - (sp.y + 1) * T;
+  const index = Math.max(0, Math.min(b.crew - 1, slot));
+  const checkpoint = b.checkpoint?.[index];
+  const sp = b.spawn[index] ?? b.spawn.find(Boolean) ?? { x: 2, y: b.h - 3 };
+  p.x = checkpoint?.[0] ?? (sp.x + 0.5) * T;
+  p.air = world.groundY - (checkpoint?.[1] ?? (sp.y + 1) * T);
   p.vx = 0; p.vy = 0; p.knock = 0; p.crouch = 0; p.onLadder = false; p.stun = 0;
   p.groundY = world.groundY;
+  p.dead = p === world.player ? world.mp.waiting : !!p.waiting;
+  p.deadFor = 0; p.grounded = false; p.jumpHeld = false;
+  p.rideId = null; p.rideX = 0; p.onPortal = false;
+  p.load = 0; p.pushing = false; p.landed = 0;
+  if (world.bag) world.bag.cameraStart = true;
 }
 
 function mySlot(world) {
@@ -132,8 +155,11 @@ function solidTile(b, ch) {
   if (ch === 'Q') return !b.plates.q;
   if (ch === 'M') return b.plates.p;         // 누름판 p 를 밟고 있는 동안 나오는 발판
   if (ch === 'm') return b.plates.q;         // 누름판 q 를 밟고 있는 동안 나오는 발판
+  if (ch === 'C') return !b.rally;           // Opens permanently after the full-team rally.
+  if (ch === 'T') return b.timed <= 0;        // Opens while the timed switch is active.
   return false;
 }
+function ladderTile(b, ch) { return ch === 'H' || ch === '|' || (ch === 'L' && b.ladderOpen); }
 /// 위에서만 딛는 칸인가 (밑에서는 통과).
 function onewayTile(b, ch, tx, ty) {
   if (ch === '=' || ch === '>' || ch === '<' || ch === 'S') return true;
@@ -166,7 +192,7 @@ function floorBelow(world, x, fyOld, fyNew, halfW = HALF - 2, opt = {}) {
     if (solidTile(b, ch)) take(ty * T);
     else if (onewayTile(b, ch, tx, ty)) take(ty * T + (ch === '=' || ch === 'v' ? T * 0.3 : 0));
     // 사다리 꼭대기는 딛는 바닥이다 (위 칸이 사다리가 아닐 때). 중간 칸은 매달리는 곳.
-    else if (opt.ladders !== false && (ch === 'H' || ch === '|') && !'H|'.includes(tile(b, tx, ty - 1))) take(ty * T);
+    else if (opt.ladders !== false && ladderTile(b, ch) && !ladderTile(b, tile(b, tx, ty - 1))) take(ty * T);
   }
   for (const bx of b.boxes) {
     if (Math.abs(bx.x - x) < HALF + T / 2 - 2) take(bx.y - T);
@@ -240,7 +266,7 @@ function onLadderColumn(b, x, fy, h) {
   const tx = Math.floor(x / T);
   for (let ty = Math.floor((fy - h * 0.5) / T); ty <= Math.floor((fy - 1) / T); ty++) {
     const ch = tile(b, tx, ty);
-    if (ch === 'H' || ch === '|') return true;
+    if (ladderTile(b, ch)) return true;
   }
   return false;
 }
@@ -292,7 +318,6 @@ export function move(world, dt) {
 
   // 죽어 있으면 잠깐 누워 있다가 시작 자리에서 다시 선다.
   if (p.dead) {
-    p.deadFor += dt;
     if (p.deadFor >= DIE_FOR) { p.dead = false; placeAt(world, p, mySlot(world)); }
     return;
   }
@@ -307,11 +332,11 @@ export function move(world, dt) {
   // 사다리 꼭대기에 서서 ⌥↓ — 내려간다. 꼭대기 칸은 딛는 바닥이라 그냥은 웅크리기가 된다.
   // 발밑 칸이 사다리면 웅크리는 게 아니라 잡고 내려가는 것이다.
   if (!climbing && grounded && input.duck && !input.jump && p.stun <= 0 && p.load === 0
-      && 'H|'.includes(tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T)))) {
+      && ladderTile(b, tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T)))) {
     p.onLadder = true; p.grounded = false; p.vx = 0; p.vy = 0;
     p.x = (Math.floor(p.x / T) + 0.5) * T;
   }
-  const onLadder = p.onLadder && (onLadderColumn(b, p.x, fy, BLOCK_H) || 'H|'.includes(tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T))));
+  const onLadder = p.onLadder && (onLadderColumn(b, p.x, fy, BLOCK_H) || ladderTile(b, tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T))));
   // 웅크리기 — 땅에서, 사다리 아니면. 한 칸 굴은 웅크려야 지난다.
   const wantCrouch = input.duck && grounded && !climbing && !onLadder ? 1 : 0;
   p.crouch += (wantCrouch - p.crouch) * Math.min(1, dt * 16);
@@ -325,7 +350,7 @@ export function move(world, dt) {
     p.x = (Math.floor(p.x / T) + 0.5) * T;
   }
   if (p.onLadder) {
-    const column = onLadderColumn(b, p.x, fy, BLOCK_H) || 'H|'.includes(tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T)));
+    const column = onLadderColumn(b, p.x, fy, BLOCK_H) || ladderTile(b, tile(b, Math.floor(p.x / T), Math.floor((fy + 2) / T)));
     if (!column) p.onLadder = false;
     else if (dir !== 0 && !input.jump && !input.duck) {
       // 옆으로 내린다. 그 층 바닥이 발 높이 근처(±16px)에 있으면 거기 올라선다 — 리프트에서 2층에
@@ -404,6 +429,7 @@ export function move(world, dt) {
   // x 로 움직이고 벽·상자에 막히면 되돌린다. 상자는 **밀린다** — 밀 수 있으면.
   // 걸음(내 속도·튕김·발판)만으로 새 자리를 잡고 벽·상자에 대 본다. 무빙워크가 실어 가는 몫(drift)은 그 뒤에 따로 더한다 —
   // 벨트가 나를 상자로 끌어다 붙이는 걸 「내가 상자를 민다」로 치면, 반대로 걸어 나가려 해도 매 프레임 상자에 다시 붙어 못 벗어난다.
+  const movementStartX = p.x;
   let nx = p.x + (p.vx + p.knock) * dt + ride;
   p.pushing = false;
   if (bodyBlocked(world, nx, fy - 1, h) && grounded) {
@@ -457,7 +483,12 @@ export function move(world, dt) {
     if (Math.sign(o.x - p.x) !== inputDir) continue;                    // 내 앞(걸어 들어가는 쪽)에 있는 동료만
     if (Math.abs(p.x - o.x) >= BUMP_AT) continue;
     const stopAt = o.x - inputDir * BUMP_AT;                            // 몸이 닿는 자리
-    if (inputDir > 0 ? p.x > stopAt : p.x < stopAt) { p.x = stopAt; p.vx = 0; }
+    if ((p.x - movementStartX) * inputDir <= 0) continue;
+    const cappedX = inputDir > 0 ? Math.max(movementStartX, stopAt) : Math.min(movementStartX, stopAt);
+    // Delayed peer positions may overlap us; never resolve that overlap by pushing backwards.
+    if ((p.x - cappedX) * inputDir > 0 && !bodyBlocked(world, cappedX, fy - 1, h)) {
+      p.x = cappedX; p.vx = 0;
+    }
   }
   if (p.knock !== 0) { p.knock *= Math.exp(-dt / 0.17); if (Math.abs(p.knock) < 8) p.knock = 0; }
 
@@ -542,7 +573,7 @@ function pushBox(world, box, dir, dt) {
   const b = world.bag;
   const idx = b.boxes.indexOf(box);
   if (world.mp.on && world.mp.role !== 'host') {
-    world.send?.({ t: 'gm', k: 'push', i: idx, d: dir });
+    world.send?.({ t: 'gm', k: 'push', i: idx, d: dir, ep: world.mp.stageEpoch });
     if (box.weight === 1) box.x += dir * PUSH * dt;            // 손맛 — 방장 꾸러미가 곧 덮는다
     return;
   }
@@ -594,6 +625,26 @@ function everyone(world) {
 function stepObjects(world, dt) {
   const b = world.bag;
   const people = everyone(world);
+  if (b.timed > 0) {
+    const next = Math.max(0, b.timed - dt);
+    const occupied = people.some((q) => {
+      const tx = Math.floor(q.x / T);
+      const top = Math.floor((q.fy - q.h + 2) / T), bottom = Math.floor((q.fy - 2) / T);
+      for (let ty = top; ty <= bottom; ty++) if (tile(b, tx, ty) === 'T') return true;
+      return false;
+    });
+    b.timed = next === 0 && occupied ? dt : next;
+  }
+
+  // Boxes do not count: every active player must hold the rally pad for 0.3 seconds.
+  if (!b.rally) {
+    const gathered = people.length === b.crew && people.every((q) => tile(b, Math.floor(q.x / T), Math.floor((q.fy - 6) / T)) === 'c');
+    b.rallyT = gathered ? b.rallyT + dt : 0;
+    if (b.rallyT >= RALLY_FOR) {
+      b.rally = true;
+      b.checkpoint = [...people].sort((a, c) => a.id - c.id).map((q) => [q.x, q.fy]);
+    }
+  }
   // 손님의 밀기 부탁은 잠깐만 산다. 살아 있는 동안은 매 프레임 밀어 준다 (사람이 충분하면).
   for (const [id, w] of (b.pushWants ?? new Map())) {
     w.t -= dt;
@@ -607,7 +658,7 @@ function stepObjects(world, dt) {
   const stood = new Set();
   for (const q of people) {
     const ty = Math.floor((q.fy + 2) / T);
-    for (const tx of [Math.floor((q.x - HALF + 3) / T), Math.floor((q.x + HALF - 3) / T)]) {
+    for (const tx of new Set([Math.floor((q.x - HALF + 3) / T), Math.floor((q.x + HALF - 3) / T)])) {
       if (tile(b, tx, ty) !== 'v' || rotGone(b, tx, ty) || Math.abs(q.fy - (ty * T + T * 0.3)) > 3) continue;
       const key = tx + ',' + ty;
       stood.add(key);
@@ -639,6 +690,8 @@ function stepObjects(world, dt) {
     for (const y of [ty, ty2]) {
       const ch = tile(b, tx, y);
       if (ch === 'a') b.latched = true;
+      if (ch === 't') b.timed = TIMED_FOR;
+      if (ch === 'l') b.ladderOpen = true;
       if ((ch === 'r' || ch === 'y' || ch === 'b') && !b.opened.has(ch)) {
         b.opened.add(ch); b.keys[ch].taken = true;
         b.flash = { x: (tx + 0.5) * T, y: (y + 0.5) * T, t: 0.6, color: KEY_COLOR[ch] };
@@ -848,11 +901,15 @@ function drawTiles(ctx, world, time, boil) {
         }
         break;
       }
-      case 'H': case '|': {
-        const col = ch === 'H' ? '#8a6a3a' : '#6b665c';
+      case 'H': case '|': case 'L': {
+        const open = ch !== 'L' || b.ladderOpen;
+        const col = ch === 'H' ? '#8a6a3a' : ch === 'L' ? '#2f9c9c' : '#6b665c';
+        ctx.save();
+        if (!open) { ctx.setLineDash([4, 5]); ctx.globalAlpha = 0.38; }
         stroke(ctx, [[x + 9, y], [x + 9, y + T]], { width: 2.6, color: INK, seed: tx * 2 + ty, amp: 0.4, halo: false });
         stroke(ctx, [[x + T - 9, y], [x + T - 9, y + T]], { width: 2.6, color: INK, seed: tx * 2 + ty + 1, amp: 0.4, halo: false });
         for (const k of [10, 24, 38]) if (k < T) stroke(ctx, [[x + 9, y + k], [x + T - 9, y + k]], { width: 2.2, color: col, seed: tx + ty + k, amp: 0.3, halo: false });
+        ctx.restore();
         break;
       }
       case '^': {
@@ -885,10 +942,10 @@ function drawTiles(ctx, world, time, boil) {
         }
         break;
       }
-      case 'A': case 'P': case 'Q': {
+      case 'A': case 'P': case 'Q': case 'C': case 'T': {
         const open = !solidTile(b, ch);
         // 롤 셔터. 열리면 위 통으로 말려 올라간다 — 위 칸(통)이 있을 때만 통을 그린다.
-        const topMost = !'APQ'.includes(tile(b, tx, ty - 1));
+        const topMost = !'APQCT'.includes(tile(b, tx, ty - 1));
         if (topMost) stroke(ctx, [[x - 3, y - 2], [x + T + 3, y - 2], [x + T + 3, y + 6], [x - 3, y + 6]], { width: 2.4, color: INK, seed: tx, amp: 0.5, close: true, halo: false, fill: PAPER_SOLID });
         if (!open) {
           ctx.fillStyle = '#6b665c'; ctx.globalAlpha = 0.25; ctx.fillRect(x + 3, y, T - 6, T); ctx.globalAlpha = 1;
@@ -906,11 +963,19 @@ function drawTiles(ctx, world, time, boil) {
         circle(ctx, x + T / 2, y + T - 22 + down, 2.6, { width: 1.4, color: INK, fill: b.latched ? '#3f8f56' : PAPER_SOLID, halo: false, seed: tx, amp: 0.1 });
         break;
       }
-      case 'p': case 'q': {
-        const held = b.plates[ch];
+      case 'p': case 'q': case 'c': {
+        const held = ch === 'c' ? b.rallyT > 0 || b.rally : b.plates[ch];
         const dy = held ? 4 : 0;
-        stroke(ctx, [[x + 2, y + T - 8 + dy], [x + T - 2, y + T - 8 + dy], [x + T - 2, y + T], [x + 2, y + T]], { width: 2.2, color: INK, seed: tx * 3 + ty, amp: 0.4, close: true, halo: false, fill: held ? 'rgba(63,143,86,.7)' : 'rgba(63,143,86,.4)', sharp: true });
+        const fill = ch === 'c' ? 'rgba(47,156,156,.65)' : held ? 'rgba(63,143,86,.7)' : 'rgba(63,143,86,.4)';
+        stroke(ctx, [[x + 2, y + T - 8 + dy], [x + T - 2, y + T - 8 + dy], [x + T - 2, y + T], [x + 2, y + T]], { width: 2.2, color: INK, seed: tx * 3 + ty, amp: 0.4, close: true, halo: false, fill, sharp: true });
         for (const k of [8, T / 2, T - 8]) circle(ctx, x + k, y + T - 4 + dy, 1.4, { width: 1, color: INK, fill: INK, halo: false, seed: 1, amp: 0 });
+        break;
+      }
+      case 't': case 'l': {
+        const active = ch === 't' ? b.timed > 0 : b.ladderOpen;
+        const color = ch === 't' ? '#d97b1f' : '#2f9c9c';
+        stroke(ctx, [[x + 7, y + T], [x + T - 7, y + T], [x + T - 7, y + T - 7], [x + 7, y + T - 7]], { width: 2, color: INK, seed: tx, amp: 0.4, close: true, halo: false, fill: 'rgba(107,102,92,.3)' });
+        circle(ctx, x + T / 2, y + T - (active ? 10 : 16), 7, { width: 2.2, color, fill: active ? color : PAPER_SOLID, halo: false, seed: tx + ty, amp: 0.3 });
         break;
       }
       case 'S': {
@@ -1129,7 +1194,7 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
       // 손님도 통과 왕복 발판은 같은 식으로 굴려서 매끈하게 보인다 (방장 꾸러미가 자리를 잡아 준다)
       for (const tr of b.tracks) { tr.dir = tr.dir ?? 1; const before = tr.pos; tr.pos += tr.dir * TRACK_SPEED * dt; if (tr.pos >= tr.len) { tr.pos = tr.len; tr.dir = -1; } if (tr.pos <= 0) { tr.pos = 0; tr.dir = 1; } tr.vx = dt > 0 ? (tr.pos - before) / dt : 0; }
       for (const br of b.barrels) { if (!br.dead) { br.x += br.vx * dt; br.spin += br.vx * dt / BARREL_R; } }
-      if (meAtExit(world) && world.input.jump && !b.asked) { world.send?.({ t: 'gm', k: 'exit' }); b.asked = true; }
+      if (meAtExit(world) && world.input.jump && !b.asked) { world.send?.({ t: 'gm', k: 'exit', ep: world.mp.stageEpoch }); b.asked = true; }
       if (!world.input.jump) b.asked = false;
     }
   },
@@ -1141,6 +1206,17 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
     const p = world.player;
     const mw = b.w * T, mh = b.h * T;
     const px = p.x, py = world.groundY - p.air - BLOCK_H / 2;
+    if (b.cameraStart) {
+      // 시작 화면은 모두 같은 곳을 본다 — 출발 자리들의 한가운데. 집결 체크포인트를 지난 뒤의 부활은 집결 자리를
+      // 가운데 둔다 (출발 구역으로 튀었다가 끌려오지 않게).
+      const spots = b.checkpoint ?? b.spawn.filter(Boolean).map((sp) => [(sp.x + 0.5) * T, (sp.y + 1) * T]);
+      const centerX = spots.reduce((sum, s) => sum + s[0], 0) / spots.length;
+      const centerY = spots.reduce((sum, s) => sum + s[1], 0) / spots.length - BLOCK_H / 2;
+      b.cam = { x: mw <= vw ? -(vw - mw) / 2 : Math.max(0, Math.min(mw - vw, centerX - vw / 2)),
+                y: mh <= vh ? -(vh - mh) / 2 : Math.max(0, Math.min(mh - vh, centerY - vh / 2)), w: vw, h: vh };
+      b.cameraStart = false;
+      return b.cam;
+    }
     const cam = b.cam ?? { x: Math.max(0, Math.min(mw - vw, px - vw / 2)), y: Math.max(0, Math.min(mh - vh, py - vh / 2)), w: vw, h: vh };
     cam.w = vw; cam.h = vh;
     const dead = { x: 4 * T, y: 3 * T };
@@ -1235,8 +1311,10 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
     const b = world.bag;
     if (!b?.rows) return null;
     return {
-      st: b.stage, rs: b.resets, ck: Math.round(b.clock * 100) / 100,
+      st: b.stage, rs: b.resets, ep: world.mp.stageEpoch, ck: Math.round(b.clock * 100) / 100,
       ks: [...b.opened].join(''), la: b.latched ? 1 : 0, pl: (b.plates.p ? 'p' : '') + (b.plates.q ? 'q' : ''),
+      ra: b.rally ? 1 : 0, cp: b.checkpoint?.map((p) => p.map(Math.round)) ?? null,
+      tm: Math.round(b.timed * 100) / 100, ld: b.ladderOpen ? 1 : 0,
       bx: b.boxes.map((x) => [Math.round(x.x), Math.round(x.y)]),
       br: b.barrels.filter((r) => !r.dead).map((r) => [Math.round(r.x), Math.round(r.y), Math.round(r.vx), r.falls]),
       tr: b.tracks.map((t) => [Math.round(t.pos), t.dir ?? 1]),
@@ -1248,13 +1326,17 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
   unpack(world, d) {
     const b = world.bag;
     if (!b || !d || typeof d !== 'object') return;
-    if (typeof d.st === 'number' && (d.st !== b.stage || !b.rows || d.rs !== b.resets)) {
+    if (Number.isInteger(d.ep) && d.ep < (world.mp.stageEpoch ?? 0)) return;
+    const changedEpoch = Number.isInteger(d.ep) && d.ep !== world.mp.stageEpoch;
+    if (Number.isInteger(d.ep)) world.mp.stageEpoch = d.ep;
+    if (Number.isFinite(d.st) && (changedEpoch || d.st !== b.stage || !b.rows || d.rs !== b.resets)) {
       const stage = Math.max(0, Math.min(b.stages.length - 1, d.st | 0));
       const wasStage = b.stage;
       const wasWaiting = world.mp.waiting;
       world.stage = stage;
       loadStage(world, stage);
       b.resets = d.rs | 0;
+      world.bagResets = b.resets;
       placeAt(world, world.player, mySlot(world));
       // 구경하며 들어왔는데 판이 다음으로 넘어갔다 — 이제부터 낀다 (방장도 같은 순간에 명단에 올린다).
       if (world.mp.waiting && b.rows && stage !== wasStage) { world.mp.waiting = false; world.player.dead = false; world.player.deadFor = 0; }
@@ -1265,15 +1347,22 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
       }
     }
     if (!b.rows) return;
-    if (typeof d.ck === 'number') b.clock = d.ck;
+    if (Number.isFinite(d.ck)) b.clock = d.ck;
     if (typeof d.ks === 'string') b.opened = new Set(d.ks.split('').filter((c) => 'ryb'.includes(c)));
     for (const k of Object.keys(b.keys)) b.keys[k].taken = b.opened.has(k);
     b.latched = !!d.la;
     if (typeof d.pl === 'string') { b.plates.p = d.pl.includes('p'); b.plates.q = d.pl.includes('q'); }
+    b.rally = !!d.ra;
+    if (Array.isArray(d.cp) && d.cp.length === b.crew && d.cp.every((p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite))) {
+      b.checkpoint = d.cp.map((p) => [Math.max(HALF, Math.min(world.w - HALF, p[0])), Math.max(T, Math.min(world.groundY, p[1]))]);
+    } else if (!b.rally) b.checkpoint = null;
+    if (Number.isFinite(d.tm)) b.timed = Math.max(0, Math.min(TIMED_FOR, d.tm));
+    b.ladderOpen = !!d.ld;
     if (Array.isArray(d.bx)) d.bx.forEach((row, i) => {
       const bx = b.boxes[i];
-      if (!bx || !Array.isArray(row) || !row.every(Number.isFinite)) return;
+      if (!bx || !Array.isArray(row) || row.length < 2 || !row.every(Number.isFinite)) return;
       // 톡 옮기지 않고 녹인다 — 상자가 순간이동하면 밀고 있던 손이 헛돈다
+      bx.xPrev = bx.x;
       const dx = row[0] - bx.x, dy = row[1] - bx.y;
       if (Math.abs(dx) > 60 || Math.abs(dy) > 60) { bx.x = row[0]; bx.y = row[1]; }
       else { bx.x += dx * 0.35; bx.y += dy * 0.35; }
@@ -1282,12 +1371,17 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
       b.barrels = d.br.filter((r) => Array.isArray(r) && r.length >= 3 && r.every(Number.isFinite))
         .map((r, i) => ({ x: r[0], y: r[1], vx: r[2], vy: 0, falls: r[3] | 0, dead: false, spin: b.barrels[i]?.spin ?? 0 }));
     }
-    if (Array.isArray(d.tr)) d.tr.forEach((row, i) => { if (b.tracks[i] && Array.isArray(row)) { b.tracks[i].pos = row[0]; b.tracks[i].dir = row[1]; } });
+    if (Array.isArray(d.tr)) d.tr.forEach((row, i) => {
+      if (b.tracks[i] && Array.isArray(row) && row.length >= 2 && row.every(Number.isFinite)) {
+        b.tracks[i].pos = Math.max(0, Math.min(b.tracks[i].len, row[0]));
+        b.tracks[i].dir = row[1] < 0 ? -1 : 1;
+      }
+    });
     if (Array.isArray(d.rt)) {
       b.rot = new Map();
       for (const row of d.rt) if (Array.isArray(row) && typeof row[0] === 'string' && Number.isFinite(row[1]) && Number.isFinite(row[2])) b.rot.set(row[0], { t: row[1], gone: row[2] });
     }
-    if (typeof d.dn === 'number') b.done = d.dn;
+    if (Number.isFinite(d.dn)) b.done = d.dn;
   },
 
   /// 손님의 말. 밀기 부탁 · 출구 ⌥↑ · 손잡기. 손잡기는 방장이 받아 당사자에게 넘긴다.
@@ -1296,6 +1390,7 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
     if (!b?.rows) return;
     const host = world.mp.role === 'host';
     if (msg.k === 'push' && host) {
+      if (msg.ep !== world.mp.stageEpoch) return;
       const i = msg.i | 0, d = Math.sign(msg.d | 0);
       if (i < 0 || i >= b.boxes.length || !d) return;
       (b.pushWants ??= new Map()).set(from, { i, d, t: 0.12 });
@@ -1304,6 +1399,7 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
       return;
     }
     if (msg.k === 'exit' && host) {
+      if (msg.ep !== world.mp.stageEpoch) return;
       if (exitState(world).ready) b.exitAsk = 0.2;
       return;
     }
@@ -1324,11 +1420,11 @@ export function makeCoop({ id, name, line, crew, crewWord, inviteWord, stages, w
   };
 }
 
-/// 넷이서 — 판 열넷, 네 명. docs/넷이서/stages.py 가 만든 판 묶음을 쓴다.
+/// 넷이서 — 판 열다섯, 네 명. docs/넷이서/stages.py 가 만든 판 묶음을 쓴다.
 export default makeCoop({
   id: 'coop',
   name: '넷이서',
-  line: '넷이 열쇠를 찾아 포탈에 모인다. 혼자서는 아무것도 못 하게 만든 판 열넷.',
+  line: '넷이 열쇠를 찾아 포탈에 모인다. 혼자서는 아무것도 못 하게 만든 판 열다섯.',
   crew: 4, crewWord: '넷', inviteWord: '셋',
   stages: STAGES, worlds: WORLDS, themes: THEME, fallbackTheme: THEME['도시'],
 });

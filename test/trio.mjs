@@ -53,11 +53,11 @@ const crowd = (world, n) => { world.mp.others.clear(); for (let i = 2; i <= n; i
 
 // ── 판 묶음 ──────────────────────────────────────────────────────────────────
 
-say('판 열둘 — 세계 셋, 시작 자리 셋, 글자 그림이 크기와 맞는다');
+say('판 열셋 — 세계 넷, 시작 자리 셋, 글자 그림이 크기와 맞는다');
 {
-  check('판 수', STAGES.length, 12);
-  check('세계', WORLDS.map((v) => v.name), ['놀이공원', '유령 저택', '항구']);
-  check('세계마다 넉 판', WORLDS.map((v) => STAGES.filter((s) => s.world === v.name).length), [4, 4, 4]);
+  check('판 수', STAGES.length, 13);
+  check('세계', WORLDS.map((v) => v.name), ['놀이공원', '유령 저택', '항구', '종탑']);
+  check('세계마다 넉 판, 종탑은 한 판', WORLDS.map((v) => STAGES.filter((s) => s.world === v.name).length), [4, 4, 4, 1]);
   let badArt = [], badSpawn = [], badExit = [], stray = [];
   for (const s of STAGES) {
     if (s.art.length !== s.h || s.art.some((r) => r.length !== s.w)) badArt.push(s.name);
@@ -73,7 +73,7 @@ say('판 열둘 — 세계 셋, 시작 자리 셋, 글자 그림이 크기와 �
   check('판마다 출구 하나', badExit, []);
   check('네 번째 사람 자리는 없다', stray, []);
   check('끝 조건 — 2-3 지하실과 3-3 방파제만 한 명', STAGES.map((s) => s.end),
-        ['all', 'all', 'all', 'all', 'all', 'all', 'one', 'all', 'all', 'all', 'one', 'all']);
+        ['all', 'all', 'all', 'all', 'all', 'all', 'one', 'all', 'all', 'all', 'one', 'all', 'all']);
   note(`한 명만 닿으면 끝인 판 — ${STAGES.filter((s) => s.end === 'one').map((s) => s.name).join('·')}`);
   note(`시간 제한 — ${STAGES.filter((s) => s.limit).map((s) => `${s.name} ${s.limit}초`).join(' · ')}`);
 }
@@ -88,14 +88,14 @@ say('내보낸 파일이 판과 맞는다 (trio-stages.js ↔ trio-moves.json)')
   check('넷이서 판과 섞이지 않았다', STAGES.some((s) => coopMod.STAGES.some((c) => c.name === s.name)), false);
 }
 
-say('세계 색 — 세 세계가 다 있고, 도시 팔레트로 새지 않는다');
+say('세계 색 — 네 세계가 다 있고, 도시 팔레트로 새지 않는다');
 {
-  check('THEME 키', Object.keys(THEME).sort(), ['놀이공원', '유령 저택', '항구']);
+  check('THEME 키', Object.keys(THEME).sort(), ['놀이공원', '유령 저택', '종탑', '항구']);
   const missing = STAGES.filter((s) => !THEME[s.world]).map((s) => s.name);
   check('판마다 제 세계 색이 있다', missing, []);
-  ok('통 이름도 세계마다 다르다', new Set(Object.values(THEME).map((t) => t.barrel)).size === 3);
+  ok('통 이름도 세계마다 다르다', new Set(Object.values(THEME).map((t) => t.barrel)).size === 4);
   ok('넷이서 색과 안 겹친다', Object.values(THEME).every((t) => !['#c9a86a', '#b8912a', '#6b665c', '#55606c'].includes(t.ground)));
-  for (const name of ['놀이공원', '유령 저택', '항구']) {
+  for (const name of ['놀이공원', '유령 저택', '항구', '종탑']) {
     const world = make(STAGES.find((s) => s.world === name).name);
     check(`${name} 판이 제 색을 든다`, world.bag.theme.ground, THEME[name].ground);
   }
@@ -215,7 +215,7 @@ say('넷이서와 셋이서를 오가도 서로 안 섞인다');
   w.pickGame(world, 'coop'); const c2 = snap();
   w.pickGame(world, 'trio'); const t2 = snap();
   check('넷이서', c1, { id: 'coop', crew: 4, stages: coopMod.STAGES.length, spawn: 4, world: coopMod.STAGES[0].world, ground: '#c9a86a', need: '넷' });
-  check('셋이서', t1, { id: 'trio', crew: 3, stages: 12, spawn: 3, world: '놀이공원', ground: THEME['놀이공원'].ground, need: '셋' });
+  check('셋이서', t1, { id: 'trio', crew: 3, stages: 13, spawn: 3, world: '놀이공원', ground: THEME['놀이공원'].ground, need: '셋' });
   check('되돌아온 넷이서가 그대로', c2, c1);
   check('되돌아온 셋이서가 그대로', t2, t1);
   // 한 판 굴려 본 뒤에도 — 모듈에 남는 값이 없어야 한다
@@ -227,7 +227,7 @@ say('넷이서와 셋이서를 오가도 서로 안 섞인다');
   // 판 번호(1-1 · 3-4)는 판 묶음에서 나온다 — 넷이서는 마지막이 4-2, 셋이서는 3-4 다.
   check('판 번호 글자도 제 묶음 것',
         [coopMod.stageNo({ stages: coopMod.STAGES, worlds: coopMod.WORLDS }, coopMod.STAGES.length - 1),
-         coopMod.stageNo({ stages: STAGES, worlds: WORLDS }, STAGES.length - 1)], ['4-2', '3-4']);
+         coopMod.stageNo({ stages: STAGES, worlds: WORLDS }, STAGES.length - 1)], ['5-1', '4-1']);
 }
 
 say('되감기 — 셋이서 판도 제자리로 돌아온다');

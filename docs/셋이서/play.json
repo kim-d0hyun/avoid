@@ -130,5 +130,16 @@
   "parallel": 33.3,
   "limit": 180,
   "fail": null
+ },
+ {
+  "no": "4-1",
+  "name": "약속의 종",
+  "world": "종탑",
+  "ok": true,
+  "steps": 54,
+  "seconds": 86.6,
+  "parallel": 33.5,
+  "limit": 0,
+  "fail": null
  }
 ]

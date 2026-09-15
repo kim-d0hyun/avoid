@@ -486,6 +486,7 @@ function step(now, draw) {
 }
 
 function render(time) {
+  if (gameOf(world).rewindable && world.bag?.rows) time = world.bag.clock;
   const boilFrame = boil(time);
   const { dpr, sx, sy, screenW, screenH } = view;
 
