@@ -47,6 +47,56 @@ const TOSS_ARMS = [[2.62, 2.95], [2.45, 2.85]];
 const BLOCK_ARMS = [[3.02, 3.10], [2.90, 2.98]];
 const BLOCK_LEGS = [[-0.22, -1.30], [0.10, -0.95]];   // 다리는 뒤로 살짝 접는다 (뛴 채)
 
+// 야구 — 던지기와 치기.
+//
+// 배구의 내리치기(spike)와 **다른 스위치로 가른다.** 졸라맨은 게임 넷이 같이 쓰는 그림이라,
+// 야구가 남겨 둔 p.pitchT 가 배구 화면에 새어 들면 서브를 올리다 투구 자세가 나온다.
+//
+// 각도는 이 파일의 규칙 그대로 — **똑바로 아래가 0**, 늘어나면 앞(sin) 을 지나 위(π) 로 돈다.
+
+/// 다리를 들어 올리는 데서 공을 놓기까지. 이 시간이 곧 「던지는 티」다 —
+/// 짧으면 공이 그냥 튀어나오고, 길면 누르고 나서 한참 기다리게 된다.
+export const PITCH_TIME = 0.62;
+/// 공이 손을 떠나는 지점 (0~1). 팔이 머리 위를 넘어 앞으로 나온 자리다.
+export const PITCH_RELEASE = 0.86;
+/// 배트가 도는 시간. 휘두름 · 맞댐 · 따라 휘기를 다 합친 길이.
+export const BAT_TIME = 0.34;
+/// 젖혀 둔 배트가 공까지 오는 데 걸리는 시간. 배구의 SWING_WHIP 과 같은 뜻이고,
+/// 야구도 이 동안 공을 멈춰 둔다 — **배트가 공에 닿는 순간과 공이 튀어 나가는 순간이 같아야** 한다.
+export const BAT_WHIP = 3 / 60;
+/// 배트가 공에 붙어 있는 시간.
+export const BAT_HOLD = 2 / 60;
+/// 배트 길이 (어깨에서 손끝까지가 22 이니, 그보다 조금 길다).
+const BAT_LEN = 31;
+
+/// 투구 다섯 박자. [때, 기울기, 다리, 팔] — 사이는 이어 섞는다.
+///
+/// 셋째에서 넷째로 갈 때 치는 팔이 -2.30 에서 +2.20 으로 건너간다. 짧은 쪽으로 이으면
+/// **머리 위를 넘어간다** — 그래야 오버핸드로 보인다. 밑으로 돌면 언더핸드가 된다.
+const PITCH_KEYS = [
+  [0.00,  0.02, [[-0.16, -0.20], [0.17, 0.21]], [[0.55, 1.05], [-0.50, -1.00]]],
+  [0.40, -0.22, [[1.44, 0.34], [-0.10, -0.14]], [[2.58, 2.98], [2.38, 2.82]]],
+  [0.70, -0.12, [[1.18, 1.02], [-0.42, -0.72]], [[-2.30, -1.48], [1.92, 2.42]]],
+  [0.86,  0.28, [[0.86, 0.62], [-0.60, -1.16]], [[2.20, 1.70], [-1.18, -1.88]]],
+  [1.00,  0.42, [[0.66, 0.46], [-0.78, -1.38]], [[1.02, 0.52], [-0.98, -1.58]]],
+];
+
+/// 타격 세 박자. 배트 각도까지 같이 든다 — 배트는 손끝에서 이 각도로 뻗는다.
+/// 배트 각은 **한 바퀴를 편 채로** 적는다 (−2.78 → −4.56 → −6.50).
+///
+/// 짧은 쪽으로 잇는 lerpAngle 에 맡기면, 맞은 뒤 따라 휘기에서 배트만 **되감긴다** —
+/// 팔은 계속 앞으로 도는데 배트는 머리 위를 거슬러 올라갔다 내려온다. 한 구간이 π 를 넘는
+/// 순간 짧은 쪽이 반대쪽이 되기 때문이다. 배트만 섞는 법을 따로 두어(mixPose) 곧이곧대로 잇는다.
+const BAT_STANCE = { lean: -0.07, legs: [[-0.32, -0.36], [0.28, 0.32]],
+                     arms: [[-1.28, -2.28], [-1.06, -2.06]], bat: -2.78 };
+const BAT_MEET   = { lean:  0.24, legs: [[0.30, 0.16], [-0.34, -0.52]],
+                     arms: [[1.34, 1.66], [1.08, 1.42]], bat: -4.56 };
+const BAT_THRU   = { lean:  0.14, legs: [[0.46, 0.30], [-0.50, -0.86]],
+                     arms: [[2.55, 3.05], [2.30, 2.80]], bat: -6.50 };
+/// 글러브를 낀 수비수가 공을 기다리는 자세. 무릎을 조금 굽히고 두 손을 앞으로 낮게.
+const FIELD_READY = { lean: 0.16, legs: [[-0.40, -0.66], [0.38, 0.62]],
+                      arms: [[1.15, 1.48], [0.92, 1.26]] };
+
 const lerp = (a, b, t) => a + (b - a) * t;
 /// 각도를 짧은 쪽으로 잇는다. 그냥 섞으면 머리 위로 올라가야 할 팔이 발밑을 지나 돈다.
 const wrapPi = (a) => a - TAU * Math.round(a / TAU);
@@ -209,9 +259,21 @@ function basePose(p, time, spike = true) {
 /// spike — **배구에서만 켠다.** 치는 모션(p.swing·p.toss·p.cock)은 이 스위치가 켜져야 나온다.
 /// 졸라맨은 다른 게임도 쓰니, 배구가 남겨 둔 값이 남의 그림에 새어 들면 안 된다 —
 /// 판을 갈아 끼울 때 휘두르던 사람이 다음 게임에서 그 자세로 굳는 일이 실제로 일어난다.
-function pose(p, time, face = faceOf(p), spike = true) {
+function pose(p, time, face = faceOf(p), spike = true, bat = false) {
   const base = basePose(p, time, spike);
-  if (p.dead || p.cheer || p.waiting || !spike) return base;
+  if (p.dead || p.cheer || p.waiting) return base;
+  // 야구. 던지기 · 치기 · 배트 세우고 기다리기 · 글러브 들고 기다리기 — 이 순서로 센다.
+  // 달리는 중에는 아무것도 안 덮는다(주자와 타구를 쫓는 수비수는 그냥 달려야 한다).
+  if (bat) {
+    if (p.pitchT > 0) return pitchPose(p, base);
+    if (p.batT > 0) return batPose(p, base);
+    // 웅크린 포수와 달리는 사람은 제 자세를 그대로 쓴다. 글러브만 얹는다.
+    if (p.crouch > 0.05 || Math.abs(p.vx ?? 0) > 16) return p.glove ? { ...base, glove: 1 } : base;
+    if (p.stance) return stancePose(p, base);
+    if (p.glove) return readyPose(p, base);
+    return base;
+  }
+  if (!spike) return base;
   // 벽이 먼저다 — 벽을 세운 사람은 휘두르지 않는다.
   if (p.block > 0) return blockPose(p, base);
   if (p.swing > 0) return swingPose(p, base, face);
@@ -313,6 +375,74 @@ function tossPose(p, base) {
   };
 }
 
+/// **투구.** 다리를 들었다가 내딛으며 팔이 머리 위를 넘어온다.
+///
+/// 박자를 다섯으로 나눠 둔 이유는, 하나짜리 곡선으로 이으면 「팔만 도는 그림」이 되기
+/// 때문이다. 던지는 티는 팔이 아니라 **다리와 몸통**에서 난다 — 들고, 내딛고, 따라 나간다.
+function pitchPose(p, base) {
+  const u = Math.max(0, Math.min(1, 1 - p.pitchT / PITCH_TIME));
+  let i = 0;
+  while (i < PITCH_KEYS.length - 2 && u > PITCH_KEYS[i + 1][0]) i++;
+  const [u0, lean0, legs0, arms0] = PITCH_KEYS[i];
+  const [u1, lean1, legs1, arms1] = PITCH_KEYS[i + 1];
+  const k = smooth((u - u0) / Math.max(1e-6, u1 - u0));
+  return {
+    hipY: HIP_Y, bob: 0,
+    lean: lerp(lean0, lean1, k),
+    legs: mixLimbs(legs0, legs1, k),
+    arms: mixLimbs(arms0, arms1, k),
+    glove: 1,
+  };
+}
+
+/// **타격.** 젖힌 배트가 공까지 돌고(휘두름), 잠깐 붙어 있다가(맞댐), 어깨 너머로 감긴다.
+/// 배구의 내리치기와 같은 세 박자다 — 맞댐이 있어야 「닿았다」가 보인다.
+function batPose(p, base) {
+  const u = BAT_TIME - p.batT;
+  if (u < BAT_WHIP) return mixPose(BAT_STANCE, BAT_MEET, (u / BAT_WHIP) ** 1.7);
+  if (u < BAT_WHIP + BAT_HOLD) return mixPose(BAT_MEET, BAT_MEET, 0);
+  const k = Math.min(1, (u - BAT_WHIP - BAT_HOLD) / Math.max(0.05, BAT_TIME - BAT_WHIP - BAT_HOLD));
+  // 앞 60% 는 배트가 끝까지 감기고, 나머지는 준비 자세로 풀린다.
+  return k < 0.6 ? mixPose(BAT_MEET, BAT_THRU, smooth(k / 0.6))
+                 : mixPose(BAT_THRU, BAT_STANCE, smooth((k - 0.6) / 0.4));
+}
+
+/// 배트를 세우고 기다리는 자세. 숨 쉬는 몫만 base 에서 가져온다.
+function stancePose(p, base) {
+  return { ...mixPose(BAT_STANCE, BAT_STANCE, 0), bob: base.bob * 0.6 };
+}
+
+/// 글러브를 앞으로 낮게 든 수비 자세.
+function readyPose(p, base) {
+  return { hipY: HIP_Y, bob: base.bob * 0.5, lean: FIELD_READY.lean,
+           legs: FIELD_READY.legs, arms: FIELD_READY.arms, glove: 1 };
+}
+
+function mixPose(a, b, k) {
+  return {
+    hipY: HIP_Y, bob: 0,
+    lean: lerp(a.lean, b.lean, k),
+    legs: mixLimbs(a.legs, b.legs, k),
+    arms: mixLimbs(a.arms, b.arms, k),
+    // 배트는 **짧은 쪽으로 잇지 않는다.** 위 주석 참고 — 각을 편 채로 적어 두고 그대로 섞는다.
+    bat: a.bat === undefined ? undefined : lerp(a.bat, b.bat, k),
+  };
+}
+
+/// 배트 끝이 판 어디에 있나. 시험이 「휘두름이 한 방향으로 도나」를 재는 데 쓴다.
+export function batPoint(p, time = 0) {
+  const face = faceOf(p, false);
+  const s = pose(p, time, face, false, true);
+  if (s.bat === undefined) return null;
+  const hipY = s.hipY + s.bob;
+  const sx = Math.sin(s.lean) * TORSO;
+  const sy = hipY - Math.cos(s.lean) * TORSO;
+  const r = s.reach?.[0] ?? 1;
+  const [, , hand] = limb(sx, sy, s.arms[0][0], UPPER * r, s.arms[0][1], FORE * r);
+  return { x: p.x + (hand[0] + Math.sin(s.bat) * BAT_LEN) * face,
+           y: p.groundY - p.air + hand[1] + Math.cos(s.bat) * BAT_LEN, angle: s.bat };
+}
+
 /// 치는 손(첫째 팔) 끝이 판 어디에 있나. 시험이 「손이 공에 닿았나」를 재는 데 쓴다.
 export function handPoint(p, time = 0) {
   const face = faceOf(p);
@@ -344,12 +474,13 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
     ctx.rotate(p.facing * ease * Math.PI * 0.46);
   }
   const spike = !!opts.spike;
+  const bat = !!opts.bat;
   const face = faceOf(p, spike);
   ctx.scale(face, 1); // 뒤집힌 공간 안에서는 +x 가 언제나 「앞」이다
   // 몸을 던지면 앞으로 쏠린다. 발이 뒤에 남고 어깨가 앞으로 나간다.
   if (p.slide > 0) ctx.translate(-6, 0);
 
-  const s = pose(p, time, face, spike);
+  const s = pose(p, time, face, spike, bat);
   const hipY = s.hipY + s.bob;
   const lean = p.dead ? 0.02 : s.lean;
 
@@ -396,6 +527,20 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   stroke(ctx, armB, pen(5));
   stroke(ctx, [[shldX, shldY], [neckX, neckY]], pen(6));
   circle(ctx, headX, headY, HEAD_R, { width: w, color: INK, seed: seed + 7, amp: 0.55 });
+
+  // 야구 — 배트와 글러브. 손끝에서 자라므로 팔을 그린 **뒤**에 얹는다.
+  if (s.bat !== undefined) {
+    const [hx, hy] = armA[2];
+    // 손잡이는 가늘고 머리는 굵다. 획 둘이면 방망이로 읽힌다.
+    const tip = [hx + Math.sin(s.bat) * BAT_LEN, hy + Math.cos(s.bat) * BAT_LEN];
+    const mid = [hx + Math.sin(s.bat) * BAT_LEN * 0.45, hy + Math.cos(s.bat) * BAT_LEN * 0.45];
+    stroke(ctx, [[hx, hy], mid], { width: 3.2, color: INK, seed: seed + 51, amp: 0.3 });
+    stroke(ctx, [mid, tip], { width: 5.4, color: INK, seed: seed + 52, amp: 0.3 });
+  }
+  if (s.glove) {
+    const [gx, gy] = armB[2];
+    circle(ctx, gx, gy, 6.2, { width: 2.6, color: INK, seed: seed + 53, amp: 0.4 });
+  }
 
   drawMark(ctx, headX, headY, opts.mark, opts.color ?? INK, seed);
   drawFace(ctx, headX, headY, p, time, seed);
