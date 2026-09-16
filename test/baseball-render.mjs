@@ -78,6 +78,22 @@ if (process.env.SHOTS) {
     if (b.call?.big && b.play) save('판정');
     if (b.play && b.play.runs.length > 1 && b.play.t > 1.2) save('주루');
   }
+  // **몸에 맞는 공은 1%짜리**라 한 경기에서 한 번도 안 나올 수 있다. 따로 한 장 만든다 —
+  // 홈에 붙어 선 타자에게 조준 한계까지 몸쪽으로 던지고, 제구가 밀리기를 기다린다.
+  {
+    const w2 = make(); const c = w2.bag;
+    for (let i = 0; i < 600 && !c.hitBy; i++) {
+      c.pitch = null; c.play = null; c.wait = 0; c.stand = 1;
+      c.aim.x = -bb.AIM_OUT; c.aim.y = 0; c.type = 0;
+      bb.default.action(w2);
+      for (let k = 0; k < 90 && !c.hitBy; k++) w.update(w2, 1 / 60);
+    }
+    if (c.hitBy) {
+      for (let k = 0; k < 6; k++) w.update(w2, 1 / 60);
+      frame(ctx, w2, 0);
+      writeFileSync(`${dir}/${String(++shot).padStart(2, '0')}-데드볼.png`, ctx.canvas.toBuffer('image/png'));
+    }
+  }
   console.log(`${shot}장 → ${dir}`);
 } else {
   const world = make();

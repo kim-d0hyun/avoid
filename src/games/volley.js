@@ -88,7 +88,6 @@ const RESET_WAIT = 1.1;     // 점수 난 뒤 다음 서브까지
 const SERVE_HOLD = 0.14;          // 이만큼은 눌러야 힘이 붙기 시작한다
 const SERVE_FULL = 0.72;          // 여기서 꽉 찬다
 const SERVE_BURST = 1.06;         // 여기를 넘기면 실패
-const SERVE_AUTO = 6;             // 아무도 안 누르면 저절로 올라간다 (혼자 보고 있을 때)
 const SERVE_SLOW = 700 * SLOW;    // 톡 쳐도 이만큼은 간다 — **넘기지도 못하면 고를 게 없다**
 const SERVE_FAST = 1250 * SLOW;   // 꽉 채운 서브
 const SERVE_AIM = 250 * SLOW;     // ⌥←→ 로 더 깊이 / 더 짧게
@@ -271,7 +270,6 @@ function serve(world, toSide) {
   // 공을 손에 들고 기다린다. 올리는 사람이 누를 때까지 판이 안 돈다.
   b.serving = true;
   b.charge = -1;
-  b.idle = 0;
   b.mustCross = null;
 }
 
@@ -1185,8 +1183,8 @@ export default {
     fx: [], events: [], stop: 0, stopHold: 0, mineAt: 9,
     // 기억해 둔 입력 · 발밑 고리 남은 시간 · 서브를 올리는 쪽.
     hold: null, ringFade: 0, serveBy: 0, mustCross: null,
-    // 서브 — 들고 있나 · 얼마나 찼나 · 손님이 제 화면에서 세는 몫 · 아무도 안 누른 시간.
-    serving: false, charge: -1, myCharge: -1, idle: 0,
+    // 서브 — 들고 있나 · 얼마나 찼나 · 손님이 제 화면에서 세는 몫.
+    serving: false, charge: -1, myCharge: -1,
     score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false, emptyFor: 0,
     // 손님이 받은 공을 부드럽게 따라가려고 남겨 두는 것.
     age: 0, errorX: 0, errorY: 0, baseX: undefined,
@@ -1268,13 +1266,11 @@ export default {
       }
       if (world.mp.role === 'guest') return;          // 손님은 방장이 굴린 것을 볼 뿐이다
       if (b.wait > 0) return;
-      b.idle = (b.idle ?? 0) + dt;
+      // **저절로 올라가지 않는다.** 올리는 사람이 누를 때까지 기다린다 —
+      // 서브는 매 점수마다 주어지는 선택이고, 몇 초 만에 대신 눌러 주면 그 선택이 없어진다.
       if (b.charge >= 0) {
         b.charge += dt;
         if (b.charge > SERVE_BURST) { serveFault(world); return; }
-      } else if (b.idle > SERVE_AUTO) {
-        // 아무도 안 누른다 — 저절로 넘겨 판을 세워 두지 않는다.
-        hitServe(world, 0.5, 0);
       }
       return;
     }

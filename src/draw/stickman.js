@@ -81,6 +81,22 @@ const PITCH_KEYS = [
   [1.00,  0.42, [[0.66, 0.46], [-0.78, -1.38]], [[1.02, 0.52], [-0.98, -1.58]]],
 ];
 
+/// **공을 놓는 순간의 손 모양.** 구종마다 다르다.
+///
+/// 이게 없으면 타자에게 주어진 정보가 날아오는 공뿐이라 **수싸움의 절반이 비어 있다** —
+/// 기획서에 「안 보여 주면 순전히 찍기가 된다」고 적어 놓고 안 넣었던 자리다.
+/// 세 프레임짜리 차이라 처음엔 안 보이지만, 보기 시작하면 읽힌다.
+///
+///   fore  아래팔(손목)을 얼마나 틀었나   off  글러브 팔이 어디로 빠지나   reach  손이 얼마나 뻗나
+const GRIPS = [
+  { fore: 0.00, off: 0.00, reach: 1.00 },   // 직구 — 손끝이 곧게 앞으로
+  { fore: 0.62, off: -0.34, reach: 0.90 },  // 슬라이더 — 손목을 옆으로 눕혀 긁는다
+  { fore: -0.78, off: 0.38, reach: 0.84 },  // 커브 — 손목을 안으로 꺾어 감아 내린다
+  { fore: 0.26, off: 0.22, reach: 1.10 },   // 체인지업 — 손이 한 박자 늦게 빠진다
+];
+/// 손 모양이 드러나기 시작하는 지점 (0~1 중). 팔이 머리 위를 넘어온 뒤다.
+const GRIP_FROM = 0.62;
+
 /// 타격 세 박자. 배트 각도까지 같이 든다 — 배트는 손끝에서 이 각도로 뻗는다.
 /// 배트 각은 **한 바퀴를 편 채로** 적는다 (−2.78 → −4.56 → −6.50).
 ///
@@ -386,11 +402,21 @@ function pitchPose(p, base) {
   const [u0, lean0, legs0, arms0] = PITCH_KEYS[i];
   const [u1, lean1, legs1, arms1] = PITCH_KEYS[i + 1];
   const k = smooth((u - u0) / Math.max(1e-6, u1 - u0));
+  const arms = mixLimbs(arms0, arms1, k);
+  // 구종별 손 모양. 팔이 머리 위를 넘어온 뒤부터 드러나고 놓는 순간 제일 크다.
+  const grip = GRIPS[((p.grip | 0) % GRIPS.length + GRIPS.length) % GRIPS.length];
+  const show = smooth((u - GRIP_FROM) / (1 - GRIP_FROM));
+  if (show > 0.001) {
+    arms[0][1] += grip.fore * show;
+    arms[1][0] += grip.off * show;
+    arms[1][1] += grip.off * show * 0.6;
+  }
   return {
     hipY: HIP_Y, bob: 0,
     lean: lerp(lean0, lean1, k),
     legs: mixLimbs(legs0, legs1, k),
-    arms: mixLimbs(arms0, arms1, k),
+    arms,
+    reach: [1 + (grip.reach - 1) * show, 1],
     glove: 1,
   };
 }
@@ -441,6 +467,18 @@ export function batPoint(p, time = 0) {
   const [, , hand] = limb(sx, sy, s.arms[0][0], UPPER * r, s.arms[0][1], FORE * r);
   return { x: p.x + (hand[0] + Math.sin(s.bat) * BAT_LEN) * face,
            y: p.groundY - p.air + hand[1] + Math.cos(s.bat) * BAT_LEN, angle: s.bat };
+}
+
+/// 공을 놓는 손이 판 어디에 있나 (야구 자세). 시험이 「구종마다 손 모양이 다른가」를 잰다.
+export function pitchHand(p, time = 0) {
+  const face = faceOf(p, false);
+  const s = pose(p, time, face, false, true);
+  const hipY = s.hipY + s.bob;
+  const sx = Math.sin(s.lean) * TORSO;
+  const sy = hipY - Math.cos(s.lean) * TORSO;
+  const r = s.reach?.[0] ?? 1;
+  const [, , hand] = limb(sx, sy, s.arms[0][0], UPPER * r, s.arms[0][1], FORE * r);
+  return { x: p.x + hand[0] * face, y: p.groundY - p.air + hand[1] };
 }
 
 /// 치는 손(첫째 팔) 끝이 판 어디에 있나. 시험이 「손이 공에 닿았나」를 재는 데 쓴다.

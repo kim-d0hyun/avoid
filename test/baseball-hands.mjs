@@ -21,16 +21,24 @@ export function makeHands(world, skill = 1) {
     if (bb.amPitching(world) && !b.pitch && !b.play && b.wait <= 0) {
       const want = rnd() < 0.44 ? 1 : 2 + ((rnd() * 3) | 0);
       w.press(world, 'say' + want, true); w.press(world, 'say' + want, false);
+      // 게임 안의 컴퓨터(aiPitch)와 같은 방식으로 **겨누기만** 한다 —
+      // 실제로 어디로 가는지는 startPitch 의 제구가 정한다.
       const a = rnd() * Math.PI * 2;
       const behind = b.balls >= 3 || (b.balls === 2 && b.strikes === 0);
       const ahead = b.strikes === 2 && b.balls < 2;
-      const g = () => (rnd() + rnd() + rnd() + rnd() + rnd() + rnd() - 3) * Math.SQRT2;
-      let tx = 0, ty = 0, wob = 0.62;
-      if (behind) wob = 0.42;
-      else if (ahead && rnd() < 0.62) { tx = Math.cos(a) * 1.30; ty = Math.sin(a) * 1.15; wob = 0.34; }
-      else { tx = Math.cos(a) * 0.62; ty = Math.sin(a) * 0.55; wob = 0.72; }
-      b.aim.x = tx + g() * wob - bb.PITCHES[want - 1].bend;
-      b.aim.y = ty + g() * wob * 0.9 + bb.PITCHES[want - 1].drop;
+      if (behind) { const m = rnd() < 0.24; const r2 = m ? 1.05 + rnd() * 0.2 : rnd() * 0.5;
+                    b.aim.x = Math.cos(a) * r2; b.aim.y = Math.sin(a) * r2; }
+      else {
+        const out = rnd() < (ahead ? 0.78 : 0.54);
+        let x, y;
+        if (out) {
+          const far = (1.08 + rnd() * 0.27) * (rnd() < 0.5 ? -1 : 1);
+          const near = rnd() * 1.7 - 0.85;
+          if (rnd() < 0.55) { x = far; y = near; } else { x = near; y = far; }
+        } else { x = rnd() * 1.7 - 0.85; y = rnd() * 1.7 - 0.85; }
+        b.aim.x = x;
+        b.aim.y = y;
+      }
       tap('grab');
       return;
     }
@@ -42,9 +50,9 @@ export function makeHands(world, skill = 1) {
         const end = bb.pitchEnd(b.pitch, L);
         const z = bb.zone(L);
         const inZone = Math.abs(end.x - z.cx) < z.w / 2 + 4 && Math.abs(end.y - z.cy) < z.h / 2 + 4;
-        const chase = !inZone && rnd() < (b.strikes === 2 ? 0.38 : 0.20);
+        const chase = !inZone && rnd() < (b.strikes === 2 ? 0.34 : 0.17);
         const guess = rnd() < (b.strikes === 2 ? 0.45 : 0.62) ? 0 : 1 + ((rnd() * 3) | 0);
-        plan = (inZone && rnd() > 0.30) || chase
+        plan = (inZone && rnd() > 0.38) || chase
           ? { at: b.pitch.plate + bb.guessErr(guess, b.pitch.type, 10 / skill),
               up: rnd() < 0.26, down: rnd() < 0.2 }
           : null;

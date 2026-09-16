@@ -1077,15 +1077,15 @@ say('서브 — 너무 오래 잡으면 손에서 빠진다 (상대 점수)');
   ok('공은 안 날아갔다', b.ball.vy === 0);
 }
 
-say('서브 — 아무도 안 누르면 저절로 올라간다 (판이 안 멎는다)');
+say('서브 — 아무도 안 누르면 저절로 올라가지 않는다 (누를 때까지 기다린다)');
 {
   const world = mk(); world.state = 'play'; world.team = 0;
-  const b = world.bag; b.started = true; b.wait = 0; b.idle = 0;
+  const b = world.bag; b.started = true; b.wait = 0;
   world.player.x = 300; b.serveBy = 0; b.serving = true; b.charge = -1;
-  for (let i = 0; i < 60 * 7 && b.serving; i++) volley.update(world, 1 / 60);
-  ok('6초쯤에 저절로 넘어간다', !b.serving);
-  ok('점수는 안 준다', b.score[0] === 0 && b.score[1] === 0);
-  ok('상대 쪽으로 간다', b.ball.vx > 0);
+  for (let i = 0; i < 60 * 12; i++) volley.update(world, 1 / 60);
+  ok('12초를 기다려도 안 넘어간다', b.serving);
+  ok('점수도 안 난다', b.score[0] === 0 && b.score[1] === 0);
+  ok('공은 손에 들려 있다', b.ball.vy === 0);
 }
 
 say('서브 — 올릴 차례가 아닌 사람은 못 올린다');

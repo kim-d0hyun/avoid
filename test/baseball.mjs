@@ -10,8 +10,9 @@ const ball = games.find((g) => g.id === 'ball');
 const bb = await import(R + 'games/baseball.js');
 const { layout, spot, zone, pitchEnd, pitchAt, contact, resolveHit, flightOf, catchOdds,
         guessErr, ballAt, PITCHES, batSide, fieldSide, amPitching, amBatting, swing,
-        FENCE_MID, FENCE_LINE, fenceFt, runnerAt, manAt, facingOf, POSTS } = bb;
-const { BAT_TIME, PITCH_TIME, batPoint } = await import(R + 'draw/stickman.js');
+        FENCE_MID, FENCE_LINE, fenceFt, runnerAt, manAt, facingOf, POSTS,
+        makeOrder, atBat, postAt, pullWord, AIM_OUT } = bb;
+const { BAT_TIME, PITCH_TIME, batPoint, pitchHand } = await import(R + 'draw/stickman.js');
 
 import { check, ok, say, note, done } from './check.mjs';
 
@@ -141,6 +142,99 @@ say('구종 넷 — 직구와 커브가 17프레임 떨어져 있다 (이 간격
   ok('제대로 읽으면 거의 맞는다', right.filter((e) => Math.abs(e) > 12).length / right.length < 0.05);
 }
 
+say('조준은 존 한 겹 밖까지만 — 터무니없는 데는 못 겨눈다');
+{
+  ok('한계가 존 테두리 근처다', AIM_OUT > 1 && AIM_OUT < 1.6);
+  const world = mk(); const b = world.bag;
+  world.team = 0; b.half = 0;                // 초 — 내가 던진다
+  world.input.right = true; world.input.jump = true;
+  for (let f = 0; f < 60 * 5; f++) w.update(world, FR);
+  ok('오른쪽 끝에서 멈춘다', Math.abs(b.aim.x - AIM_OUT) < 0.01);
+  ok('위쪽 끝에서도', Math.abs(b.aim.y - AIM_OUT) < 0.01);
+  world.input.right = false; world.input.jump = false;
+  world.input.left = true; world.input.duck = true;
+  for (let f = 0; f < 60 * 5; f++) w.update(world, FR);
+  ok('반대쪽도 같다', Math.abs(b.aim.x + AIM_OUT) < 0.01 && Math.abs(b.aim.y + AIM_OUT) < 0.01);
+  world.input.left = false; world.input.duck = false;
+
+  // 손님이 터무니없는 값을 보내도 잘린다
+  const host = mk();
+  host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1;
+  host.mp.others.set(2, { id: 2, dead: false, waiting: false });
+  host.team = 0; host.mp.ballSides = new Map([[1, 0], [2, 1]]);
+  w.update(host, FR);
+  host.bag.half = 1;                          // 말 → 손님(원정)이 던진다
+  host.bag.wait = 0; host.bag.pitch = null;
+  ball.message(host, 2, { k: 'pitch', n: 0, x: 99, y: -99 });
+  ok('손님이 보낸 값도 한계 안으로', !!host.bag.pitch
+     && Math.abs(host.bag.pitch.aimX) <= AIM_OUT + 1e-6
+     && Math.abs(host.bag.pitch.aimY) <= AIM_OUT + 1e-6);
+}
+
+say('제구 — 겨눈 자리와 가는 자리는 다르다');
+{
+  const world = mk(); const b = world.bag;
+  const spots = [];
+  for (let i = 0; i < 300; i++) {
+    b.pitch = null;
+    b.aim.x = 0.8; b.aim.y = -0.3; b.type = 0; b.wait = 0; b.over = false;
+    b.half = 0; world.team = 0;
+    ball.action(world);
+    if (b.pitch) spots.push([b.pitch.ax, b.pitch.ay]);
+  }
+  ok('실제로 던졌다', spots.length > 250);
+  const dx = spots.map(([x]) => x - 0.8);
+  const spread2 = Math.sqrt(dx.reduce((a, c) => a + c * c, 0) / dx.length);
+  note(`겨눈 0.80 → 실제 평균 ${(spots.reduce((a, c) => a + c[0], 0) / spots.length).toFixed(2)} · 흔들림 ${spread2.toFixed(2)}`);
+  ok('겨눈 자리 근처로 간다', Math.abs(spots.reduce((a, c) => a + c[0], 0) / spots.length - 0.8) < 0.08);
+  ok('그대로 꽂히지는 않는다', spread2 > 0.08 && spread2 < 0.45);
+  ok('겨눈 자리는 따로 기억한다', spots.length > 0 && b.pitch.aimX === 0.8);
+}
+
+say('데드볼 — 겨눠서는 못 맞힌다. 몸쪽을 파다 밀리면 맞는다');
+{
+  // 조준 한계까지 몸쪽으로 겨눠도 대부분은 안 맞는다
+  const world = mk(); const b = world.bag;
+  world.team = 0; b.half = 0;
+  let hit = 0, thrown = 0;
+  for (let i = 0; i < 400; i++) {
+    b.pitch = null; b.play = null; b.wait = 0; b.balls = 0; b.strikes = 0;
+    b.aim.x = -AIM_OUT; b.aim.y = 0; b.type = 0;
+    ball.action(world);
+    if (!b.pitch) continue;
+    thrown++;
+    b.aiSwing = null;                          // 타자는 안 휘두른다
+    // 맞은 사람은 움찔한 다음에 걸어 나간다 — 판정이 난 뒤로도 좀 더 돌려야 기록에 남는다
+    for (let f = 0; f < 90 && !b.play; f++) bb.default.update(world, FR);
+    if (b.log.some((x) => x.r === 'HBP')) hit++;
+    b.log.length = 0;
+  }
+  note(`한계까지 몸쪽으로 ${thrown}번 던져 데드볼 ${hit}번 (${(hit / thrown * 100).toFixed(0)}%)`);
+  ok('겨눠서 늘 맞힐 수는 없다', hit / thrown < 0.4);
+  ok('그래도 이따금 맞는다', hit > 0);
+
+  // 홈에 붙어 선 타자는 더 맞는다
+  const rate = (stand) => {
+    const w2 = mk(); const c = w2.bag;
+    w2.team = 0; c.half = 0;
+    let n = 0, m = 0;
+    for (let i = 0; i < 400; i++) {
+      c.pitch = null; c.play = null; c.wait = 0; c.balls = 0; c.strikes = 0;
+      c.aim.x = -AIM_OUT; c.aim.y = 0; c.stand = stand;
+      ball.action(w2);
+      if (!c.pitch) continue;
+      m++; c.aiSwing = null;
+      for (let f = 0; f < 90 && !c.play; f++) bb.default.update(w2, FR);
+      if (c.log.some((x) => x.r === 'HBP')) n++;
+      c.log.length = 0; c.stand = stand;
+    }
+    return n / m;
+  };
+  const close = rate(1), back = rate(-1);
+  note(`홈에 붙어 서면 ${(close * 100).toFixed(0)}% · 물러서면 ${(back * 100).toFixed(0)}%`);
+  ok('붙어 설수록 더 맞는다', close > back);
+}
+
 say('커브는 늦게 떨어진다 — 앞쪽 절반보다 뒤쪽 절반에서 더 진다');
 {
   const L = layout(mk());
@@ -148,7 +242,11 @@ say('커브는 늦게 떨어진다 — 앞쪽 절반보다 뒤쪽 절반에서 �
   const p = { type: curve, kind: PITCHES[curve], ax: 0, ay: 0 };
   const a = pitchAt(p, L, 0).y, b = pitchAt(p, L, 0.5).y, c = pitchAt(p, L, 1).y;
   const straight = { type: 0, kind: PITCHES[0], ax: 0, ay: 0 };
-  ok('커브가 직구보다 낮게 들어온다', pitchAt(p, L, 1).y > pitchAt(straight, L, 1).y);
+  // 겨눈 자리가 곧 도착 자리다. 휘고 떨어지는 것은 **오는 길에서만** 일어난다 —
+  // 도착 자리까지 밀면 조준 한계를 아무리 좁혀도 구종이 그 밖으로 데려가 버린다.
+  const end = pitchEnd(p, L), endS = pitchEnd(straight, L);
+  ok('같은 데를 겨누면 같은 데로 온다', Math.abs(end.y - endS.y) < 0.01 && Math.abs(end.x - endS.x) < 0.01);
+  ok('오는 길에서는 직구보다 높이 떠 있다', b < pitchAt(straight, L, 0.5).y - 1);
   ok('뒤쪽 절반에서 더 많이 진다', (c - b) > (b - a) * 1.15);
 }
 
@@ -360,6 +458,135 @@ say('주자는 화면에서 가는 쪽을 본다 — 각도로 정하면 뒤로 
   check('1루 → 2루 는 왼쪽', look(leg(1, 2), 2), -1);
   check('2루 → 3루 도 왼쪽', look(leg(2, 3), 2), -1);
   check('3루 → 홈 은 오른쪽', look(leg(3, 4), 2), 1);
+}
+
+say('타순 아홉 — 아홉이 아홉으로 보인다');
+{
+  const [home, away] = makeOrder(12345);
+  check('한 편에 아홉', [home.length, away.length], [9, 9]);
+  check('같은 씨앗이면 같은 타순', JSON.stringify(makeOrder(777)), JSON.stringify(makeOrder(777)));
+  ok('다른 씨앗이면 다르다', JSON.stringify(makeOrder(1)) !== JSON.stringify(makeOrder(2)));
+  note(home.map((x) => `${x.no}번 ${x.name} 힘${x.pow} 눈${x.eye} 발${x.leg}`).join(' · '));
+  // 앞은 발, 가운데는 힘
+  ok('1·2번이 제일 빠르다', Math.min(home[0].leg, home[1].leg) < Math.min(...home.slice(3, 6).map((x) => x.leg)));
+  ok('4·5번이 제일 세다', Math.max(home[3].pow, home[4].pow) > Math.max(home[0].pow, home[8].pow));
+  ok('사람마다 다르다', new Set(home.map((x) => `${x.pow}/${x.eye}/${x.leg}`)).size >= 7);
+
+  // 힘은 타구 속도로, 눈은 헛스윙으로, 발은 1루까지로 나타난다
+  const evOf = (bat) => {
+    let sum = 0;
+    for (let i = 0; i < 400; i++) sum += contact(0, false, false, PITCHES[0], undefined, bat).ev;
+    return sum / 400;
+  };
+  const strong = { pow: 1.15, eye: 0, leg: 0 }, weak = { pow: 0.88, eye: 0, leg: 0 };
+  ok('힘센 타자가 더 세게 친다', evOf(strong) > evOf(weak) * 1.2);
+  check('눈 나쁘면 12프레임에서 헛스윙', contact(12, false, false, PITCHES[0], undefined, { pow: 1, eye: -2, leg: 0 }), null);
+  ok('눈 좋으면 13프레임도 맞는다', !!contact(13, false, false, PITCHES[0], undefined, { pow: 1, eye: 2, leg: 0 }));
+  // 발 — 같은 땅볼에 빠른 타자가 더 산다
+  const safeRate = (leg) => {
+    let safe = 0;
+    for (let i = 0; i < 400; i++) {
+      const p = resolveHit({ grade: 1, ev: 96, ang: -5, deg: -24, tipped: false },
+                           { onBase: [null, null, null], outs: 0, leg });
+      if (!p.outs) safe++;
+    }
+    return safe / 400;
+  };
+  const fast = safeRate(-0.3), slow = safeRate(0.3);
+  note(`빠른 타자 세이프 ${(fast * 100).toFixed(0)}% · 느린 타자 ${(slow * 100).toFixed(0)}%`);
+  ok('발 빠른 타자가 더 산다', fast > slow);
+}
+
+say('투구 시계 — 안 던지면 볼 하나. 안 그러면 판이 영영 멎는다');
+{
+  const world = mk();
+  const b = world.bag;
+  world.team = 0; b.half = 0;              // 초 — 내가 던지는 쪽인데 아무것도 안 누른다
+  let f = 0;
+  while (b.balls === 0 && f < 60 * 40) { w.update(world, FR); f++; }
+  note(`${(f / 60).toFixed(1)}초 만에 볼 하나`);
+  check('볼이 하나 늘었다', b.balls, 1);
+  ok('15초 언저리다', f / 60 > 13 && f / 60 < 18);
+  // 주자가 있으면 더 준다
+  const w2 = mk(); const c = w2.bag;
+  w2.team = 0; c.half = 0; c.onBase = [true, null, null];
+  let g = 0;
+  while (c.balls === 0 && g < 60 * 40) { w.update(w2, FR); g++; }
+  ok('주자가 있으면 더 길다', g > f + 60 * 3);
+  // 컴퓨터가 던지는 쪽이면 시계가 필요 없다 (바로 던진다)
+  const w3 = mk(); w3.team = 1; w3.bag.half = 0;
+  for (let i = 0; i < 60 * 3 && !w3.bag.pitch; i++) w.update(w3, FR);
+  ok('컴퓨터는 시계 없이 바로 던진다', !!w3.bag.pitch && !(w3.bag.clock > 0));
+}
+
+say('새 타자는 타석 가운데서 시작한다');
+{
+  const world = mk(); const b = world.bag;
+  world.team = 0; b.half = 1;
+  world.input.right = true;
+  for (let f = 0; f < 40; f++) w.update(world, FR);
+  world.input.right = false;
+  ok('한 발 옮겼다', b.stand > 0.3);
+  b.strikes = 2;
+  b.pitch = { type: 0, kind: PITCHES[0], ax: 0, ay: 0, t: 0, dur: 0.4, plate: 24, done: false, wind: 0 };
+  b.aiSwing = null;
+  for (let f = 0; f < 90 && b.log.length === 0; f++) w.update(world, FR);
+  check('타석이 끝났다', b.log.length, 1);
+  check('다음 타자는 가운데', b.stand, 0);
+}
+
+say('수비 시프트 — 당겨 치는 타자를 막고 반대쪽을 내준다');
+{
+  check('보통은 제자리', postAt(5, 0).deg, POSTS[5].deg);
+  check('투수는 안 움직인다', postAt(0, -1).deg, POSTS[0].deg);
+  check('외야수도 안 움직인다', postAt(7, -1).deg, POSTS[7].deg);
+  // 당김 수비면 **2루수가 2루를 넘어 3루 쪽으로 건너간다** — 셋이 왼쪽에 선다
+  ok('당김이면 2루수가 건너간다', postAt(3, -1).deg < 0 && postAt(3, 0).deg > 0);
+  ok('밀어침이면 유격수가 건너간다', postAt(5, 1).deg > 0 && postAt(5, 0).deg < 0);
+  const left = (sh) => [2, 3, 4, 5].filter((i) => postAt(i, sh).deg < 0).length;
+  check('보통은 둘씩', left(0), 2);
+  check('당김이면 셋이 왼쪽', left(-1), 3);
+  check('밀어침이면 하나만 왼쪽', left(1), 1);
+
+  // **성향이 있어야 시프트가 뜻을 갖는다.** 고루 치는 타자에겐 이득도 손해도 없어야 한다.
+  const outRate = (pull, shift) => {
+    let n = 0, m = 0;
+    for (let i = 0; i < 2500; i++) {
+      const err = Math.round((Math.random() - Math.random()) * 10);
+      const h = contact(err, Math.random() < 0.2, Math.random() < 0.35,
+                        PITCHES[(Math.random() * 4) | 0], undefined, { pow: 1.05, eye: 0, leg: 0, pull });
+      if (!h || h.tipped || Math.abs(h.deg) > 45) continue;
+      const p = resolveHit(h, { onBase: [null, null, null], outs: 0, shift });
+      if (p.foul || p.kind === 'homer') continue;
+      m++; if (p.outs) n++;
+    }
+    return n / m;
+  };
+  const pullA = outRate(-0.9, -1), pullN = outRate(-0.9, 0), pullB = outRate(-0.9, 1);
+  note(`당겨 치는 타자 아웃율 — 당김 ${(pullA * 100).toFixed(0)}% · 보통 ${(pullN * 100).toFixed(0)}% · 밀어침 ${(pullB * 100).toFixed(0)}%`);
+  ok('당겨 치는 타자는 당김 수비에 더 잡힌다', pullA > pullN + 0.05);
+  ok('반대로 걸면 더 안 잡힌다', pullB < pullN - 0.05);
+  const pushA = outRate(0.7, -1), pushB = outRate(0.7, 1);
+  note(`밀어 치는 타자 — 당김 ${(pushA * 100).toFixed(0)}% · 밀어침 ${(pushB * 100).toFixed(0)}%`);
+  ok('밀어 치는 타자는 반대로', pushB > pushA + 0.05);
+  const evenA = outRate(0, -1), evenN = outRate(0, 0), evenB = outRate(0, 1);
+  note(`고루 치는 타자 — ${(evenA * 100).toFixed(0)}% / ${(evenN * 100).toFixed(0)}% / ${(evenB * 100).toFixed(0)}%`);
+  ok('고루 치는 타자에겐 별 차이 없다', Math.abs(evenA - evenB) < 0.09);
+}
+
+say('타자 성향 — 당겨 치는 타자는 3루 쪽으로 쏠린다');
+{
+  const meanDeg = (pull) => {
+    let sum = 0;
+    for (let i = 0; i < 800; i++) sum += contact(0, false, false, PITCHES[0], undefined, { pow: 1, eye: 0, leg: 0, pull }).deg;
+    return sum / 800;
+  };
+  const a = meanDeg(-1), b2 = meanDeg(0), c = meanDeg(1);
+  note(`당겨침 ${a.toFixed(0)}° · 고루 ${b2.toFixed(0)}° · 밀어침 ${c.toFixed(0)}°`);
+  ok('당겨 치면 왼쪽', a < b2 - 8);
+  ok('밀어 치면 오른쪽', c > b2 + 8);
+  check('성향 이름', [pullWord(-0.9), pullWord(0), pullWord(0.9)], ['당겨침', '고루', '밀어침']);
+  ok('타순에 성향이 다 있다', makeOrder(99)[0].every((x) => Number.isFinite(x.pull)));
 }
 
 // ── 규칙 ──────────────────────────────────────────────────────────────────
@@ -606,6 +833,113 @@ say('동점이면 연장');
   });
   check('안 끝났다', b.over, false);
   check('4회 초로 넘어간다', [b.inn, b.half], [4, 0]);
+}
+
+say('기록지 — 이닝별 득점 · 안타 · 실책이 쌓인다');
+{
+  const { makeHands } = await import('./baseball-hands.mjs');
+  for (let g = 0; g < 4; g++) {
+    const world = mk();
+    const hands = makeHands(world);
+    const b = world.bag;
+    let f = 0;
+    while (!b.over && f < 60 * 3000) { hands(FR); w.update(world, FR); f++; }
+    const cols = Math.max(b.lines[0].length, b.lines[1].length);
+    ok(`${g + 1}판 — 시작도 안 한 회가 없다`, cols <= Math.max(3, b.inn));
+    ok(`${g + 1}판 — 이닝별 합이 점수와 같다`,
+       [0, 1].every((s2) => b.lines[s2].reduce((a, c) => a + (c ?? 0), 0) === b.score[s2]));
+    ok(`${g + 1}판 — 안타가 득점보다 적지 않다`, [0, 1].every((s2) => b.hits[s2] >= 0));
+    ok(`${g + 1}판 — 셈이 성한 숫자`, [...b.hits, ...b.errs].every(Number.isFinite));
+  }
+}
+
+say('끝내기 — 마지막 회 말 역전은 이름이 붙는다');
+{
+  const world = mk(); const b = world.bag;
+  b.inn = 3; b.half = 1; b.score = [0, 2]; b.onBase = [true, true, true]; b.outs = 1;
+  const p = fixed([0.5], () => resolveHit({ grade: 2, ev: 152, ang: 29, deg: 0, tipped: false },
+                                          { onBase: [true, true, true], outs: 1 }));
+  b.play = p;
+  for (let f = 0; f < Math.ceil(p.over * 60) + 10; f++) bb.default.update(world, FR);
+  check('역전했다', b.score, [4, 2]);
+  check('끝났다', b.over, true);
+  ok('끝내기로 적힌다', b.walkOff === true && /끝내기/.test(b.note ?? ''));
+  ok('그 회 득점이 기록지에 남는다', (b.lines[0][2] ?? 0) === 4);
+}
+
+say('던진 공 기록 — 배합이 쌓이고 공수 교대에 지워진다');
+{
+  const world = mk(); const b = world.bag;
+  world.team = 0; b.half = 0;            // 초 — 내가 던진다, 컴퓨터가 친다
+  let f = 0;
+  while (b.thrown.length < 4 && f < 60 * 200) {
+    if (!b.pitch && !b.play && b.wait <= 0) { b.type = b.thrown.length % 4; ball.action(world); }
+    w.update(world, FR); f++;
+  }
+  ok('던진 공이 쌓인다', b.thrown.length >= 4);
+  ok('구종과 자리가 같이 남는다',
+     b.thrown.every((x) => Number.isFinite(x.x) && Number.isFinite(x.y) && x.t >= 0 && x.t < PITCHES.length));
+  ok('결과도 남는다', b.thrown.every((x) => x.r >= 0 && x.r <= 4));
+  // 여덟 개까지만 들고 있는다
+  for (let i = 0; i < 20; i++) b.thrown.push({ t: 0, x: 0, y: 0, r: 1 });
+  while (b.thrown.length > 8) b.thrown.shift();
+  ok('여덟 개까지', b.thrown.length <= 8);
+  // 공수 교대에 지운다
+  b.outs = 2; b.thrown = [{ t: 0, x: 0, y: 0, r: 1 }];
+  fixed([0.01], () => {
+    const p = resolveHit({ grade: 0, ev: 62, ang: 52, deg: 0, tipped: false }, { onBase: [null, null, null], outs: 2 });
+    b.play = p;
+    for (let i = 0; i < Math.ceil(p.over * 60) + 6; i++) bb.default.update(world, FR);
+  });
+  check('교대하면 지운다', b.thrown.length, 0);
+}
+
+say('몸을 던지는 수비 — 겨우 닿는 공에만');
+{
+  // 무작위로 굴려서 얼마나 자주 몸을 던지는지 본다. 너무 잦으면 특별하지 않고,
+  // 아예 없으면 기획서의 「몸을 던져서(40%)」 칸이 그림 없이 숫자로만 남는다.
+  let all = 0, dove = 0;
+  const kinds = new Set();
+  for (let i = 0; i < 6000; i++) {
+    const err = Math.round((Math.random() - Math.random()) * 12);
+    const h = contact(err, Math.random() < 0.25, Math.random() < 0.2, PITCHES[(Math.random() * 4) | 0]);
+    if (!h) continue;
+    const p = resolveHit(h, { onBase: [null, null, null], outs: 0 });
+    if (p.foul || p.kind === 'homer') continue;
+    all++;
+    if (p.men.some((m) => m.dive != null)) { dove++; kinds.add(p.kind); }
+  }
+  note(`타구 ${all} 중 몸을 던진 것 ${dove} (${(dove / all * 100).toFixed(1)}%) — ${[...kinds].join(', ')}`);
+  ok('몸을 던지는 장면이 나온다', dove / all > 0.04);
+  ok('그래도 특별한 장면이다', dove / all < 0.32);
+  ok('땅볼에도 뜬공에도 나온다', kinds.has('grounder') && (kinds.has('fly') || kinds.has('liner')));
+  // 내야 바로 위 뜬 공은 편하게 잡는다
+  let easy = 0, tries = 0;
+  for (let i = 0; i < 400; i++) {
+    const p = resolveHit({ grade: 0, ev: 60, ang: 55, deg: 2, tipped: false },
+                         { onBase: [null, null, null], outs: 0 });
+    if (p.foul || p.kind === 'homer') continue;
+    tries++;
+    if (p.men.some((m) => m.dive != null)) easy++;
+  }
+  note(`내야 뜬공 ${tries}번 중 몸 던짐 ${easy}번`);
+  ok('편한 공에는 안 던진다', easy === 0);
+}
+
+say('구종마다 공을 놓는 손 모양이 다르다 — 안 보여 주면 찍기가 된다');
+{
+  const man = (grip) => ({ x: 0, groundY: 0, air: 0, vx: 0, vy: 0, facing: 1, walk: 0, crouch: 0,
+                           dead: false, deadFor: 0, grabbing: -1, heldBy: -1, grabAim: 0, slide: 0,
+                           glove: 1, grip, pitchT: PITCH_TIME * 0.08 });
+  const hands = [0, 1, 2, 3].map((g) => pitchHand(man(g), 0));
+  hands.forEach((h, i) => note(`구종 ${i} 손끝 (${h.x.toFixed(1)}, ${h.y.toFixed(1)})`));
+  // 넷이 서로 다른 자리에 있다
+  for (let i = 0; i < 4; i++) {
+    for (let j = i + 1; j < 4; j++) {
+      ok(`구종 ${i}·${j} 손 모양이 다르다`,
+         Math.hypot(hands[i].x - hands[j].x, hands[i].y - hands[j].y) > 2.2);
+    }
+  }
 }
 
 // ── 역할 ──────────────────────────────────────────────────────────────────
@@ -872,7 +1206,9 @@ say('둘이서 — 손님이 던지는 쪽일 때도 방장이 대신 던져 준
   check('손님이 고른 구종을 받는다', b.type, 1);
   ball.message(host, 2, { k: 'pitch', n: 1, x: 0.5, y: -0.3 });
   ok('방장이 대신 던졌다', !!b.pitch);
-  check('구종과 조준이 그대로', [b.pitch.type, b.pitch.ax, b.pitch.ay], [1, 0.5, -0.3]);
+  // 겨눈 자리는 그대로 오고, 실제로 간 자리는 제구 흔들림만큼만 어긋난다
+  check('구종과 조준이 그대로', [b.pitch.type, b.pitch.aimX, b.pitch.aimY], [1, 0.5, -0.3]);
+  ok('흔들림은 그 언저리', Math.abs(b.pitch.ax - 0.5) < 1 && Math.abs(b.pitch.ay + 0.3) < 1);
   // 던지는 쪽이 아닌 손님이 보내면 안 먹는다
   const w2 = mk();
   w2.mp.on = true; w2.mp.role = 'host'; w2.mp.myId = 1;
