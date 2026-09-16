@@ -886,7 +886,9 @@ export function press(world, action, down) {
     if (action === 'right' || action === 'restart') {
       const g = games[world.pick];
       // 넷이서·셋이서는 혼자 못 한다 — 고르는 순간 방을 연다. 나머지는 그냥 그 게임으로.
-      if (g.waitsForCrew && !world.mp.on) world.onMenu?.('host:' + g.id);
+      // 야구는 혼자서도 되지만(빈 편은 컴퓨터가 맡는다) **둘이 하는 게 본디 모습**이라
+      // 역시 고르는 순간 방을 연다 — 코드를 불러 주기만 하면 상대가 들어온다.
+      if ((g.waitsForCrew || g.opensRoom) && !world.mp.on) world.onMenu?.('host:' + g.id);
       else pickGame(world, g.id);
     }
     if (action === 'menu') openMenu(world, true);
@@ -896,7 +898,9 @@ export function press(world, action, down) {
     const game = gameOf(world);
     if (game.noGrab) {
       // 붙잡기가 없는 게임에서는 이 키를 게임이 가져간다 (배구의 때리기).
-      if (down && !world.menu.open) game.action?.(world);
+      // **떼는 것도 알려 준다** — 누르고 있는 동안 힘이 차는 것(배구의 서브)이 있다.
+      if (!down) game.release?.(world);
+      else if (!world.menu.open) game.action?.(world);
       return;
     }
     // 누르고 있는 동안 붙잡는다. 메뉴가 열려 있어도 **떼는 건** 받아야 한다 —

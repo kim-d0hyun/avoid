@@ -39,13 +39,13 @@ const G = 32.2;                 // 중력 ft/s²
 const BASE_FT = 90;             // 루간
 const SECOND_FT = 127.28;       // 홈에서 2루까지 (루간의 √2 배)
 const MOUND_FT = 60.5;
-export const FENCE_MID = 352;   // 가운데 담장
-export const FENCE_LINE = 248;  // 파울 폴
+export const FENCE_MID = 342;   // 가운데 담장
+export const FENCE_LINE = 240;  // 파울 폴
 const FOUL_DEG = 45;            // 파울선까지의 각
 
 /// 수비 아홉. 번호는 **야구 기록지의 수비 번호 그대로**다 — 병살을 6-4-3 으로 적는 그 번호.
 /// 판이 끝나면 이 번호로 적은 줄이 그대로 기록지가 된다.
-const POSTS = [
+export const POSTS = [
   { no: 1, name: '투수', deg: 0, ft: MOUND_FT },
   { no: 2, name: '포수', deg: 0, ft: -15 },
   { no: 3, name: '1루수', deg: 38, ft: 103 },
@@ -129,14 +129,18 @@ const depth = (deg, ft) => 0.45 + 0.55 * persp(zOf(deg, ft));
 ///   drop  존 높이의 몇 배만큼 늦게 떨어지나
 ///   bend  옆으로 휘는 몫 (존 폭의 배수)
 ///   tilt  이 공을 치면 발사각이 몇 도 눌리나 — 떨어지는 공은 위를 치게 된다
-/// 프레임으로 고쳐 두면 24 · 41 · 33 이다. **직구와 커브가 17프레임 떨어져 있다** —
+/// 프레임으로 고쳐 두면 24 · 28 · 41 · 33 이다. **직구와 커브가 17프레임 떨어져 있다** —
 /// 이 간격이 이 게임의 전부다. 처음엔 25 · 36 · 33 으로 뒀는데, 그러면 구종을 잘못 읽어도
 /// 빗맞기만 할 뿐 헛스윙이 안 나온다. 재 보니 타율이 4할 3푼이었고 삼진이 한 번도 없었다.
 /// **틀리면 헛스윙이 나와야 맞히는 게 뜻을 갖는다.**
+///
+/// 슬라이더는 **속도로 속이지 않고 옆으로 속인다** — 직구와 네 프레임밖에 안 떨어져 있어서
+/// 박자는 맞는데, 존 폭의 0.6배만큼 옆으로 휘어 몸쪽·바깥쪽을 한 칸 옮겨 놓는다.
 export const PITCHES = [
   { name: '직구', dur: 0.40, drop: 0.00, bend: 0.00, tilt: 0 },
-  { name: '커브', dur: 0.68, drop: 0.70, bend: -0.12, tilt: -8 },
-  { name: '체인지업', dur: 0.55, drop: 0.22, bend: 0.07, tilt: -2 },
+  { name: '슬라이더', dur: 0.47, drop: 0.26, bend: -0.62, tilt: -3 },
+  { name: '커브', dur: 0.68, drop: 0.70, bend: -0.14, tilt: -8 },
+  { name: '체인지업', dur: 0.55, drop: 0.22, bend: 0.30, tilt: -2 },
 ];
 
 /// 스트라이크 존. 홈 플레이트 위에 떠 있는 네모다.
@@ -267,6 +271,7 @@ function rosterSides(world) {
 
 // ── 타구 만들기 ───────────────────────────────────────────────────────────
 
+const ZERO_SPOT = { side: 0, high: 0 };
 const rnd = () => Math.random();
 /// 가운데가 두툼한 흔들림 — 표준편차 1 쯤. 제구가 흔들리는 모양은 네모가 아니라 이것이다.
 const gauss = () => (rnd() + rnd() + rnd() + rnd() + rnd() + rnd() - 3) * Math.SQRT2;
@@ -276,20 +281,29 @@ const spread = (amp) => (Math.random() - Math.random()) * amp;   // 가운데가
 ///
 /// 진짜 야구를 재는 방식 그대로다. 이 셋만 있으면 어디에 떨어질지도, 얼마나 떠 있을지도,
 /// 잡을 수 있는지도 다 계산으로 나온다 — 「이 경우엔 2루타」 같은 표를 만들 필요가 없다.
-export function contact(err, up, down, pitch) {
+export function contact(err, up, down, pitch, spot = ZERO_SPOT) {
   const acc = Math.abs(err);
   if (acc > CONTACT) return null;                         // 헛스윙
   const grade = acc <= BARREL ? 2 : acc <= SOLID ? 1 : 0;
   // 타이밍이 정확할수록 빠르다. **계단이 아니라 비탈이다** — 세 칸으로 끊으면 3프레임과
   // 4프레임이 전혀 다른 공이 되고, 그러면 1프레임 차이가 안 느껴진다.
-  const power = 1 - (acc / CONTACT) ** 1.5 * 0.52;
+  //
+  // **어디로 들어온 공이냐도 같이 본다.** 처음엔 때만 봤더니 한가운데 공이든 바깥쪽 낮은
+  // 공이든 똑같은 타구가 나왔다 — 그러면 조준하는 쪽이 할 일이 없다.
+  //   · 존 가장자리로 갈수록 제대로 맞히기 어렵다 (힘이 준다)
+  //   · 높은 공은 뜨고 낮은 공은 구른다
+  //   · 몸쪽 공은 당겨지고 바깥쪽 공은 밀린다
+  const side = clamp(spot.side ?? 0, -AIM_OUT, AIM_OUT);    // − 몸쪽 · + 바깥쪽
+  const high = clamp(spot.high ?? 0, -AIM_OUT, AIM_OUT);    // + 높은 공
+  const edge = Math.max(0, Math.hypot(side, high) - 0.5);
+  const power = (1 - (acc / CONTACT) ** 1.5 * 0.52) * (1 - clamp(edge, 0, 1.4) * 0.11);
   const ev = EV_MAX * power * (0.88 + rnd() * 0.15);
 
   // 발사각. ⌥↑ 면 올라가고 ⌥↓ 면 눌린다. 떨어지는 공(커브)은 위를 치게 되어 저절로 땅볼이 된다.
   //
   // 흩뿌림이 넓다. 정타라도 각까지 고르지는 못하는 게 야구다 — 제일 잘 맞은 공이
   // 땅볼이 되기도 하고, 빗맞은 공이 담장을 넘기도 한다. 그 어긋남이 이 경기를 만든다.
-  const ang = (up ? 26 : down ? -8 : 11) + pitch.tilt
+  const ang = (up ? 26 : down ? -8 : 11) + pitch.tilt + high * 7
             + (grade === 2 ? spread(24) : grade === 1 ? spread(36) : spread(46));
 
   // 방향. 조준이 아니라 **때**가 정한다 — 빠르면 당겨지고 늦으면 밀린다.
@@ -297,7 +311,7 @@ export function contact(err, up, down, pitch) {
   // 많이 어긋날수록 **더 가파르게** 쏠린다. 이게 완만하면 파울이 거의 안 나오고,
   // 파울이 없으면 타석이 두세 개 공에 끝나 버려 「버티기」가 사라진다.
   const over = Math.max(0, acc - 6);
-  const deg = err * 3.6 + Math.sign(err) * over * over * 0.75 + spread(6);
+  const deg = err * 3.6 + Math.sign(err) * over * over * 0.75 + side * 9 + spread(6);
   // **뒤로 걷어 내는 파울.** 각도만으로 가르면 파울이 5%밖에 안 나오고, 그러면 타석이
   // 공 두세 개에 끝난다 — 볼넷이 아예 안 나오고 삼진도 거의 안 나온다. 실제 야구에서
   // 파울은 투구의 17%다. 빗맞을수록 뒤로 가기 쉽다.
@@ -479,6 +493,7 @@ function foulPlay(hit) {
 function homerPlay(hit, onBase) {
   const p = play0('homer');
   const f = flightOf(hit.ev, hit.ang);
+  p.far = Math.round(f.range * 0.3048);
   p.hops.push({ k: 'fly', t0: 0, t1: f.hang, deg: hit.deg, pts: f.pts });
   // 주자가 다 들어온다. 한 바퀴 도는 데 걸리는 시간만 그림에 쓴다.
   const runners = [];
@@ -489,10 +504,14 @@ function homerPlay(hit, onBase) {
   });
   p.runs2 = runners.length;
   p.onBase = [null, null, null];
-  p.calls.push({ t: Math.max(0.6, f.hang * 0.75), text: '홈런!', big: true });
+  // **치자마자 안다.** 「홈런!」이 공이 담장에 닿을 때야 떴더니, 그 전 3초 동안 화면에서
+  // 아무 일도 안 일어났다 — 타자는 사라지고 공은 점만 해지고 점수판은 그대로였다.
+  // 넘어갈 것을 먼저 알려 주고, 넘어가는 순간 한 번 더 크게 띄운다.
+  p.calls.push({ t: 0.55, text: '넘어간다!', big: false });
+  p.calls.push({ t: Math.max(1.2, f.hang * 0.78), text: `홈런!  ${p.far}m`, big: true });
   p.label = `홈런 (${runners.length}점)`;
   p.record = 'HR';
-  p.over = f.hang + 2.0;
+  p.over = f.hang + 1.4;
   return p;
 }
 
@@ -576,6 +595,9 @@ function inPlay(hit, state) {
   p.men.push({ i: who, t0: REACT, t1: Math.max(REACT + 0.1, ballAt), deg: hit.deg, ft: ballFt });
   p.hops.push(...ballTrack(hit.deg, f, hang, land, rollV, drag, ballAt, ballFt, caught));
 
+  // 얼마나 갔나. 뜬 공은 떨어진 자리, 땅볼은 굴러가 멎은 자리 — 사람은 미터로 센다.
+  p.far = Math.round(Math.max(land, ballFt, 0) * 0.3048);
+
   const base = [...onBase];
   let made = 0, scored = 0;
 
@@ -587,6 +609,8 @@ function inPlay(hit, state) {
     p.calls.push({ t: hang + 0.12, text: `${word} 아웃`, big: false });
     p.record = `${mark}${noOf(who)}`;
     p.label = `${POSTS[who].name} ${word}`;
+    // **타자도 1루로 뛴다.** 잡히면 거기서 멎는다 — 안 그리면 친 사람이 공중에서 사라진다.
+    p.runs.push({ from: 0, to: 1, t0: LEAVE, t1: TO_FIRST, out: true, outAt: hang + 0.1 });
     if (outs + made < 3) {
       for (let i = 2; i >= 0; i--) {
         if (!base[i]) continue;
@@ -599,6 +623,11 @@ function inPlay(hit, state) {
       }
     }
     p.over = hang + 1.6;
+    // 잡은 공을 되돌려 보낸다. 점수가 들어왔으면 홈으로, 아니면 마운드로.
+    const back = scored ? BASES[0] : [0, MOUND_FT];
+    const dist = ftDist(hit.deg, ballFt, back[0], back[1]);
+    addThrow(p, [hit.deg, ballFt], back, hang + 0.35,
+             hang + 0.35 + TRANSFER + dist / THROW, scored ? CATCHER : undefined);
     p.outs = made; p.runs2 = scored; p.onBase = base;
     return p;
   }
@@ -668,6 +697,8 @@ function inPlay(hit, state) {
     p.record = chain.join('-');
     scored += freeThird(base, onBase, p, lead, hit.deg, ballFt, ballAt);
     p.over = Math.max(leadT, TO_FIRST) + 1.2;
+    addThrow(p, [hit.deg, ballFt], pivot, ballAt, leadT, guard);
+    if (made === 2) addThrow(p, pivot, firstBase, leadT + PIVOT, dpT, baseGuard(1));
   } else if (gotFirst) {
     // 1루에서 타자를 잡았다 — 흔한 땅볼 아웃.
     made = 1;
@@ -678,6 +709,7 @@ function inPlay(hit, state) {
     advanceFree(base, p, hit.deg, ballFt, ballAt);
     scored += p.freeRuns ?? 0;
     p.over = Math.max(firstT, TO_FIRST) + 1.2;
+    addThrow(p, [hit.deg, ballFt], BASES[1], ballAt, firstT, baseGuard(1));
   } else {
     // 아무도 못 잡았다 — 안타다. 주자들이 어디까지 가나.
     //
@@ -712,6 +744,11 @@ function inPlay(hit, state) {
       p.calls.push({ t: TO_FIRST * 0.85, text: '세이프', big: false });
     }
     p.over = Math.max(ballAt + 0.9, TO_FIRST + (to - 1) * NEXT_BASE) + 1.1;
+    // 안타라도 **던지기는 한다.** 제일 앞선 주자보다 한 루 앞으로 — 더 못 가게 붙잡는 송구다.
+    const lead2 = Math.max(...crew.map((r) => Math.min(r.at, 3)));
+    const hold = (lead2 + 1) % 4;
+    addThrow(p, [hit.deg, ballFt], BASES[hold], ballAt,
+             ballAt + throwTime(hit.deg, ballFt, hold), baseGuard(hold));
   }
 
   p.outs = made;
@@ -785,6 +822,24 @@ function baseGuard(base) {
   return base === 1 ? 2 : base === 2 ? 3 : base === 3 ? 4 : CATCHER;
 }
 
+/// **송구 한 줄.** 공이 잡힌 자리에서 그 루까지 날아가고, 그 루를 지키는 사람이 미리 가 선다.
+///
+/// 이게 없으면 수비수가 공을 잡은 채로 가만히 서 있고 판만 끝난다 — 실제로 그렇게 만들어
+/// 놓고 보니 「잡고 안 던진다」가 제일 먼저 눈에 띄었다. 결말은 이미 정해져 있으니
+/// 여기서 하는 일은 **정해진 결말을 눈에 보이게 옮기는 것**뿐이다.
+function addThrow(p, from, to, t0, t1, cover) {
+  const end = Math.max(t0 + 0.12, t1);
+  p.hops.push({ k: 'throw', t0, t1: end, a: from, b: to });
+  p.hops.push({ k: 'rest', t0: end, t1: 99, deg: to[0], ft: to[1], z: 3.2 });
+  // 루를 지키는 사람은 **던지기 전에** 가 있어야 한다. 공보다 늦게 가면 허공에 꽂힌다.
+  // 한 사람에게 길을 두 번 주지 않는다 — 공을 쫓던 사람이 그 루도 지키면 순간이동한다.
+  if (cover !== undefined && cover !== null && !p.men.some((m) => m.i === cover)) {
+    p.men.push({ i: cover, t0: 0.12, t1: Math.max(0.5, t0 - 0.15), deg: to[0], ft: to[1] });
+  }
+  p.over = Math.max(p.over, end + 0.7);
+  return end;
+}
+
 /// 공이 지나온 길을 그림 구간으로 옮긴다.
 function ballTrack(deg, f, hang, land, rollV, drag, ballAt, ballFt, caught) {
   const hops = [];
@@ -805,6 +860,14 @@ export function ballAt(play, t) {
     if (h.k === 'fly') { const [ft, z] = alongPts(h.pts, u); last = [h.deg, ft, z]; }
     else if (h.k === 'roll') last = [h.deg, h.ft0 + rollFt(h.v, u, h.g ?? ROLL_DIRT), 0.6];
     else if (h.k === 'rest') last = [h.deg, h.ft, h.z];
+    else if (h.k === 'throw') {
+      // 던진 공은 곧게 날아가되 가운데가 살짝 뜬다. 땅에 붙여 그리면 굴러가는 것과 안 갈린다.
+      const k = clamp(u / Math.max(0.05, h.t1 - h.t0), 0, 1);
+      const a = flat(h.a[0], h.a[1]);
+      const c = flat(h.b[0], h.b[1]);
+      const [deg, ft] = polar(lerp(a[0], c[0], k), lerp(a[1], c[1], k));
+      last = [deg, ft, 3.2 + Math.sin(k * Math.PI) * 11];
+    }
   }
   return last;
 }
@@ -816,7 +879,7 @@ function freshBag() {
     inn: 1, half: 0, outs: 0, balls: 0, strikes: 0,
     score: [0, 0], onBase: [null, null, null],
     log: [],                          // 한 타석마다 한 줄
-    aim: { x: 0, y: 0 }, type: 0,
+    aim: { x: 0, y: 0 }, type: 0, stand: 0,
     pitch: null, play: null, seq: 0, seen: -1,
     wait: 1.6, call: null, note: null,
     started: false, over: false, winner: null,
@@ -926,7 +989,7 @@ function say(b, text, big) {
 /// 그대로 던지면 늘 낮은 볼이 된다 — 사람은 몇 번 던져 보면 저절로 알지만 컴퓨터는 알려
 /// 줘야 한다. 이걸 안 넣었더니 컴퓨터가 던진 커브가 하나도 스트라이크가 안 됐다.
 function aiPitch(b) {
-  const type = rnd() < 0.48 ? 0 : rnd() < 0.55 ? 1 : 2;
+  const type = rnd() < 0.44 ? 0 : 1 + ((rnd() * 3) | 0);
   const behind = b.balls >= 3 || (b.balls === 2 && b.strikes === 0);
   const ahead = b.strikes === 2 && b.balls < 2;
   // 겨눈 자리와 실제로 가는 자리는 다르다. **제구란 이 흔들림의 크기**다.
@@ -942,7 +1005,7 @@ function aiPitch(b) {
   }
   return {
     type,
-    x: clamp(tx + gauss() * wob, -AIM_OUT, AIM_OUT),
+    x: clamp(tx + gauss() * wob - PITCHES[type].bend, -AIM_OUT, AIM_OUT),
     y: clamp(ty + gauss() * wob * 0.9 + PITCHES[type].drop, -AIM_OUT, AIM_OUT),
   };
 }
@@ -968,7 +1031,7 @@ function aiSwing(b, pitch, L) {
   if (!inZone && !chase) return null;
   if (inZone && rnd() < 0.30) return null;              // 좋은 공도 그냥 보낸다
   // 직구를 제일 많이 노린다. 두 스트라이크면 변화구까지 생각한다.
-  const guess = rnd() < (b.strikes === 2 ? 0.45 : 0.62) ? 0 : rnd() < 0.5 ? 1 : 2;
+  const guess = rnd() < (b.strikes === 2 ? 0.45 : 0.62) ? 0 : 1 + ((rnd() * 3) | 0);
   const err = guessErr(guess, pitch.type, 10);
   return { err, up: rnd() < 0.26, down: rnd() < 0.2 };
 }
@@ -984,7 +1047,11 @@ function release(L) {
 /// 이 공이 홈에서 어디로 들어오나 (화면 좌표).
 export function pitchEnd(pitch, L) {
   const z = zone(L);
-  return { x: z.cx + pitch.ax * z.w / 2, y: z.cy - pitch.ay * z.h / 2 + pitch.kind.drop * z.h * 0.5 };
+  // **휘는 몫도 끝까지 남는다.** 처음엔 휨을 날아오는 동안만 그리고 홈에서 0 으로 되돌렸더니
+  // 슬라이더가 그냥 조금 느린 직구였다 — 눈에만 휘고 실제로는 겨눈 자리에 그대로 왔다.
+  // 떨어지는 몫(drop)과 같은 규칙으로 둔다: 끝나는 자리에 얹고, 늦게 휘게만 만든다.
+  return { x: z.cx + (pitch.ax + pitch.kind.bend) * z.w / 2,
+           y: z.cy - pitch.ay * z.h / 2 + pitch.kind.drop * z.h * 0.5 };
 }
 /// 던진 공이 u(0~1) 만큼 왔을 때의 자리와 크기.
 export function pitchAt(pitch, L, u) {
@@ -1007,7 +1074,7 @@ export function pitchAt(pitch, L, u) {
 // ── 갱신 ──────────────────────────────────────────────────────────────────
 
 function startPitch(world, b, L, type, ax, ay) {
-  const kind = PITCHES[clamp(type | 0, 0, 2)];
+  const kind = PITCHES[clamp(type | 0, 0, PITCHES.length - 1)];
   b.pitch = {
     type: clamp(type | 0, 0, 2), kind, ax, ay,
     t: -PITCH_TIME * PITCH_RELEASE,        // 팔이 도는 동안은 아직 손에 있다
@@ -1046,7 +1113,12 @@ export function swing(world, frame, up, down) {
   p.done = true;
   const L = layout(world);
   const err = frame - p.plate;
-  const hit = contact(err, up, down, p.kind);
+  // 공이 존 어디로 들어왔나. 커브가 늦게 지는 몫(drop)을 빼야 **눈에 보인 자리**가 된다.
+  // 타자가 홈에 붙어 섰으면 바깥쪽 공이 한 칸 가운데로 온다 — 대신 몸쪽에 막힌다.
+  const spot = { side: p.ax + p.kind.bend - (b.stand ?? 0) * 0.5,
+                 high: p.ay - p.kind.drop };
+  const hit = contact(err, up, down, p.kind, spot);
+  b.spotWord = spotName(spot);
   b.swungAt = { err, at: world.elapsed };
   if (!hit) {
     // 헛스윙. 왜 빗나갔는지 알려 준다 — 배구의 「늦다/멀다/낮다」와 같은 자리다.
@@ -1080,6 +1152,14 @@ export function resolveHit(hit, state) {
   return over ? homerPlay(hit, state.onBase) : inPlay(hit, state);
 }
 
+/// 들어온 자리를 사람 말로. 휘두른 뒤 화면에 한 줄로 뜬다 — 왜 그 방향으로 갔는지 알아야
+/// 다음에 조준이 뜻을 갖는다.
+function spotName(spot) {
+  const side = spot.side < -0.55 ? '몸쪽' : spot.side > 0.55 ? '바깥쪽' : '';
+  const high = spot.high > 0.55 ? '높은' : spot.high < -0.55 ? '낮은' : '';
+  return [high, side].filter(Boolean).join(' ') || '한가운데';
+}
+
 /// 맞은 공을 판에 띄운다.
 function launch(world, b, L, hit) {
   const p = resolveHit(hit, { onBase: b.onBase, outs: b.outs });
@@ -1110,7 +1190,7 @@ function settle(world, b) {
 // ── 그리기 도우미 ─────────────────────────────────────────────────────────
 
 /// 주자가 t 에 어디쯤 있나 — [각도, 거리].
-function runnerAt(r, t) {
+export function runnerAt(r, t) {
   const k = clamp((t - r.t0) / Math.max(0.05, r.t1 - r.t0), 0, 1);
   // **루를 하나씩 밟고 돈다.** 처음 것과 마지막 것을 바로 이으면 1루에서 3루로 가는 주자가
   // 마운드를 가로지르고, 홈런 친 사람은 제자리에 선 채로 있었다 (홈 → 홈이라서).
@@ -1122,11 +1202,33 @@ function runnerAt(r, t) {
   return polar(lerp(a[0], c[0], u), lerp(a[1], c[1], u));
 }
 /// 수비수가 t 에 어디쯤 있나.
-function manAt(m, post, t) {
-  const k = clamp((t - m.t0) / Math.max(0.05, m.t1 - m.t0), 0, 1);
+///
+/// **달리는 속도로 간다.** 처음엔 구간 전체를 부드럽게 늘였는데(smooth), 그러면 공이 멀리
+/// 갈수록 같은 거리를 더 오래 걸려 가서 **공이 멈출 때까지 안 움직이는 것처럼** 보였다.
+/// 사람은 늘 같은 속도로 달린다 — 먼저 닿으면 거기 서서 기다린다.
+export function manAt(m, post, t) {
   const a = flat(post.deg, post.ft);
   const c = flat(m.deg, m.ft);
-  return polar(lerp(a[0], c[0], smooth(k)), lerp(a[1], c[1], smooth(k)));
+  const far = Math.hypot(c[0] - a[0], c[1] - a[1]);
+  const secs = Math.max(0.1, far / RUN_FIELD);
+  const k = clamp((t - m.t0) / secs, 0, 1);
+  // 첫 한 걸음만 붙인다 — 멈춰 있다 갑자기 최고 속도가 되면 미끄러지는 것으로 보인다.
+  const e = k < 0.18 ? (k * k) / 0.18 : k;
+  return polar(lerp(a[0], c[0], e), lerp(a[1], c[1], e));
+}
+/// 이 길을 다 가는 데 걸리는 시간.
+function manSecs(m, post) {
+  const a = flat(post.deg, post.ft);
+  const c = flat(m.deg, m.ft);
+  return Math.max(0.1, Math.hypot(c[0] - a[0], c[1] - a[1]) / RUN_FIELD);
+}
+/// 화면에서 어느 쪽으로 가고 있나 (−1 왼쪽 · 1 오른쪽). 팔다리가 향할 쪽을 이걸로 정한다.
+/// 극좌표의 각도로 정하면 1루에서 2루로 가는 주자가 **뒤로 달리는 것처럼** 보인다 —
+/// 각도는 오른쪽(+)인데 화면에서는 왼쪽으로 가고 있기 때문이다.
+export function facingOf(L, at, t, back = 0.12) {
+  const [ax] = spot(L, ...at(Math.max(0, t - back)));
+  const [bx] = spot(L, ...at(t));
+  return bx - ax > 0.6 ? 1 : bx - ax < -0.6 ? -1 : 0;
 }
 
 /// 사람 하나를 깊이에 맞게 줄여 그린다.
@@ -1151,10 +1253,11 @@ export default {
   line: '투수와 타자. 던지고 치기만 하면 달리기도 수비도 판이 알아서 한다. 3회, 도루 없음.',
   keys: [
     ['⌥ ← → ↑ ↓', '조준 — 내 화면에만 보인다 (던질 때)'],
-    ['⌥ 1 · 2 · 3', '직구 · 커브 · 체인지업'],
+    ['⌥ 1 · 2 · 3 · 4', '직구 · 슬라이더 · 커브 · 체인지업'],
     ['⌥ Space', '던진다 / 휘두른다'],
     ['⌥ Space + ↑', '띄워 치기 — 뜬공과 홈런'],
     ['⌥ Space + ↓', '눌러 치기 — 빠른 땅볼'],
+    ['⌥ ← →', '타석에서 한 발 — 홈에 붙으면 바깥쪽이 닿고 몸쪽에 막힌다'],
   ],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
 
@@ -1173,6 +1276,13 @@ export default {
 
   /// 혼자서도 된다 — 빈 편은 컴퓨터가 맡는다. 그래서 막지 않는다.
   blocked: () => null,
+  /// **고르는 순간 방을 연다.** 혼자서도 되지만 둘이 하는 게 본디 모습이라, 코드를 불러
+  /// 주기만 하면 상대가 들어온다. 기다리는 동안은 컴퓨터가 상대를 해 준다.
+  opensRoom: true,
+  /// **판 도중에 들어와도 바로 낀다.** 한 판이 5분인데 다음 판까지 구경만 시키면, 그동안
+  /// 그 사람 자리를 컴퓨터가 대신 친다 — 실제로 「내가 아무것도 안 했는데 스윙한다」가 됐다.
+  /// 타석은 한 타자마다 새로 열리니 도중에 껴도 불공평할 것이 없다.
+  joinsAnytime: true,
 
   /// 사람은 제자리에 선다. 달리기는 이 게임에 없다.
   move(world, dt) {
@@ -1204,7 +1314,7 @@ export default {
   emote(world, n) {
     const b = world.bag;
     if (!amPitching(world) || b.pitch || b.play || b.over) return;
-    const want = clamp((n | 0) - 1, 0, 2);
+    const want = clamp((n | 0) - 1, 0, PITCHES.length - 1);
     b.type = want;
     if (world.mp.on && world.mp.role !== 'host') world.send?.({ t: 'gm', k: 'type', n: want });
   },
@@ -1229,7 +1339,8 @@ export default {
       const frame = Math.round(b.pitch.t / FR);
       const up = !!world.input.jump, down = !!world.input.duck;
       if (world.mp.role === 'guest') {
-        world.send?.({ t: 'gm', k: 'swing', f: frame, u: up ? 1 : 0, d: down ? 1 : 0 });
+        world.send?.({ t: 'gm', k: 'swing', f: frame, u: up ? 1 : 0, d: down ? 1 : 0,
+                       s: Math.round((b.stand ?? 0) * 100) });
         // 내 화면에서도 배트는 바로 돈다. 판정은 방장이 한다 —
         // 배트가 한 왕복 뒤에 돌면 「안 눌렸나」 싶어 또 누르게 된다.
         b.batT = BAT_TIME;
@@ -1267,6 +1378,12 @@ export default {
       const dy = (world.input.jump ? 1 : 0) - (world.input.duck ? 1 : 0);
       b.aim.x = clamp(b.aim.x + dx * AIM_STEP * dt, -AIM_OUT, AIM_OUT);
       b.aim.y = clamp(b.aim.y + dy * AIM_STEP * dt, -AIM_OUT, AIM_OUT);
+    }
+    // 타석에서 한 발. 홈에 붙어 서면 바깥쪽 공이 닿고 몸쪽에 막힌다 — 조준하는 쪽과
+    // 치는 쪽이 **같은 한 줄(몸쪽↔바깥쪽)을 서로 당긴다.** 공이 날아오는 중에도 움직인다.
+    if (amBatting(world) && !b.play && !b.over) {
+      const dx = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
+      if (dx) b.stand = clamp((b.stand ?? 0) + dx * 1.7 * dt, -1, 1);
     }
 
     // 손님은 방장이 굴린 것을 따라 그리기만 한다. 다만 **투구 시계는 자기가 센다** —
@@ -1347,7 +1464,7 @@ export default {
     const rows = [];
     const t = b.play?.t ?? 0;
     const moving = new Map();
-    for (const m of b.play?.men ?? []) moving.set(m.i, manAt(m, POSTS[m.i], t));
+    for (const m of b.play?.men ?? []) if (!moving.has(m.i)) moving.set(m.i, m);
 
     const batter = humanOn(world, batSide(b));
     const pitcherMan = humanOn(world, fieldSide(b));
@@ -1355,10 +1472,13 @@ export default {
     const fieldTint = TEAM_INK[fieldSide(b)];
 
     POSTS.forEach((post, i) => {
-      const [deg, ft] = moving.get(i) ?? [post.deg, post.ft];
+      const leg = moving.get(i);
+      const [deg, ft] = leg ? manAt(leg, post, t) : [post.deg, post.ft];
+      // 달리는 쪽을 보게 한다. 안 움직이면 가운데(홈 쪽)를 본다.
+      const face = leg ? facingOf(L, (tt) => manAt(leg, post, tt), t) : 0;
       const mine = i === PITCHER && pitcherMan?.mine;
       const p = puppet(0, 0, {
-        facing: Math.sin(deg * RAD) >= 0 ? -1 : 1,
+        facing: face || (Math.sin(deg * RAD) >= 0 ? -1 : 1),
         glove: 1,
         stance: 0,
         // 공이 떠 있는 동안은 **마지막 자세로 붙잡아 둔다.** 팔이 도는 시간(wind)이 0 이 되는
@@ -1366,7 +1486,7 @@ export default {
         // 팔을 한 프레임에 40도 튕기며 서 있는 자세로 돌아가고 글러브도 사라졌다.
         pitchT: i === PITCHER && b.pitch ? Math.max(0.001, b.pitch.wind) : 0,
         crouch: i === CATCHER ? 1 : 0,
-        vx: moving.has(i) ? 220 : 0,
+        vx: leg && t > leg.t0 && t < leg.t0 + 0.15 + manSecs(leg, post) ? 260 : 0,
         walk: time * 7,
       });
       rows.push({ ft, draw: () => drawAt(ctx, L, deg, ft, p, time, boil, {
@@ -1387,7 +1507,7 @@ export default {
       });
       const [bx, by] = spot(L, 0, 0);
       rows.push({ ft: -2, draw: () => {
-        bp.x = bx - 46; bp.groundY = by + 4;
+        bp.x = bx - 46 + (b.stand ?? 0) * 26; bp.groundY = by + 4;
         ctx.save();
         drawStickman(ctx, bp, time, boil, {
           bat: true, color: batTint, name: batter?.name ?? null,
@@ -1401,8 +1521,10 @@ export default {
     for (const r of b.play?.runs ?? []) {
       if (t < r.t0) continue;
       const gone = r.out && t > (r.outAt ?? 99);
-      const [deg, ft] = runnerAt(r, t);
-      const rp = puppet(0, 0, { facing: Math.sin(deg * RAD) >= 0 ? 1 : -1, vx: gone ? 0 : 260,
+      // 아웃된 주자는 **거기서 멎는다.** 계속 흘러가면 잡힌 뒤에도 옅어진 채 루를 돈다.
+      const stop = (tt) => runnerAt(r, gone ? Math.min(tt, r.outAt) : tt);
+      const [deg, ft] = stop(t);
+      const rp = puppet(0, 0, { facing: facingOf(L, stop, t) || 1, vx: gone ? 0 : 260,
                                walk: time * 8, dead: false });
       rows.push({ ft, draw: () => drawAt(ctx, L, deg, ft, rp, time, boil,
         { color: batTint, faded: gone }) });
@@ -1439,7 +1561,7 @@ export default {
     // 야구 밖의 이유로 끝난 뒤(방장이 끝냈다거나)에도 손님 말 한 줄로 공이 날아간다.
     if (typeof msg.s !== 'number' && (world.state !== 'play' || b.over)) return;
     const side = b.sides?.get(from) ?? 0;
-    if (msg.k === 'type' && side === fieldSide(b)) { b.type = clamp(msg.n | 0, 0, 2); return; }
+    if (msg.k === 'type' && side === fieldSide(b)) { b.type = clamp(msg.n | 0, 0, PITCHES.length - 1); return; }
     if (msg.k === 'pitch' && side === fieldSide(b)) {
       if (b.pitch || b.play || b.wait > 0 || b.over) return;
       startPitch(world, b, layout(world), msg.n, clamp(+msg.x || 0, -AIM_OUT, AIM_OUT),
@@ -1452,6 +1574,8 @@ export default {
       if (!b.pitch || b.pitch.done || b.play) return;
       const here = Math.round(b.pitch.t / FR);
       const f = clamp(msg.f | 0, here - 40, here + 2);
+      // 타석에서 선 자리도 손님이 보내온 것을 쓴다. 내 화면의 값은 그 사람 것이 아니다.
+      b.stand = clamp((+msg.s || 0) / 100, -1, 1);
       swing(world, f, !!msg.u, !!msg.d);
       return;
     }
@@ -1476,6 +1600,7 @@ export default {
       k: b.call ? [b.call.text, b.call.big ? 1 : 0, Math.round(b.call.t * 100)] : null,
       w: Math.round((b.wait ?? 0) * 100),
       bt: Math.round((b.batT ?? 0) * 1000),
+      sd: Math.round((b.stand ?? 0) * 100),
     };
   },
 
@@ -1510,7 +1635,7 @@ export default {
     if (Array.isArray(data.p) && data.p.length >= 7 && data.p.every((v, i) => i === 0 || Number.isFinite(v))) {
       const [type, ms, ax, ay, done, seq, wind] = data.p;
       if (!b.pitch || b.seen !== seq) {
-        const kind = PITCHES[clamp(type | 0, 0, 2)];
+        const kind = PITCHES[clamp(type | 0, 0, PITCHES.length - 1)];
         b.pitch = { type: clamp(type | 0, 0, 2), kind, ax: ax / 100, ay: ay / 100, t: ms / 1000, dur: kind.dur,
                     plate: Math.round(kind.dur / FR), done: !!done, wind: wind / 1000 };
         b.seen = seq;
@@ -1525,6 +1650,8 @@ export default {
     // 배트가 도는 것도 따라 그린다. 내가 이미 돌리고 있으면 그건 내 것을 쓴다 —
     // 내 스윙은 누른 그 프레임에 돌았고, 방장 것은 한 왕복 늦게 온다.
     if (!(b.batT > 0) && Number.isFinite(data.bt)) b.batT = data.bt / 1000;
+    // 타석 자리는 **치는 사람 것이 맞다.** 내가 치는 쪽이면 내 값을 쓰고, 아니면 받아 쓴다.
+    if (!amBatting(world) && Number.isFinite(data.sd)) b.stand = clamp(data.sd / 100, -1, 1);
     b.wait = Number.isFinite(data.w) ? data.w / 100 : 0;
     b.started = true;
   },
@@ -1542,12 +1669,13 @@ function packPlay(p) {
     h: p.hops.map((h) => (h.k === 'fly'
       ? [0, r2(h.t0), r2(h.t1), r2(h.deg), h.pts.flat()]
       : h.k === 'roll' ? [1, r2(h.t0), r2(h.t1), r2(h.deg), r2(h.ft0), r2(h.v), r2(h.g)]
+      : h.k === 'throw' ? [3, r2(h.t0), r2(h.t1), r2(h.a[0]), r2(h.a[1]), r2(h.b[0]), r2(h.b[1])]
       : [2, r2(h.t0), r2(h.t1), r2(h.deg), r2(h.ft), r2(h.z)])),
     m: p.men.map((m) => [m.i, m.t0, m.t1, m.deg, m.ft].map((v) => Math.round(v * 100) / 100)),
     r: p.runs.map((r) => [r.from, r.to, r.t0, r.t1, r.out ? 1 : 0, r.outAt ?? -1]
       .map((v) => Math.round(v * 100) / 100)),
     c: p.calls.map((c) => [c.t, c.text, c.big ? 1 : 0]),
-    w: p.hitWord ?? '', e: p.ev ?? 0, a: p.ang ?? 0,
+    w: p.hitWord ?? '', e: p.ev ?? 0, a: p.ang ?? 0, fr: p.far ?? 0,
   };
 }
 const chunk3 = (flat) => {
@@ -1579,7 +1707,7 @@ function unpackPlay(d) {
   p.calls = rows(d?.c, 2).map((r) => ({ t: num(r[0]), text: String(r[1] ?? ''),
                                         big: !!r[2], shown: true }));
   p.hitWord = typeof d?.w === 'string' ? d.w : '';
-  p.ev = num(d?.e); p.ang = num(d?.a);
+  p.ev = num(d?.e); p.ang = num(d?.a); p.far = num(d?.fr);
   return p;
 }
 
@@ -1660,6 +1788,12 @@ function drawBall(ctx, L, world, b, time) {
     circle(ctx, gx, gy, (6 + z * 0.10) * s, { width: 1.4, color: PENCIL, halo: false,
                                               alpha: shade * 0.5, seed: 31, amp: 0.4 });
     circle(ctx, gx, y, 8.5 * s + 2, { width: 2.6, color: INK, seed: 32, amp: 0.5 });
+    // **얼마나 갔나.** 뜬 공이 떠 있는 동안 공 옆에 붙여 둔다 — 담장을 넘길지 말지가
+    // 여기서 읽힌다. 땅볼에는 안 붙인다 (거리가 뜻이 없다).
+    if (b.play.far > 12 && z > 8) {
+      text(ctx, `${Math.round(ft * 0.3048)}m`, gx + 16 * s + 10, y - 4,
+           { font: `700 ${Math.round(11 + 3 * s)}px ${MONO}`, color: PENCIL, halo: 3 });
+    }
     return;
   }
   if (b.pitch) {
@@ -1777,18 +1911,28 @@ function drawBoard(ctx, world, time) {
     text(ctx, row.t, x + 62, ly, { font: `600 12px ${HAN}`, color: PENCIL, halo: 2, alpha: 0.9 });
   });
 
-  // 지금 내가 무엇을 하는 사람인가. 회마다 바뀌니 화면에 적어 둔다.
+  // 지금 내가 무엇을 하는 사람인가, 그리고 **상대가 사람인가 컴퓨터인가.**
+  // 회마다 역할이 바뀌는 게임이라 이 두 줄이 없으면 「왜 내가 안 치지」를 묻게 된다.
   if (world.state === 'play' && !b.over) {
     const role = world.mp.waiting ? '구경'
       : amPitching(world) ? `던진다 — ${PITCHES[b.type].name}` : '친다';
-    const cw = 150;
+    const swung = b.swungAt && world.elapsed - b.swungAt.at < 1.4 && amBatting(world);
+    // 종이 한 장을 깔고 그 위에 적는다. 담장과 외야수 위에 글자만 얹으면 안 읽힌다.
+    ctx.font = `800 15px ${HAN}`;
+    const wide = Math.max(150, ctx.measureText(role).width + 60);
+    paperScrap(ctx, world.w / 2 - wide / 2, 14, wide, swung ? 74 : 50, 9);
     text(ctx, role, world.w / 2, 34,
          { font: `800 15px ${HAN}`, color: amPitching(world) ? TEAM_INK[fieldSide(b)] : TEAM_INK[batSide(b)],
-           align: 'center', halo: 4 });
-    if (b.swungAt && world.elapsed - b.swungAt.at < 1.2 && amBatting(world)) {
+           align: 'center', halo: 0 });
+    const foe = humanOn(world, amPitching(world) ? batSide(b) : fieldSide(b));
+    const foeName = foe ? (foe.name ?? '상대') : '컴퓨터';
+    text(ctx, `상대 — ${foeName}`, world.w / 2, 53,
+         { font: `600 12px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
+    if (swung) {
       const e = b.swungAt.err;
-      text(ctx, e === 0 ? '정확!' : `${Math.abs(e)}프레임 ${e < 0 ? '빨랐다' : '늦었다'}`,
-           world.w / 2, 56, { font: `700 13px ${HAN}`, color: RED, align: 'center', halo: 3 });
+      const when = e === 0 ? '정확!' : `${Math.abs(e)}프레임 ${e < 0 ? '빨랐다' : '늦었다'}`;
+      text(ctx, `${when}${b.spotWord ? ` · ${b.spotWord} 공` : ''}`, world.w / 2, 74,
+           { font: `700 13px ${HAN}`, color: RED, align: 'center', halo: 0 });
     }
   }
 }

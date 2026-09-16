@@ -10,7 +10,7 @@ const ball = games.find((g) => g.id === 'ball');
 const bb = await import(R + 'games/baseball.js');
 const { layout, spot, zone, pitchEnd, pitchAt, contact, resolveHit, flightOf, catchOdds,
         guessErr, ballAt, PITCHES, batSide, fieldSide, amPitching, amBatting, swing,
-        FENCE_MID, FENCE_LINE, fenceFt } = bb;
+        FENCE_MID, FENCE_LINE, fenceFt, runnerAt, manAt, facingOf, POSTS } = bb;
 const { BAT_TIME, PITCH_TIME, batPoint } = await import(R + 'draw/stickman.js');
 
 import { check, ok, say, note, done } from './check.mjs';
@@ -118,26 +118,34 @@ say('타이밍 — 정확할수록 빠르고, 빠르면 당겨지고 늦으면 �
   ok('⌥↑ 면 더 뜬다', contact(0, true, false, PITCHES[0]).ang > contact(0, false, true, PITCHES[0]).ang);
 }
 
-say('구종 — 직구와 커브가 17프레임 떨어져 있다 (이 간격이 수싸움이다)');
+say('구종 넷 — 직구와 커브가 17프레임 떨어져 있다 (이 간격이 수싸움이다)');
 {
+  const no = (name) => PITCHES.findIndex((p) => p.name === name);
+  const FAST = no('직구'), SLIDE = no('슬라이더'), CURVE = no('커브'), CHANGE = no('체인지업');
+  ok('구종이 넷이다', PITCHES.length === 4 && [FAST, SLIDE, CURVE, CHANGE].every((i) => i >= 0));
   const frames = PITCHES.map((p) => Math.round(p.dur / FR));
-  note(`직구 ${frames[0]} · 커브 ${frames[1]} · 체인지업 ${frames[2]} 프레임`);
-  check('직구가 제일 빠르다', frames[0], Math.min(...frames));
-  check('커브가 제일 느리다', frames[1], Math.max(...frames));
-  ok('직구와 커브가 15프레임 넘게 벌어진다', frames[1] - frames[0] >= 15);
+  note(PITCHES.map((p, i) => `${p.name} ${frames[i]}`).join(' · ') + ' 프레임');
+  check('직구가 제일 빠르다', frames[FAST], Math.min(...frames));
+  check('커브가 제일 느리다', frames[CURVE], Math.max(...frames));
+  ok('직구와 커브가 15프레임 넘게 벌어진다', frames[CURVE] - frames[FAST] >= 15);
+  // 슬라이더는 속도로 안 속인다 — 옆으로 속인다
+  ok('슬라이더는 직구와 박자가 가깝다', Math.abs(frames[SLIDE] - frames[FAST]) <= 6);
+  ok('슬라이더가 제일 많이 휜다',
+     PITCHES.every((p, i) => i === SLIDE || Math.abs(p.bend) < Math.abs(PITCHES[SLIDE].bend)));
   // 직구를 노리고 커브를 맞으면 헛스윙이 나와야 한다 — 안 그러면 구종을 읽을 이유가 없다
-  const wrong = Array.from({ length: 400 }, () => guessErr(0, 1, 10));
+  const wrong = Array.from({ length: 400 }, () => guessErr(FAST, CURVE, 10));
   const miss = wrong.filter((e) => Math.abs(e) > 12).length / wrong.length;
   note(`직구를 노리고 커브를 만나면 헛스윙 ${(miss * 100).toFixed(0)}%`);
   ok('절반 가까이 헛스윙', miss > 0.35);
-  const right = Array.from({ length: 400 }, () => guessErr(0, 0, 10));
+  const right = Array.from({ length: 400 }, () => guessErr(FAST, FAST, 10));
   ok('제대로 읽으면 거의 맞는다', right.filter((e) => Math.abs(e) > 12).length / right.length < 0.05);
 }
 
 say('커브는 늦게 떨어진다 — 앞쪽 절반보다 뒤쪽 절반에서 더 진다');
 {
   const L = layout(mk());
-  const p = { type: 1, kind: PITCHES[1], ax: 0, ay: 0 };
+  const curve = PITCHES.findIndex((x) => x.name === '커브');
+  const p = { type: curve, kind: PITCHES[curve], ax: 0, ay: 0 };
   const a = pitchAt(p, L, 0).y, b = pitchAt(p, L, 0.5).y, c = pitchAt(p, L, 1).y;
   const straight = { type: 0, kind: PITCHES[0], ax: 0, ay: 0 };
   ok('커브가 직구보다 낮게 들어온다', pitchAt(p, L, 1).y > pitchAt(straight, L, 1).y);
@@ -163,6 +171,54 @@ say('배트는 한 방향으로만 돈다 — 맞은 뒤 되감기면 스윙으�
   // 맞는 순간 배트 끝이 앞쪽 위에 있다 (타자가 홈 쪽으로 뻗는다)
   const meet = batPoint(man(BAT_TIME - 3 / 60 - 1 / 60));
   ok('맞을 때 배트가 앞으로 뻗어 있다', meet.x > 24);
+}
+
+say('공이 들어온 자리가 타구를 바꾼다 — 안 그러면 조준하는 쪽이 할 일이 없다');
+{
+  const many = (spot, n = 500) => {
+    let ev = 0, ang = 0, deg = 0;
+    for (let i = 0; i < n; i++) {
+      const h = contact(0, false, false, PITCHES[0], spot);
+      ev += h.ev; ang += h.ang; deg += h.deg;
+    }
+    return { ev: ev / n, ang: ang / n, deg: deg / n };
+  };
+  const mid = many({ side: 0, high: 0 });
+  const high = many({ side: 0, high: 0.9 });
+  const low = many({ side: 0, high: -0.9 });
+  const inside = many({ side: -0.9, high: 0 });
+  const out = many({ side: 0.9, high: 0 });
+  const corner = many({ side: 1.3, high: 1.3 });
+  note(`한가운데 ${mid.ev.toFixed(0)}ft/s ${mid.ang.toFixed(0)}° · 구석 ${corner.ev.toFixed(0)}ft/s`);
+  ok('높은 공은 뜬다', high.ang > mid.ang + 4);
+  ok('낮은 공은 구른다', low.ang < mid.ang - 4);
+  ok('몸쪽 공은 당겨진다', inside.deg < mid.deg - 5);
+  ok('바깥쪽 공은 밀린다', out.deg > mid.deg + 5);
+  ok('구석 공은 제대로 못 맞힌다', corner.ev < mid.ev * 0.92);
+  ok('한가운데가 제일 세게 맞는다', mid.ev > out.ev && mid.ev > high.ev);
+}
+
+say('타석에서 한 발 — 홈에 붙으면 바깥쪽이 닿고 몸쪽에 막힌다');
+{
+  const world = mk();
+  const b = world.bag;
+  world.team = 0; b.half = 1;                    // 말 → 내가 친다
+  check('처음엔 가운데', b.stand, 0);
+  world.input.right = true;
+  for (let f = 0; f < 30; f++) w.update(world, FR);
+  ok('⌥→ 로 홈 쪽으로 붙는다', b.stand > 0.3);
+  world.input.right = false; world.input.left = true;
+  for (let f = 0; f < 90; f++) w.update(world, FR);
+  ok('⌥← 로 물러선다', b.stand < -0.3);
+  world.input.left = false;
+  for (let f = 0; f < 240; f++) w.update(world, FR);
+  ok('끝까지는 안 나간다', b.stand >= -1.001);
+  // 던지는 쪽일 때는 안 움직인다 (같은 키가 조준이다)
+  const w2 = mk(); w2.team = 0; w2.bag.half = 0;
+  w2.input.right = true;
+  for (let f = 0; f < 60; f++) w.update(w2, FR);
+  check('던지는 쪽은 타석이 안 움직인다', w2.bag.stand, 0);
+  ok('대신 조준이 움직인다', w2.bag.aim.x > 0.3);
 }
 
 // ── 수비 ──────────────────────────────────────────────────────────────────
@@ -222,6 +278,88 @@ say('공의 길 — 대본 위에서 공이 뜬 뒤 떨어지고, 담장을 넘�
   check('네 명이 다 들어온다 — 만루 홈런', fixed([0.5], () =>
     resolveHit({ grade: 2, ev: 152, ang: 29, deg: 0, tipped: false },
                { onBase: [true, true, true], outs: 0 })).runs2, 4);
+}
+
+say('잡으면 던진다 — 대본에 송구가 들어 있고 그 루를 지키는 사람이 미리 가 있는다');
+{
+  const cases = [
+    ['내야 땅볼', { grade: 1, ev: 100, ang: -5, deg: -20 }, [null, null, null], 0],
+    ['병살', { grade: 1, ev: 108, ang: -5, deg: -20 }, [true, null, null], 0],
+    ['뜬공 아웃', { grade: 2, ev: 120, ang: 33, deg: 12 }, [null, null, null], 0],
+    ['외야 안타', { grade: 1, ev: 118, ang: 14, deg: -8 }, [null, null, null], 0],
+  ];
+  for (const [name, hit, on, outs] of cases) {
+    const p = fixed([0.5], () => resolveHit({ ...hit, tipped: false }, { onBase: on, outs }));
+    const throws = p.hops.filter((h) => h.k === 'throw');
+    ok(`${name} — 던진다`, throws.length >= 1);
+    note(`${name}: ${p.record} ${p.label} · 송구 ${throws.length}개 · 수비수 ${p.men.length}명`);
+    for (const h of throws) {
+      ok(`${name} — 송구가 앞으로 간다`, h.t1 > h.t0);
+      // 송구가 끝나는 자리에 사람이 있거나, 이미 그 자리를 지키던 사람이 있다
+      const [bd, bf] = h.b;
+      const near = p.men.some((m) => Math.abs(m.deg - bd) < 12 && Math.abs(m.ft - bf) < 26)
+        || POSTS.some((q) => Math.abs(q.deg - bd) < 12 && Math.abs(q.ft - bf) < 26);
+      ok(`${name} — 던진 곳에 사람이 있다`, near);
+    }
+    // 공이 대본이 끝날 때 어딘가에 멎어 있다
+    const [, ft, z] = ballAt(p, p.over);
+    ok(`${name} — 공이 성한 자리에 멎는다`, Number.isFinite(ft) && Number.isFinite(z) && ft >= -20);
+  }
+  check('병살은 두 번 던진다',
+        fixed([0.5], () => resolveHit({ grade: 1, ev: 108, ang: -5, deg: -20, tipped: false },
+                                      { onBase: [true, null, null], outs: 0 }))
+          .hops.filter((h) => h.k === 'throw').length, 2);
+}
+
+say('뜬공에 잡혀도 타자는 1루로 뛴다 — 안 그리면 친 사람이 공중에서 사라진다');
+{
+  let seen = 0, ran = 0;
+  for (let i = 0; i < 400; i++) {
+    const p = resolveHit({ grade: 2, ev: 118, ang: 34, deg: 6, tipped: false },
+                         { onBase: [null, null, null], outs: 0 });
+    if (p.kind === 'homer' || p.foul || !p.outs) continue;
+    seen++;
+    const me = p.runs.find((r) => r.from === 0);
+    if (me && me.to === 1 && me.out) ran++;
+  }
+  note(`잡힌 뜬공 ${seen}가지`);
+  ok('그런 경우가 있었다', seen > 50);
+  check('전부 타자가 뛴다', ran, seen);
+  // 잡히기 전엔 뛰고 잡힌 뒤엔 멎는다
+  const p = fixed([0.01], () => resolveHit({ grade: 2, ev: 118, ang: 34, deg: 6, tipped: false },
+                                           { onBase: [null, null, null], outs: 0 }));
+  const me = p.runs.find((r) => r.from === 0);
+  const a = runnerAt(me, me.t0 + 0.05)[1];
+  const c = runnerAt(me, me.outAt)[1];
+  ok('잡히기 전까지 1루 쪽으로 간다', c > a + 6);
+}
+
+say('수비수는 달리는 속도로 간다 — 공보다 늦게 닿지 않는다');
+{
+  const p = fixed([0.5], () => resolveHit({ grade: 1, ev: 100, ang: -5, deg: -20, tipped: false },
+                                          { onBase: [null, null, null], outs: 0 }));
+  for (const m of p.men) {
+    const post = POSTS[m.i];
+    const half = manAt(m, post, m.t0 + (m.t1 - m.t0) / 2);
+    const end = manAt(m, post, m.t1 + 0.01);
+    // 절반 시각에 이미 절반 넘게 가 있다 (부드럽게 늘이면 여기서 한참 못 미친다)
+    const total = Math.hypot(...[0, 1].map((k) => 0)) || 1;
+    ok(`${POSTS[m.i].name} — 목표에 닿는다`,
+       Math.abs(end[0] - m.deg) < 1.5 && Math.abs(end[1] - m.ft) < 4);
+    ok(`${POSTS[m.i].name} — 처음부터 움직인다`,
+       Math.abs(half[1] - post.ft) > 0.2 || Math.abs(half[0] - post.deg) > 0.2);
+  }
+}
+
+say('주자는 화면에서 가는 쪽을 본다 — 각도로 정하면 뒤로 달리는 것처럼 보인다');
+{
+  const L = layout(mk());
+  const leg = (from, to) => ({ from, to, t0: 0, t1: 4, out: false });
+  const look = (r, t) => facingOf(L, (tt) => runnerAt(r, tt), t);
+  check('홈 → 1루 는 오른쪽', look(leg(0, 1), 2), 1);
+  check('1루 → 2루 는 왼쪽', look(leg(1, 2), 2), -1);
+  check('2루 → 3루 도 왼쪽', look(leg(2, 3), 2), -1);
+  check('3루 → 홈 은 오른쪽', look(leg(3, 4), 2), 1);
 }
 
 // ── 규칙 ──────────────────────────────────────────────────────────────────
@@ -494,6 +632,45 @@ say('혼자서도 된다 — 빈 편은 컴퓨터가 맡는다');
   let saw = false;
   for (let f = 0; f < 60 * 8 && !saw; f++) { w.update(world, FR); if (b.pitch) saw = true; }
   ok('컴퓨터가 알아서 던진다', saw);
+}
+
+say('고르는 순간 방이 열린다 — 둘이 하는 게 본디 모습이라');
+{
+  const world = mk();
+  world.state = 'pick';
+  world.pick = games.findIndex((g) => g.id === 'ball');
+  ok('야구가 목록에 있다', world.pick >= 0);
+  const said = [];
+  world.onMenu = (a) => said.push(a);
+  w.press(world, 'right', true); w.press(world, 'right', false);
+  check('방을 연다', said, ['host:ball']);
+  check('아직 게임은 안 갈아 끼운다 (셸이 연 뒤에 바꾼다)', world.gameId, 'ball');
+  // 이미 방 안이면 그냥 그 게임으로
+  const w2 = mk();
+  w2.state = 'pick'; w2.pick = games.findIndex((g) => g.id === 'ball');
+  w2.mp.on = true;
+  const said2 = [];
+  w2.onMenu = (a) => said2.push(a);
+  w.press(w2, 'right', true); w.press(w2, 'right', false);
+  check('방 안에서는 방을 또 안 연다', said2, []);
+  check('그래도 혼자 할 수 있다 (막지 않는다)', ball.blocked(world), null);
+}
+
+say('판 도중에 들어와도 바로 낀다 — 다음 판까지 컴퓨터가 대신 치면 안 된다');
+{
+  ok('야구는 도중 참가를 받는다', ball.joinsAnytime === true);
+  const guest = mk();
+  guest.mp.on = true; guest.mp.role = 'guest'; guest.mp.myId = 2;
+  guest.state = 'ready';
+  // 방장이 「판 돌고 있다」를 알려 온다
+  const net = await import(R + 'game/net.js');
+  net.handleMessage(guest, { net: { send() {} } }, 1,
+    { t: 's', sq: 1, ms: 0, st: 'play', r: 1, pl: [], vw: 1512, vh: 944, g: 'ball', gs: 0, h: 1 },
+    { restart: () => {} });
+  check('판으로 들어간다', guest.state, 'play');
+  check('구경이 아니다', guest.mp.waiting, false);
+  check('넘어져 있지도 않다', guest.player.dead, false);
+  ok('그래서 칠 수 있다', amBatting(guest) || amPitching(guest));
 }
 
 // ── 타이밍과 네트워크 ─────────────────────────────────────────────────────

@@ -58,7 +58,7 @@ if (process.env.SHOTS) {
   const dir = process.env.OUT || '/tmp/야구장면';
   rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
   const b = world.bag;
-  let f = 0, shot = 0, want = ['조준', '투구', '타격', '뜬공', '땅볼', '홈런', '주루', '판정'];
+  let f = 0, shot = 0, want = ['조준', '투구', '타격', '뜬공', '땅볼', '홈런', '주루', '판정', '송구'];
   const seen = new Set();
   const save = (name) => {
     if (seen.has(name)) return;
@@ -74,6 +74,7 @@ if (process.env.SHOTS) {
     if (b.play?.kind === 'fly' && b.play.t > 1.0) save('뜬공');
     if (b.play?.kind === 'grounder' && b.play.t > 0.8) save('땅볼');
     if (b.play?.kind === 'homer' && b.play.t > 1.4) save('홈런');
+    if (b.play && b.play.hops.some((h) => h.k === 'throw' && b.play.t > h.t0 + 0.12 && b.play.t < h.t1 - 0.05)) save('송구');
     if (b.call?.big && b.play) save('판정');
     if (b.play && b.play.runs.length > 1 && b.play.t > 1.2) save('주루');
   }

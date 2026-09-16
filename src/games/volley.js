@@ -80,6 +80,26 @@ const SERVE_UP = 900 * SLOW;
 const WIN_AT = 5;
 const RESET_WAIT = 1.1;     // 점수 난 뒤 다음 서브까지
 
+// 서브. **누르고 있는 동안 힘이 찬다.**
+//
+// 예전에는 공이 저절로 떠올랐고 올리는 사람은 그걸 때리기만 했다 — 매 점수마다 아무 선택이
+// 없었다. 이제 ⌥Space 를 잡고 있는 만큼 힘이 차고, ⌥←→ 로 깊이를 정한다.
+// **너무 오래 잡으면 손에서 빠져 네트에 걸린다** — 꽉 채우고 싶은 마음에 값을 매긴다.
+const SERVE_HOLD = 0.14;          // 이만큼은 눌러야 힘이 붙기 시작한다
+const SERVE_FULL = 0.72;          // 여기서 꽉 찬다
+const SERVE_BURST = 1.06;         // 여기를 넘기면 실패
+const SERVE_AUTO = 6;             // 아무도 안 누르면 저절로 올라간다 (혼자 보고 있을 때)
+const SERVE_SLOW = 700 * SLOW;    // 톡 쳐도 이만큼은 간다 — **넘기지도 못하면 고를 게 없다**
+const SERVE_FAST = 1250 * SLOW;   // 꽉 채운 서브
+const SERVE_AIM = 250 * SLOW;     // ⌥←→ 로 더 깊이 / 더 짧게
+const SERVE_LIFT = 1150 * SLOW;   // 살살 넘기면 높이 뜬다
+const SERVE_FLAT = 430 * SLOW;    // 꽉 채울수록 낮고 곧게 간다
+const SERVE_BAR = 46;             // 머리 위 힘 막대 길이
+/// **서브는 뒤쪽 절반에서만 올린다.** 배구가 엔드라인 뒤에서 넣는 것과 같은 뜻이고,
+/// 네트 코앞에서 꽉 채워 때리면 그물을 스치거나 뒷벽을 맞고 되돌아오던 것도 여기서 사라진다.
+/// 자기 코트 폭의 이만큼까지만 앞으로 나갈 수 있다 (0 이 맨 뒤, 1 이 네트).
+const SERVE_ZONE = 0.5;
+
 // ── 스파이크의 손맛 ────────────────────────────────────────────────────────
 //
 // 공만 빨갛게 번쩍이고 끝나면 세게 쳤다는 게 안 읽힌다 — 실제로 그런 말을 들었다. 그래서 치는
@@ -237,18 +257,69 @@ function emptySide(world) {
 function serve(world, toSide) {
   const b = world.bag;
   b.serveBy = toSide;
-  b.ball.x = toSide === 0 ? world.w * 0.25 : world.w * 0.75;
-  b.ball.y = world.groundY - NET_H - 260;
+  b.ball.x = toSide === 0 ? world.w * 0.25 : world.w * 0.75;   // 뒤쪽 절반 한가운데
+  b.ball.y = world.groundY - NET_H - 150;
   b.ball.vx = 0;
-  b.ball.vy = -Math.min(MAX_UP, SERVE_UP);
+  b.ball.vy = 0;
   b.ball.spin = 0;
-  b.ball.spinV = (Math.random() - 0.5) * 2;
+  b.ball.spinV = 0;
   cool(b.ball);
   b.ball.skip = null; b.ball.skipT = 0; b.ball.gT = 0;
   b.stop = 0;
   b.tail = [];
   b.wait = RESET_WAIT;
+  // 공을 손에 들고 기다린다. 올리는 사람이 누를 때까지 판이 안 돈다.
+  b.serving = true;
+  b.charge = -1;
+  b.idle = 0;
+  b.mustCross = null;
 }
+
+/// 서브를 올릴 때 앞으로 나갈 수 있는 끝 자리.
+export function serveLine(world, side) {
+  const half = world.w / 2;
+  return side === 0 ? half * SERVE_ZONE : world.w - half * SERVE_ZONE;
+}
+
+/// 지금 서브를 올리는 사람이 나인가. 그 편에서 공에 제일 가까운 사람이 올린다.
+export function myServe(world) {
+  const b = world.bag;
+  if (!b.serving || world.mp.waiting || world.state !== 'play') return false;
+  if ((world.team ?? 0) !== b.serveBy) return false;
+  return serverOf(world, b.serveBy) === world.player;
+}
+
+/// 서브를 때린다. power 0~1, dir 은 누른 방향(−1·0·1).
+export function hitServe(world, power, dir) {
+  const b = world.bag;
+  if (!b.serving) return false;
+  b.serving = false;
+  b.charge = -1;
+  const k = clamp01(power);
+  const across = b.serveBy === 0 ? 1 : -1;
+  const ball = b.ball;
+  ball.vx = across * (SERVE_SLOW + (SERVE_FAST - SERVE_SLOW) * k) + dir * across * SERVE_AIM;
+  ball.vy = -(SERVE_LIFT - SERVE_FLAT * k);
+  ball.spinV = across * (2 + k * 4);
+  b.tail = [];
+  // **서브는 바로 넘겨야 한다.** 넘어가기 전까지 올린 편은 공을 못 건드린다 —
+  // 올려 놓고 자기 편끼리 주고받다 넘기는 건 서브가 아니다.
+  b.mustCross = b.serveBy;
+  addFx(b, { k: 'dig', x: ball.x, y: ball.y, t: 0, life: 0.4,
+             word: k > 0.85 ? '강서브!' : null });
+  netEvent(world, [5, Math.round(ball.x), Math.round(ball.y), Math.round(k * 100)]);
+  return true;
+}
+
+/// 너무 오래 잡고 있었다. 손에서 빠져 네트에 걸린다 — 상대 점수.
+function serveFault(world) {
+  const b = world.bag;
+  b.serving = false;
+  b.charge = -1;
+  addFx(b, { k: 'miss', x: b.ball.x, y: b.ball.y - 26, t: 0, life: 0.9, word: '서브 실패' });
+  point(world, 1 - b.serveBy);
+}
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 /// 달아오른 강타를 식힌다. 몸·벽·네트·바닥·서브 — 무엇이든 한 번 닿으면 보통 공이다.
 function cool(ball) {
@@ -524,6 +595,14 @@ export function tipHit(world) {
 /// 한 번 쳐 본다. 못 쳤으면 **왜 못 쳤는지** 띄운다 — 이게 없어서 「눌렀는데 안 나갔다」가 됐다.
 /// first — 처음 누른 것인가. 기억해 둔 입력을 다시 쓸 때는 false 라 또 기억하지 않는다.
 function attempt(world, want, first) {
+  {
+    const b = world.bag;
+    // 서브가 아직 안 넘어갔다. 올린 편은 손을 못 댄다.
+    if ((b.mustCross === 0 || b.mustCross === 1) && (world.team ?? 0) === b.mustCross) {
+      if (first) missWord(world, world.player, '바로 넘겨야');
+      return false;
+    }
+  }
   const b = world.bag;
   const p = world.player;
   const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0 };
@@ -910,6 +989,43 @@ function drawSweetHalo(ctx, world, upright, bx, by) {
   });
 }
 
+/// 서브 힘 막대. **올리는 사람 머리 위에만** 뜬다 — 상대도 본다 (얼마나 세게 올지는
+/// 숨길 것이 아니라 읽을 것이다). 꽉 찬 뒤에도 잡고 있으면 빨갛게 타들어 간다.
+function drawServeGauge(ctx, world, upright) {
+  const b = world.bag;
+  if (!b.serving || world.state !== 'play') return;
+  const server = serverOf(world, b.serveBy);
+  if (!server) return;
+  const held = world.mp.role === 'guest' && myServe(world) ? b.myCharge : b.charge;
+  const w = SERVE_BAR, h = 6;
+  const x = server.x - w / 2;
+  const y = server.groundY - server.air - BODY_H - 46;
+  const tint = TEAM_INK[b.serveBy];
+  const full = clamp01(((held ?? -1) - SERVE_HOLD) / (SERVE_FULL - SERVE_HOLD));
+  const burn = held > SERVE_FULL ? clamp01((held - SERVE_FULL) / (SERVE_BURST - SERVE_FULL)) : 0;
+  upright(server.x, y, () => {
+    stroke(ctx, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
+           { width: 1.6, color: PENCIL, seed: 97, amp: 0.4, close: true, sharp: true,
+             halo: false, alpha: 0.8 });
+    if (full > 0.01) {
+      const fill = Math.max(2, (w - 4) * full);
+      stroke(ctx, [[x + 2, y + h / 2], [x + 2 + fill, y + h / 2]],
+             { width: h - 2.4, color: burn > 0 ? RED : tint, seed: 98, amp: 0.25,
+               halo: false, alpha: 0.9 });
+    }
+    // 꽉 찬 뒤로는 눈금이 떨린다 — 여기서부터는 놓아야 한다.
+    if (burn > 0) {
+      const shake = (Math.random() - 0.5) * 3 * burn;
+      text(ctx, '놔!', server.x + w / 2 + 12 + shake, y + h,
+           { font: `800 12px ${HAN}`, color: RED, align: 'left', halo: 3 });
+    }
+    if (held < 0) {
+      text(ctx, '⌥Space 눌러 서브', server.x, y - 6,
+           { font: `700 11px ${HAN}`, color: PENCIL, align: 'center', halo: 3 });
+    }
+  });
+}
+
 function drawSlideGauge(ctx, world, upright) {
   const b = world.bag;
   const p = world.player;
@@ -961,7 +1077,9 @@ export default {
   id: 'volley',
   name: '배구',
   line: '빨강 편 대 파랑 편. 우리 쪽에 떨어뜨리면 상대 점수. 다섯 점 먼저, 4:4 부터는 듀스 (두 점 차).',
-  keys: [['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
+  keys: [['⌥ Space (서브)', '잡고 있는 만큼 힘이 찬다 — 너무 오래 잡으면 실패'],
+         ['⌥ ← → (서브)', '깊게 / 짧게. 서 있는 자리가 좌우 조준 — 뒤쪽 절반까지만'],
+         ['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
          ['⌥ Space', '때리기 — 뛰어서 누르면 강타'],
          ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↑', '높이 넘겨 주기'],
          ['⌥ ↓ (공중)', '페인트 — 살짝 얹어 블록 너머로'],
@@ -989,8 +1107,32 @@ export default {
   noClock: true,
   /// **순위표도 안 띄운다.** 끝나면 이긴 편만 남는다 — 만세 부르는 인형과 편 이름.
   noResults: true,
-  /// ⌥Space 를 이 게임이 가져간다.
-  action: (world) => spike(world),
+  /// ⌥Space 를 이 게임이 가져간다. 서브를 올릴 차례면 **누르고 있는 동안 힘이 찬다.**
+  action(world) {
+    const b = world.bag;
+    if (b.serving) {
+      if (!myServe(world)) return;
+      if (world.mp.role === 'guest') { b.myCharge = 0; return; }
+      b.charge = 0;
+      return;
+    }
+    spike(world);
+  },
+  /// ⌥Space 를 뗐다. 차 있던 힘으로 서브를 때린다.
+  release(world) {
+    const b = world.bag;
+    if (!b.serving) return;
+    const held = world.mp.role === 'guest' ? b.myCharge : b.charge;
+    if (!(held >= 0)) return;
+    const power = clamp01((held - SERVE_HOLD) / (SERVE_FULL - SERVE_HOLD));
+    const dir = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
+    if (world.mp.role === 'guest') {
+      b.myCharge = -1;
+      world.send?.({ t: 'gm', k: 'serve', p: Math.round(power * 100), d: dir });
+      return;
+    }
+    hitServe(world, power, dir);
+  },
   /// 방향키를 누른 순간 — 공중의 ⌥↓ 는 페인트다. 나머지는 흘린다.
   tap: (world, key) => { if (key === 'duck') tipHit(world); },
 
@@ -1008,6 +1150,13 @@ export default {
     const half = world.w / 2;
     if (side === 0 && p.x > half - NET_GAP) { p.x = half - NET_GAP; p.vx = Math.min(0, p.vx); }
     if (side === 1 && p.x < half + NET_GAP) { p.x = half + NET_GAP; p.vx = Math.max(0, p.vx); }
+    // 서브를 올릴 차례면 **뒤쪽 절반 안에서만** 선다. 공이 내 자리를 따라오므로
+    // 이게 곧 서브 조준의 범위다 — 네트 코앞에서 넣는 서브는 없다.
+    if (myServe(world)) {
+      const line = serveLine(world, side);
+      if (side === 0 && p.x > line) { p.x = line; p.vx = Math.min(0, p.vx); }
+      if (side === 1 && p.x < line) { p.x = line; p.vx = Math.max(0, p.vx); }
+    }
   },
 
   /// 자기 코트에 선다. 편을 아직 안 정했으면 번호 순으로 갈라 반씩 나눠 갖는다.
@@ -1035,7 +1184,9 @@ export default {
     // 타격 자국(각자 굴린다) · 남에게 알릴 한 줄짜리 일 · 히트스톱 남은 시간.
     fx: [], events: [], stop: 0, stopHold: 0, mineAt: 9,
     // 기억해 둔 입력 · 발밑 고리 남은 시간 · 서브를 올리는 쪽.
-    hold: null, ringFade: 0, serveBy: 0,
+    hold: null, ringFade: 0, serveBy: 0, mustCross: null,
+    // 서브 — 들고 있나 · 얼마나 찼나 · 손님이 제 화면에서 세는 몫 · 아무도 안 누른 시간.
+    serving: false, charge: -1, myCharge: -1, idle: 0,
     score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false, emptyFor: 0,
     // 손님이 받은 공을 부드럽게 따라가려고 남겨 두는 것.
     age: 0, errorX: 0, errorY: 0, baseX: undefined,
@@ -1076,6 +1227,7 @@ export default {
     if (world.mp.role === 'guest') {
       // **첫 꾸러미가 오기 전에는 계산하지 않는다.** 안 그러면 없는 값으로 셈해서 NaN 이 되고,
       // 그 NaN 이 다음 꾸러미의 오차 계산에 다시 들어가 영영 안 돌아온다.
+      if (b.myCharge >= 0) b.myCharge += dt;
       if (b.baseX === undefined) return;
       b.age = Math.min(b.age + dt, 0.18);
       b.errorX *= Math.exp(-dt / 0.06);
@@ -1102,14 +1254,27 @@ export default {
       return;
     }
 
-    if (b.wait > 0) {
-      b.wait -= dt;
-      // **올리는 사람 위로 공이 따라온다.** 걸어서 자리를 잡으면 그 자리에서 떨어진다 —
-      // 조준을 새 키로 만들지 않고 이 게임이 이미 쓰는 규칙(「대각선은 조준이 아니라 자리다」)을 그대로 쓴다.
+    if (b.wait > 0) b.wait -= dt;
+    // 서브를 기다리는 동안. **공은 올리는 사람 손에 들려 있고 판은 안 돈다.**
+    //
+    // 공이 그 사람 위로 따라오는 것은 그대로 둔다 — 걸어서 자리를 잡는 것이 좌우 조준이다
+    // (「대각선은 조준이 아니라 자리다」, 이 게임이 이미 쓰던 규칙). 거기에 **힘**이 붙었다.
+    if (b.serving) {
       const server = serverOf(world, b.serveBy);
       if (server) {
         const want = Math.max(BALL_R + 8, Math.min(world.w - BALL_R - 8, server.x));
-        b.ball.x += (want - b.ball.x) * Math.min(1, dt * 7);
+        b.ball.x += (want - b.ball.x) * Math.min(1, dt * 9);
+        b.ball.y += ((server.groundY - server.air - BODY_H - 30) - b.ball.y) * Math.min(1, dt * 9);
+      }
+      if (world.mp.role === 'guest') return;          // 손님은 방장이 굴린 것을 볼 뿐이다
+      if (b.wait > 0) return;
+      b.idle = (b.idle ?? 0) + dt;
+      if (b.charge >= 0) {
+        b.charge += dt;
+        if (b.charge > SERVE_BURST) { serveFault(world); return; }
+      } else if (b.idle > SERVE_AUTO) {
+        // 아무도 안 누른다 — 저절로 넘겨 판을 세워 두지 않는다.
+        hitServe(world, 0.5, 0);
       }
       return;
     }
@@ -1204,7 +1369,14 @@ export default {
     }
     if (walled) { trail(b, dt); return; }
 
+    // 서브가 아직 네트를 안 넘었다. 넘은 순간 잠금이 풀린다.
+    if (b.mustCross === 0 || b.mustCross === 1) {
+      const netX = world.w / 2;
+      if (b.mustCross === 0 ? ball.x > netX : ball.x < netX) b.mustCross = null;
+    }
     for (const p of bodies) {
+      // 올린 편은 넘어가기 전까지 못 건드린다 (서브는 바로 넘겨야 한다).
+      if ((b.mustCross === 0 || b.mustCross === 1) && sideOfX(world, p.x) === b.mustCross) continue;
       // 머리 위 공을 내리꽂으면 공이 제 몸을 지나간다. 그 프레임에 몸에 맞아 도로 떠오르면
       // **강타가 토스가 된다** (vy +1700 → -811 을 실제로 봤다). 친 사람만 잠깐 건너뛴다.
       if (p === ball.skip || !touches(ball, p)) continue;
@@ -1345,6 +1517,16 @@ export default {
     // 「쾅!」·「받았다!」는 공 위에 뜬다.
     drawFx(ctx, b, upright, true);
 
+    // 서브 선 — 여기까지만 나갈 수 있다. 서브를 올리는 동안만 보인다.
+    if (b.serving && myServe(world)) {
+      const line = serveLine(world, world.team ?? 0);
+      stroke(ctx, [[line, world.groundY - 8], [line, world.groundY - 74]],
+             { width: 2, color: PENCIL, seed: 99, amp: 1.0, halo: false, alpha: 0.45 });
+      text(ctx, '서브 선', line, world.groundY - 82,
+           { font: `700 11px ${HAN}`, color: PENCIL, align: 'center', halo: 3 });
+    }
+    // 서브 힘 막대 — 올리는 사람 머리 위.
+    drawServeGauge(ctx, world, upright);
     // 내 슬라이딩 게이지. 남의 것은 안 그린다 — 오가는 값도 아니고, 알 필요도 없다.
     drawSlideGauge(ctx, world, upright);
 
@@ -1373,10 +1555,7 @@ export default {
       });
     });
 
-    if (b.wait > 0) {
-      text(ctx, '서브', bx, by - 30,
-           { font: `700 13px ${HAN}`, color: RED, align: 'center', halo: 3 });
-    }
+
   },
 
   /// 손님이 보내오는 말. 방장만 듣는다.
@@ -1397,6 +1576,16 @@ export default {
     }
     // 손님이 벽을 세웠다. 자리는 방장이 아는 것을 쓰고, 조건도 방장이 다시 본다 —
     // 남의 화면 값을 그대로 믿으면 코트 한가운데서도 벽이 선다.
+    // 손님이 서브를 때렸다. **그 사람이 올릴 차례일 때만** 듣는다.
+    if (msg.k === 'serve') {
+      const other = world.mp.others.get(from);
+      if (!other || other.dead || other.waiting) return;
+      const b = world.bag;
+      if (!b.serving || sideOfX(world, other.x) !== b.serveBy) return;
+      if (serverOf(world, b.serveBy) !== other) return;
+      hitServe(world, clamp01((+msg.p || 0) / 100), Math.sign(+msg.d || 0));
+      return;
+    }
     if (msg.k === 'block') {
       const other = world.mp.others.get(from);
       if (other && !other.dead && canBlock(world, other)) doBlock(world, other, false, from);
@@ -1432,6 +1621,8 @@ export default {
           b.ball.hot > 0 ? (b.ball.ace ? 2 : 1) : 0],
       s: b.score,
       w: Math.round(b.wait * 100) / 100,
+      // 서브 — 들고 있나 · 누가 올리나 · 얼마나 찼나.
+      sv: b.serving ? [b.serveBy, Math.round(Math.max(0, b.charge) * 100), b.charge >= 0 ? 1 : 0] : null,
       // 방금 터진 타격. 있을 때만 싣고 바로 비운다.
       f: flash ?? undefined,
       // 바닥에 꽂힘·받아 냄. 같은 식으로 한 번만 싣는다.
@@ -1473,6 +1664,8 @@ export default {
       else if (ev[0] === 2) spawnDig(world, ev[1], ev[2]);
       else if (ev[0] === 3) addFx(world.bag, { k: 'dig', x: ev[1], y: ev[2], t: 0, life: 0.55,
                                                word: '막았다!', shake: SHAKE_HIT });
+      else if (ev[0] === 5) addFx(world.bag, { k: 'dig', x: ev[1], y: ev[2], t: 0, life: 0.4,
+                                               word: ev[3] > 85 ? '강서브!' : null });
       // 누가 벽을 세웠다. **내가 세운 것이면 이미 내 화면에서 올렸다** — 두 번 걸지 않는다.
       else if (ev[0] === 4) {
         const id = ev[3];
@@ -1516,6 +1709,13 @@ export default {
     if (first) { b.ball.x = x; b.ball.y = y; b.tail = []; }
     if (Array.isArray(data.s) && data.s.length === 2 && data.s.every(Number.isFinite)) b.score = data.s;
     b.wait = Number.isFinite(data.w) ? data.w : 0;
+    // 서브를 들고 있는 중인가. 내가 올리는 사람이면 **내가 잡고 있는 시간은 내 것**을 쓴다 —
+    // 방장 값으로 덮으면 막대가 한 왕복 늦게 차오른다.
+    if (Array.isArray(data.sv) && data.sv.length >= 3 && data.sv.every(Number.isFinite)) {
+      b.serving = true;
+      b.serveBy = data.sv[0] ? 1 : 0;
+      if (!(b.myCharge >= 0)) b.charge = data.sv[2] ? data.sv[1] / 100 : -1;
+    } else if (data.sv === null) { b.serving = false; b.charge = -1; b.myCharge = -1; }
     b.started = true;
   },
 

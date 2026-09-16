@@ -7,11 +7,11 @@ const R = new URL('../src/', import.meta.url).href;
 const w = await import(R + 'game/world.js');
 const { games } = await import(R + 'games/index.js');
 const volley = games.find((g) => g.id === 'volley');
-const { spike, tipHit, slideGauge, matchOver, deuce } = await import(R + 'games/volley.js');
+const { spike, tipHit, slideGauge, matchOver, deuce, myServe, hitServe } = await import(R + 'games/volley.js');
 const { BODY_H, SWING_TIME, SWING_WHIP, TOSS_TIME, swingPhase, handPoint, drawStickman }
   = await import(R + 'draw/stickman.js');
 
-import { check, say, note, done } from './check.mjs';
+import { check, ok, say, note, done } from './check.mjs';
 function mk() {
   const world = w.createWorld({ ms: 0, dodged: 0 }, 'volley');
   world.onRecord = () => {}; world.onGameOver = () => {};
@@ -32,7 +32,7 @@ say('네트 — 공은 그물 면에서 튄다 (사람이 멈추는 자리와 �
 {
   const world = mk(); world.state = 'play'; world.team = 0;
   const b = world.bag, netX = world.w / 2;
-  volley.update(world, 1 / 60); b.wait = 0;        // 첫 프레임에 서브가 올라가고 잠깐 멎는다 — 그 대기를 끝낸다
+  volley.update(world, 1 / 60); b.wait = 0; b.serving = false;        // 첫 프레임에 서브가 올라가고 잠깐 멎는다 — 그 대기를 끝낸다
   // 네트 몸통 높이(꼭대기 아래)에서 빠르게 날아가 바닥에 닿기 전에 그물에 맞는다
   b.ball.x = netX - 120; b.ball.y = world.groundY - 55; b.ball.vx = 1600; b.ball.vy = 0;
   let bounced = false; const xs = [];
@@ -48,14 +48,16 @@ say('편 — 네트를 넘어갈 수 없다');
   world.team = 0;
   world.player.x = 400;
   world.input.right = true;
-  for (let i = 0; i < 240; i++) w.update(world, 1 / 60);   // 4초 내내 오른쪽으로
+  // 서브를 들고 있으면 서브 선(코트 뒤쪽 절반)까지만 간다 — 그건 아래에서 따로 본다.
+  const run = (n) => { for (let i = 0; i < n; i++) { world.bag.serving = false; w.update(world, 1 / 60); } };
+  run(240);                                                // 4초 내내 오른쪽으로
   check('네트 앞에서 멈춘다', world.player.x <= 1512 / 2, true);
   check('넘어가지 않았다', Math.round(world.player.x), 742);   // 756 - 14
 
   world.team = 1;
   world.player.x = 1100;
   world.input.right = false; world.input.left = true;
-  for (let i = 0; i < 240; i++) w.update(world, 1 / 60);
+  run(240);
   check('반대쪽도 마찬가지', Math.round(world.player.x), 770);  // 756 + 14
 }
 
@@ -113,9 +115,9 @@ say('점수 — 우리 쪽에 떨어지면 상대 점수');
   world.state = 'play';
   const b = world.bag;
   b.started = true;          // 첫 서브를 건너뛰고 원하는 자리에 공을 놓는다
-  b.wait = 0;
+  b.wait = 0; b.serving = false;
   const drop = (x) => {
-    b.wait = 0;
+    b.wait = 0; b.serving = false;
     b.ball.x = x; b.ball.y = world.groundY - 5; b.ball.vy = 400; b.ball.vx = 0;
     world.player.x = x > 756 ? 100 : 1400;      // 공에서 멀리 (반대 코트)
     w.update(world, 1 / 60);                     // **한 프레임이면 끝난다**
@@ -131,7 +133,7 @@ say('점수 — 우리 쪽에 떨어지면 상대 점수');
 say('벽 — 입사각 그대로 반사각');
 {
   const world = mk(); world.state = 'play'; world.team = 0;
-  const b = world.bag; b.started = true; b.wait = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
   // 45도로 왼쪽 벽에 꽂는다
   b.ball.x = 60; b.ball.y = 300; b.ball.vx = -900; b.ball.vy = -900;
   // **튕기는 그 프레임의 앞뒤만** 견준다. 여러 프레임을 굴리면 중력이 vy 를 바꿔서
@@ -155,7 +157,7 @@ say('벽 — 입사각 그대로 반사각');
 say('벽 — 아주 빠른 공도 벽에 안 붙는다');
 {
   const world = mk(); world.state = 'play'; world.team = 0;
-  const b = world.bag; b.started = true; b.wait = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
   b.ball.x = 100; b.ball.y = 300; b.ball.vx = -2100; b.ball.vy = 0;
   const xs = [];
   for (let i = 0; i < 20; i++) { volley.update(world, 1 / 60); xs.push(Math.round(b.ball.x)); }
@@ -179,7 +181,7 @@ say('듀스 — 다섯 점 먼저, 단 두 점 차로');
 
   // 판 안에서도 그렇게 굴러가나. 5:4 로 공이 떠 있으면 끝내지 않고, 6:4 가 되면 끝낸다.
   const world = mk(); world.state = 'play'; world.team = 0;
-  const b = world.bag; b.started = true; b.wait = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
   const ends = [];
   world.onGameOver = (r) => ends.push(r);
   b.score = [5, 4]; b.ball.x = 500; b.ball.y = 300; b.ball.vx = 0; b.ball.vy = -100;
@@ -196,7 +198,7 @@ say('듀스 — 다섯 점 먼저, 단 두 점 차로');
 say('바닥 — 닿는 즉시 끝');
 {
   const world = mk(); world.state = 'play'; world.team = 0;
-  const b = world.bag; b.started = true; b.wait = 0; b.score = [0, 0];
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false; b.score = [0, 0];
   b.ball.x = 1200; b.ball.y = world.groundY - 40; b.ball.vy = 800; b.ball.vx = 200;
   world.player.x = 100;
   let scoredAt = -1;
@@ -215,9 +217,11 @@ say('바닥 — 닿는 즉시 끝');
 say('슬라이딩 — 손이 안 닿으면 몸을 던진다');
 {
   const world = mk(); world.state = 'play'; world.team = 0;
-  const b = world.bag; b.started = true; b.wait = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
   world.player.x = 300; world.player.air = 0;
-  b.ball.x = 620; b.ball.y = world.groundY - 40;         // 손이 안 닿는 거리
+  // 손이 안 닿는 거리. 높이 띄워 둔다 — 도중에 바닥에 닿으면 점수가 나고 새 서브가 시작돼
+  // 서브 선(코트 뒤쪽 절반)에 걸린다.
+  b.ball.x = 620; b.ball.y = world.groundY - 420; b.ball.vy = -120;
   spike(world);
   check('미끄러지기 시작했다', world.player.slide > 0, true);
   check('공 쪽으로', world.player.slideDir, 1);
@@ -242,7 +246,7 @@ say('슬라이딩 — 손이 안 닿으면 몸을 던진다');
 say('슬라이딩 — 닿는 거리면 던지지 말고 쳐야 한다');
 {
   const world = mk(); world.state = 'play'; world.team = 0;
-  const b = world.bag; b.started = true; b.wait = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
   world.player.x = 300; world.player.air = 0;
   b.ball.x = 330; b.ball.y = world.groundY - 50;         // 손이 닿는다
   b.ball.vy = 500;
@@ -272,7 +276,7 @@ say('한쪽 편이 비면 판이 안 열린다');
 say('천장 — 위로 안 벗어난다');
 {
   const world = mk(); world.state = 'play'; world.team = 0;
-  const b = world.bag; b.started = true; b.wait = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
   let top = 1e9;
   // 있는 힘껏 위로 올려 본다: 빠른 공을 정통으로 받아넘기기를 반복
   for (let round = 0; round < 6; round++) {
@@ -313,7 +317,7 @@ say('스파이크 — 공보다 높이 떠서 때려야 꽂힌다');
   // 손 높이를 기준으로 공을 놓고 때려 본다. air 는 발이 땅에서 뜬 높이.
   const hit = ({ air = 100, under = 0, keys = {} }) => {
     const world = mk(); world.state = 'play'; world.team = 0;
-    const b = world.bag; b.started = true; b.wait = 0;
+    const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
     const p = world.player;
     p.x = 400; p.air = air; p.vy = 0;
     const hand = p.groundY - p.air - BODY_H * 0.86;
@@ -359,7 +363,7 @@ say('공기 저항 — 세게 때린 공만 눈에 띄게 잦아든다');
   // 중력이 안 섞이도록 가로로만 날린다.
   const glide = (vx) => {
     const world = mk(); world.state = 'play'; world.team = 0;
-    const b = world.bag; b.started = true; b.wait = 0;
+    const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
     b.ball.x = 756; b.ball.y = 300; b.ball.vx = vx; b.ball.vy = 0;
     for (let i = 0; i < 30; i++) {                 // 0.5초
       b.ball.y = 300; b.ball.vy = 0;               // 중력은 빼고 본다
@@ -433,7 +437,7 @@ const BALL_R = 20;
 /// 한 번 치는 판을 차린다. air 는 발이 뜬 높이, off 는 손끝에서 공까지의 [가로, 세로].
 function rig({ air = 60, off = [66, -20], keys = {}, vy = 200 } = {}) {
   const world = mk(); world.state = 'play'; world.team = 0;
-  const b = world.bag; b.started = true; b.wait = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
   const p = world.player;
   p.x = 500; p.air = air; p.vy = 0; p.facing = 1;
   const hand = p.groundY - p.air - BODY_H * 0.86;
@@ -590,7 +594,7 @@ say('세게 나가는 느낌 — 탑스핀 · 덜 타는 공기 · 식기');
   // 탑스핀. 달아오른 강타는 중력의 1.45배로 떨어진다.
   const drop = (hot) => {
     const world = mk(); world.state = 'play'; world.team = 0;
-    const b = world.bag; b.started = true; b.wait = 0;
+    const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
     b.ball.x = 300; b.ball.y = 360; b.ball.vx = 0; b.ball.vy = 0;
     b.ball.hot = hot ? 0.7 : 0; b.ball.topspin = hot; b.ball.ace = false;
     for (let i = 0; i < 18; i++) volley.update(world, 1 / 60);
@@ -603,7 +607,7 @@ say('세게 나가는 느낌 — 탑스핀 · 덜 타는 공기 · 식기');
   // 공기 저항. 달아오른 공은 4할만, 정타는 아예 안 탄다.
   const glide = (hot, ace) => {
     const world = mk(); world.state = 'play'; world.team = 0;
-    const b = world.bag; b.started = true; b.wait = 0;
+    const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
     b.ball.x = 500; b.ball.y = 300; b.ball.vx = 1700; b.ball.vy = 0;
     b.ball.hot = hot ? 9 : 0; b.ball.ace = ace; b.ball.topspin = false;
     for (let i = 0; i < 30; i++) { b.ball.y = 300; b.ball.vy = 0; if (b.ball.x > 1300) b.ball.x = 500; volley.update(world, 1 / 60); }
@@ -617,7 +621,7 @@ say('세게 나가는 느낌 — 탑스핀 · 덜 타는 공기 · 식기');
   // 무엇이든 한 번 닿으면 식는다. 안 그러면 벽을 맞고도 아무도 못 받는 공이 된다.
   const bump = (set) => {
     const world = mk(); world.state = 'play'; world.team = 0;
-    const b = world.bag; b.started = true; b.wait = 0;
+    const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
     b.ball.hot = 0.7; b.ball.ace = true; b.ball.topspin = true;
     set(world, b);
     for (let i = 0; i < 14; i++) volley.update(world, 1 / 60);
@@ -930,18 +934,206 @@ say('디그 — 웅크려 받으면 높고 곧게 뜬다');
   note(`웅크림 vx=${dug.vx.toFixed(0)} vy=${dug.vy.toFixed(0)} · 서서 vx=${b2.vx.toFixed(0)} vy=${b2.vy.toFixed(0)}`);
 }
 
+say('서브 자리 — 코트 뒤쪽 절반에서만 올린다');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.idle = 0;
+  b.serveBy = 0; b.serving = true; b.charge = -1;
+  world.player.x = 200;
+  world.input.right = true;
+  for (let i = 0; i < 240; i++) w.update(world, 1 / 60);
+  const line = 1512 / 2 * 0.5;
+  check('서브 선에서 멈춘다', Math.round(world.player.x), Math.round(line));
+  ok('네트 근처까지 못 간다', world.player.x < 1512 / 2 - 100);
+  world.input.right = false;
+  // 서브가 넘어가고 나면 다시 네트까지 갈 수 있다
+  volley.action(world); b.charge = 0.5; volley.release(world);
+  world.input.right = true;
+  for (let i = 0; i < 240; i++) { b.serving = false; w.update(world, 1 / 60); }
+  ok('서브가 끝나면 네트까지 간다', world.player.x > 1512 / 2 - 60);
+
+  // 반대편도 같다
+  const o = mk(); o.state = 'play'; o.team = 1;
+  o.bag.started = true; o.bag.wait = 0; o.bag.serveBy = 1; o.bag.serving = true; o.bag.charge = -1;
+  o.player.x = 1400;
+  o.input.left = true;
+  for (let i = 0; i < 240; i++) w.update(o, 1 / 60);
+  check('반대편 서브 선', Math.round(o.player.x), Math.round(1512 - line));
+}
+
+say('서브는 바로 넘겨야 한다 — 올린 편은 넘어가기 전까지 못 건드린다');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.idle = 0;
+  b.serveBy = 0; b.serving = true; b.charge = -1;
+  world.player.x = 320;
+  for (let i = 0; i < 20; i++) volley.update(world, 1 / 60);
+  volley.action(world); b.charge = 0.5; volley.release(world);
+  check('올린 편에 잠금이 걸린다', b.mustCross, 0);
+  // 내 쪽에서 치려고 해도 안 된다
+  b.ball.x = world.player.x + 10; b.ball.y = world.player.groundY - 60;
+  const vy0 = b.ball.vy;
+  ok('손을 못 댄다', spike(world) === false);
+  check('공이 안 바뀐다', b.ball.vy, vy0);
+  // 몸에 맞아도 안 튄다
+  world.player.x = b.ball.x;
+  const before = { vx: b.ball.vx, vy: b.ball.vy };
+  volley.update(world, 1 / 60);
+  ok('몸에 맞아도 안 튄다', b.ball.vy >= before.vy);
+  // 네트를 넘으면 잠금이 풀린다
+  b.ball.x = 1512 / 2 + 40;
+  volley.update(world, 1 / 60);
+  check('넘어가면 풀린다', b.mustCross, null);
+}
+
+say('서브 — 잡고 있는 만큼 힘이 찬다');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true;
+  world.player.x = 300; world.player.air = 0;
+  b.serveBy = 0; b.serving = true; b.charge = -1; b.wait = 0; b.idle = 0;
+  ok('내가 올릴 차례다', myServe(world));
+  check('처음엔 안 차 있다', b.charge, -1);
+  volley.action(world);
+  check('누르면 차기 시작한다', b.charge, 0);
+  for (let i = 0; i < 24; i++) volley.update(world, 1 / 60);
+  ok('잡고 있으면 찬다', b.charge > 0.35 && b.charge < 0.45);
+  ok('아직 공은 손에 있다', b.serving && b.ball.vy === 0);
+  volley.release(world);
+  ok('떼면 넘어간다', !b.serving);
+  ok('상대 쪽으로 간다', b.ball.vx > 0);
+  ok('위로 뜬다', b.ball.vy < 0);
+  note(`0.4초 잡음 → vx ${b.ball.vx.toFixed(0)} vy ${b.ball.vy.toFixed(0)}`);
+}
+
+say('서브 — 살살 올리면 높고 느리게, 꽉 채우면 낮고 빠르게');
+{
+  const hit = (held, dir = 0) => {
+    const world = mk(); world.state = 'play'; world.team = 0;
+    const b = world.bag; b.started = true; b.wait = 0; b.idle = 0;
+    world.player.x = 300; b.serveBy = 0; b.serving = true; b.charge = -1;
+    volley.action(world);
+    for (let i = 0; i < Math.round(held * 60); i++) volley.update(world, 1 / 60);
+    if (dir > 0) world.input.right = true;
+    if (dir < 0) world.input.left = true;
+    volley.release(world);
+    return { vx: b.ball.vx, vy: b.ball.vy, serving: b.serving, score: b.score };
+  };
+  const soft = hit(0.2), hard = hit(0.72);
+  note(`살살 vx ${soft.vx.toFixed(0)} vy ${soft.vy.toFixed(0)} · 꽉 vx ${hard.vx.toFixed(0)} vy ${hard.vy.toFixed(0)}`);
+  ok('꽉 채우면 더 빠르다', hard.vx > soft.vx * 1.4);
+  ok('살살 올리면 더 높이 뜬다', soft.vy < hard.vy);
+  const deep = hit(0.45, 1), shortly = hit(0.45, -1);
+  ok('⌥→ 로 더 깊게', deep.vx > shortly.vx);
+  note(`깊게 ${deep.vx.toFixed(0)} · 짧게 ${shortly.vx.toFixed(0)}`);
+}
+
+say('서브 — 제자리에서 올리면 어떤 세기로도 네트를 넘는다');
+{
+  const cross = (held, dir) => {
+    const world = mk(); world.state = 'play'; world.team = 0;
+    world.mp.on = true; world.mp.role = 'host'; world.mp.myId = 1;
+    world.mp.others.set(2, { id: 2, x: 1450, air: 0, vx: 0, vy: 0, dead: false, waiting: false,
+                             groundY: world.groundY, crouch: 0, walk: 0, facing: -1,
+                             grabbing: -1, heldBy: -1, grabAim: 0, slide: 0 });
+    const b = world.bag;
+    volley.update(world, 1 / 60);
+    for (let f = 0; f < 80; f++) volley.update(world, 1 / 60);
+    b.serveBy = 0; b.serving = true; b.charge = -1; b.idle = 0;
+    world.player.x = 320;
+    for (let f = 0; f < 20; f++) volley.update(world, 1 / 60);
+    volley.action(world); b.charge = held;
+    world.input.right = dir > 0; world.input.left = dir < 0;
+    volley.release(world);
+    world.player.x = 60; world.mp.others.get(2).x = 1460;
+    const was = [...b.score];
+    for (let f = 0; f < 60 * 8; f++) {
+      volley.update(world, 1 / 60);
+      if (b.score[0] !== was[0]) return true;      // 넘어가 상대 코트에 떨어졌다
+      if (b.score[1] !== was[1]) return false;     // 못 넘었다
+    }
+    return null;
+  };
+  for (const held of [0.16, 0.3, 0.45, 0.6, 0.72]) {
+    ok(`${held}초 잡고 올려도 넘어간다`, cross(held, 0) === true);
+  }
+  ok('⌥→ 로 깊게 올려도 넘어간다', cross(0.5, 1) === true);
+  ok('⌥← 로 짧게 올려도 넘어간다', cross(0.5, -1) === true);
+}
+
+say('서브 — 너무 오래 잡으면 손에서 빠진다 (상대 점수)');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.idle = 0;
+  world.player.x = 300; b.serveBy = 0; b.serving = true; b.charge = -1;
+  b.score = [0, 0];
+  volley.action(world);
+  for (let i = 0; i < 90 && b.charge >= 0; i++) volley.update(world, 1 / 60);
+  ok('1.06초를 넘기면 손에서 빠진다', !(b.charge >= 0));
+  check('상대 점수', b.score, [0, 1]);
+  // 이 게임은 **진 쪽이 다시 올린다** (원래 쓰던 규칙). 서브권이 넘어가지는 않는다.
+  check('진 쪽이 다시 올린다', b.serveBy, 0);
+  ok('새 서브를 들고 기다린다', b.serving && b.wait > 0);
+  ok('공은 안 날아갔다', b.ball.vy === 0);
+}
+
+say('서브 — 아무도 안 누르면 저절로 올라간다 (판이 안 멎는다)');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.idle = 0;
+  world.player.x = 300; b.serveBy = 0; b.serving = true; b.charge = -1;
+  for (let i = 0; i < 60 * 7 && b.serving; i++) volley.update(world, 1 / 60);
+  ok('6초쯤에 저절로 넘어간다', !b.serving);
+  ok('점수는 안 준다', b.score[0] === 0 && b.score[1] === 0);
+  ok('상대 쪽으로 간다', b.ball.vx > 0);
+}
+
+say('서브 — 올릴 차례가 아닌 사람은 못 올린다');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0;
+  world.player.x = 300; b.serveBy = 1; b.serving = true; b.charge = -1;   // 상대가 올릴 차례
+  ok('내 차례가 아니다', !myServe(world));
+  volley.action(world);
+  check('눌러도 안 찬다', b.charge, -1);
+  volley.release(world);
+  ok('공은 그대로 손에 있다', b.serving);
+}
+
+say('서브 — 손님이 보낸 것을 방장이 대신 때린다');
+{
+  const host = mk(); host.state = 'play';
+  host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1;
+  host.team = 0; host.player.x = 300;
+  host.mp.others.set(2, { id: 2, x: 1200, air: 0, dead: false, waiting: false });
+  const b = host.bag; b.started = true; b.wait = 0; b.idle = 0;
+  b.serveBy = 1; b.serving = true; b.charge = -1;     // 파랑(손님)이 올릴 차례
+  volley.message(host, 2, { k: 'serve', p: 100, d: 0 });
+  ok('방장이 대신 때렸다', !b.serving);
+  ok('손님 쪽에서 내 쪽으로 온다', b.ball.vx < 0);
+  // 올릴 차례가 아닌 손님이 보내면 안 먹는다
+  const w2 = mk(); w2.state = 'play';
+  w2.mp.on = true; w2.mp.role = 'host'; w2.mp.myId = 1;
+  w2.team = 0; w2.player.x = 300;
+  w2.mp.others.set(2, { id: 2, x: 1200, air: 0, dead: false, waiting: false });
+  w2.bag.started = true; w2.bag.wait = 0;
+  w2.bag.serveBy = 0; w2.bag.serving = true; w2.bag.charge = -1;   // 내가 올릴 차례
+  volley.message(w2, 2, { k: 'serve', p: 100, d: 0 });
+  ok('남의 차례에 보낸 서브는 안 먹는다', w2.bag.serving);
+}
+
 say('서브 — 올리는 사람 위로 공이 따라온다 (자리가 곧 조준이다)');
 {
   const world = mk(); world.state = 'play'; world.team = 0;
   const b = world.bag; b.started = true;
   const p = world.player;
   p.x = 200; p.air = 0;
-  b.serveBy = 0; b.wait = 1.0;
+  b.serveBy = 0; b.wait = 1.0; b.serving = true; b.charge = -1;
   b.ball.x = world.w * 0.25; b.ball.y = 200;
   const was = b.ball.x;
   for (let i = 0; i < 30; i++) volley.update(world, 1 / 60);
   check('공이 서브하는 사람 쪽으로 온다', Math.abs(b.ball.x - p.x) < Math.abs(was - p.x), true);
-  check('아직 기다리는 중이라 안 떨어진다', b.ball.y, 200);
+  check('손에 들려 있다 — 안 떨어진다', b.ball.vy, 0);
   note(`${was.toFixed(0)} → ${b.ball.x.toFixed(0)} (사람은 ${p.x})`);
 
   // 반대편이 올릴 차례면 내 쪽으로 안 온다.
