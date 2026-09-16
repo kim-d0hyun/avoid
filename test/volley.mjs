@@ -1077,6 +1077,60 @@ say('서브 — 너무 오래 잡으면 손에서 빠진다 (상대 점수)');
   ok('공은 안 날아갔다', b.ball.vy === 0);
 }
 
+say('서브 잠금은 손님에게도 걸린다');
+{
+  const host = mk(); host.state = 'play'; host.team = 0;
+  host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1;
+  const guest = { id: 2, name: '손님', x: 1100, air: 0, groundY: host.groundY, dead: false, waiting: false };
+  host.mp.others.set(2, guest);
+  const b = host.bag; b.started = true; b.wait = 0; b.serving = false;
+  b.mustCross = 1;                                  // 오른쪽(1편)이 올렸고 아직 안 넘어갔다
+  const want = { held: 0, down: false, up: false, tip: false };
+  const put = () => { b.ball.x = 1100; b.ball.y = host.groundY - 90; b.ball.vx = 300; b.ball.vy = -200; };
+  put();
+  volley.message(host, 2, { k: 'hit', at: { x: 1100, air: 0, side: 1 }, want });
+  ok('올린 편 손님은 못 건드린다', b.ball.vx === 300 && b.ball.vy === -200);
+  // 잠금이 풀리면 똑같은 말이 먹힌다 — 위 검사가 헛돌지 않았다는 증거다
+  b.mustCross = null; b.stop = 0; put();
+  volley.message(host, 2, { k: 'hit', at: { x: 1100, air: 0, side: 1 }, want });
+  ok('풀리면 먹힌다', b.ball.vx !== 300 || b.ball.vy !== -200);
+  // 손님 화면도 잠금을 안다 — 안 그러면 눌러 놓고 왜 안 맞는지 모른다
+  const g2 = mk(); g2.mp.on = true; g2.mp.role = 'guest';
+  b.mustCross = 0;
+  volley.unpack(g2, volley.pack(host));
+  check('손님도 잠금을 받는다', g2.bag.mustCross, 0);
+}
+
+say('마지막 점수가 나면 **그 자리에서** 끝난다 — 진 쪽 서브를 기다리지 않는다');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
+  b.score = [4, 0];
+  const ends = [];
+  world.onGameOver = (r) => ends.push(r);
+  b.ball.x = 1200; b.ball.y = world.groundY - 40; b.ball.vy = 800; b.ball.vx = 0;
+  world.player.x = 100;
+  for (let i = 0; i < 8; i++) volley.update(world, 1 / 60);
+  check('다섯 점째에 바로 끝난다', ends.length, 1);
+  check('빨강 편이 이겼다', ends[0]?.side, 0);
+  ok('공은 치워져 있다', b.ball.vy === 0);
+  // 전에는 point() 가 곧바로 다음 서브로 넘겨 버리고, 서브를 기다리는 동안은 update 가
+  // 일찍 돌아가서 끝 검사에 영영 안 닿았다 — 진 사람이 한 번 더 올려야 만세가 떴다.
+}
+
+say('빈 코트로 서브권이 가면 저절로 올라간다 — 안 그러면 혼자 할 때 판이 영영 멎는다');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0;
+  world.player.x = 300;                      // 나는 왼쪽(0편)에 있다
+  b.serveBy = 1; b.serving = true; b.charge = -1;   // 아무도 없는 오른쪽이 올릴 차례
+  let f = 0;
+  for (; f < 60 * 6 && b.serving; f++) volley.update(world, 1 / 60);
+  ok('몇 초 안에 올라간다', !b.serving && f < 60 * 4);
+  ok('공이 실제로 날아간다', b.ball.vx !== 0);
+  note(`빈 코트 서브까지 ${(f / 60).toFixed(1)}초`);
+}
+
 say('서브 — 아무도 안 누르면 저절로 올라가지 않는다 (누를 때까지 기다린다)');
 {
   const world = mk(); world.state = 'play'; world.team = 0;

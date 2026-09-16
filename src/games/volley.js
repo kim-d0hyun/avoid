@@ -98,6 +98,7 @@ const SERVE_BAR = 46;             // 머리 위 힘 막대 길이
 /// 네트 코앞에서 꽉 채워 때리면 그물을 스치거나 뒷벽을 맞고 되돌아오던 것도 여기서 사라진다.
 /// 자기 코트 폭의 이만큼까지만 앞으로 나갈 수 있다 (0 이 맨 뒤, 1 이 네트).
 const SERVE_ZONE = 0.5;
+const EMPTY_WAIT = 1.1;         // 빈 코트가 올리기까지 (사람이 있으면 안 쓴다)
 
 // ── 스파이크의 손맛 ────────────────────────────────────────────────────────
 //
@@ -1064,11 +1065,27 @@ export function deuce(score) {
   return Math.min(score[0], score[1]) >= WIN_AT - 1;
 }
 
+/// 판을 끝낸다. **점수가 나는 그 자리에서** 본다.
+///
+/// 전에는 update 끝에서 봤는데, 점수가 나면 곧바로 다음 서브로 넘어가고 서브를 기다리는
+/// 동안은 update 가 일찍 돌아가 버린다 — 그래서 **이긴 사람이 진 사람의 다음 서브를
+/// 기다려야** 만세가 떴다. 진 사람이 안 올리면 영영 안 끝났다.
+function finish(world, b) {
+  const won = b.score[0] > b.score[1] ? 0 : 1;
+  // 순위표 칸은 [이름, 시간ms, 개수, 번호] 다. 배구에서는 「점수」를 개수 칸에 넣는다.
+  const rows = [0, 1]
+    .map((side) => [`${teamName(side)} 팀`, Math.round(world.elapsed * 1000), b.score[side], -1 - side])
+    .sort((a, c) => c[2] - a[2]);
+  world.onGameOver?.({ name: `${teamName(won)} 팀`, side: won, rows });
+  b.score = [0, 0];
+}
+
 function point(world, toSide) {
   const b = world.bag;
   b.score[toSide]++;
   b.lastPoint = { side: toSide, at: world.elapsed };
-  serve(world, 1 - toSide);                        // 진 쪽에서 다시 올린다
+  serve(world, 1 - toSide);                        // 진 쪽에서 다시 올린다 (공을 치운다)
+  if (matchOver(b.score)) finish(world, b);        // 끝은 **그 자리에서** 본다
 }
 
 export default {
@@ -1266,6 +1283,16 @@ export default {
       }
       if (world.mp.role === 'guest') return;          // 손님은 방장이 굴린 것을 볼 뿐이다
       if (b.wait > 0) return;
+      // **올릴 사람이 아무도 없는 코트면 저절로 올라간다.** 혼자 하거나 그 편이 다 나갔을
+      // 때다. 자동 서브를 없앤 것은 「올릴 사람이 생각하는 동안 대신 눌러 주지 말라」는
+      // 뜻이지, **아무도 없는데 판이 멎어 있으라**는 뜻이 아니다 — 혼자 하면 내가 한 점
+      // 내는 순간 서브권이 빈 코트로 넘어가서 그대로 영영 멎었다.
+      if (!server) {
+        b.idle = (b.idle ?? 0) + dt;
+        if (b.idle > EMPTY_WAIT) { b.idle = 0; hitServe(world, 0.3 + Math.random() * 0.55, 0); }
+        return;
+      }
+      b.idle = 0;
       // **저절로 올라가지 않는다.** 올리는 사람이 누를 때까지 기다린다 —
       // 서브는 매 점수마다 주어지는 선택이고, 몇 초 만에 대신 눌러 주면 그 선택이 없어진다.
       if (b.charge >= 0) {
@@ -1395,15 +1422,10 @@ export default {
       return;
     }
 
-    if (matchOver(b.score)) {
-      const won = b.score[0] > b.score[1] ? 0 : 1;
-      // 순위표 칸은 [이름, 시간ms, 개수, 번호] 다. 배구에서는 「점수」를 개수 칸에 넣는다.
-      const rows = [0, 1]
-        .map((side) => [`${teamName(side)} 팀`, Math.round(world.elapsed * 1000), b.score[side], -1 - side])
-        .sort((a, c) => c[2] - a[2]);
-      world.onGameOver?.({ name: `${teamName(won)} 팀`, side: won, rows });
-      b.score = [0, 0];
-    }
+    // 점수를 손으로 세워 둔 판(시험·되돌리기)에서도 끝은 본다. 진짜 판에서는 point() 가
+    // 그 자리에서 이미 봤다.
+    if (matchOver(b.score)) finish(world, b);
+
   },
 
   draw(ctx, world, time, boil, upright) {
@@ -1564,6 +1586,14 @@ export default {
       const other = world.mp.others.get(from);
       if (!other || other.dead) return;
       if (Math.abs(other.x - msg.at.x) > 120) { world.debug && world.log?.(`손님타격 무시(자리차이) ${from}`); return; }
+      // **서브는 바로 넘겨야 한다 — 손님에게도.** 잠금 검사가 attempt() 한 곳에만 있어서
+      // 이 길로 들어온 타격은 그냥 통과했다.
+      const gside = msg.at.side === 1 ? 1 : 0;
+      const gb = world.bag;
+      if ((gb.mustCross === 0 || gb.mustCross === 1) && gside === gb.mustCross) {
+        world.debug && world.log?.(`손님타격 무시(서브잠금) ${from}`);
+        return;
+      }
       const ok = applyHit(world, { x: other.x, air: other.air, groundY: world.groundY,
                                    side: msg.at.side === 1 ? 1 : 0 }, msg.want, other, from);
       if (ok) startSwing(other, ok);
@@ -1623,6 +1653,9 @@ export default {
       f: flash ?? undefined,
       // 바닥에 꽂힘·받아 냄. 같은 식으로 한 번만 싣는다.
       e: events ?? undefined,
+      // **서브 잠금.** 이걸 안 실어서 손님 쪽은 늘 null 이었다 — 방장은 「바로 넘겨야」로
+      // 막히는데 손님만 자기 팀 서브를 네트 앞에서 받아 꽂을 수 있었다.
+      mc: b.mustCross === 0 || b.mustCross === 1 ? b.mustCross : -1,
     };
   },
 
@@ -1712,6 +1745,9 @@ export default {
       b.serveBy = data.sv[0] ? 1 : 0;
       if (!(b.myCharge >= 0)) b.charge = data.sv[2] ? data.sv[1] / 100 : -1;
     } else if (data.sv === null) { b.serving = false; b.charge = -1; b.myCharge = -1; }
+    // 서브 잠금 — 넘어가기 전까지 올린 편은 못 건드린다. 손님도 자기 화면에서 미리 막혀야
+    // 「바로 넘겨야」가 뜬다 (안 그러면 눌러 놓고 왜 안 맞는지 모른다).
+    if (Number.isFinite(data.mc)) b.mustCross = data.mc === 0 || data.mc === 1 ? data.mc : null;
     b.started = true;
   },
 

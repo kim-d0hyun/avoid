@@ -423,14 +423,19 @@ export function handleMessage(world, shell, from, message, api) {
       // **구경도 판을 봐야 구경이다.** 방장은 한창인데 내 화면만 시작 화면에 멈춰 있으면
       // 들어온 사람은 아무것도 못 본다. 방장이 판을 돌고 있으면 나도 판으로 들어가되,
       // 이번 판에는 안 낀다(기다리는 사람으로 둔다).
-      if (message.st === 'play' && world.state !== 'play') {
-        world.state = 'play';
+      if (message.st === 'play') {
         // **판이 길고 차례가 도는 게임은 도중에 들어와도 바로 낀다** (야구 — 한 판이 5분인데
         // 다음 판까지 구경만 하면, 그 사이 내 자리는 컴퓨터가 대신 친다). 타석은 한 타자마다
         // 새로 열리니 도중에 껴도 불공평할 것이 없다.
+        //
+        // **내 화면이 이미 판이어도 같다.** 야구는 고르면 방이 열리므로(`opensRoom`)
+        // 혼자 하던 사람의 state 가 이미 'play' 다 — 그 갈래를 건너뛰는 바람에 waiting 이
+        // 그대로 굳어서, 친구 코드를 받아 들어가면 **판 내내 구경**만 했다.
         const anytime = gameOf(world).joinsAnytime;
-        mp.waiting = !anytime;
-        world.player.dead = !anytime;
+        const fresh = world.state !== 'play';
+        if (fresh) world.state = 'play';
+        if (anytime) { mp.waiting = false; world.player.dead = false; }
+        else if (fresh) { mp.waiting = true; world.player.dead = true; }
       }
       if (message.st === 'ready' && world.state !== 'ready') world.state = 'ready';
       if (message.st === 'over' && gameOf(world).rewindable && world.state !== 'over') {

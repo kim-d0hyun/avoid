@@ -11,7 +11,7 @@ const bb = await import(R + 'games/baseball.js');
 const { layout, spot, zone, pitchEnd, pitchAt, contact, resolveHit, flightOf, catchOdds,
         guessErr, ballAt, PITCHES, batSide, fieldSide, amPitching, amBatting, swing,
         FENCE_MID, FENCE_LINE, fenceFt, runnerAt, manAt, facingOf, POSTS,
-        makeOrder, atBat, postAt, pullWord, AIM_OUT } = bb;
+        makeOrder, atBat, postAt, pullWord, AIM_OUT, standers } = bb;
 const { BAT_TIME, PITCH_TIME, batPoint, pitchHand } = await import(R + 'draw/stickman.js');
 
 import { check, ok, say, note, done } from './check.mjs';
@@ -248,6 +248,107 @@ say('커브는 늦게 떨어진다 — 앞쪽 절반보다 뒤쪽 절반에서 �
   ok('같은 데를 겨누면 같은 데로 온다', Math.abs(end.y - endS.y) < 0.01 && Math.abs(end.x - endS.x) < 0.01);
   ok('오는 길에서는 직구보다 높이 떠 있다', b < pitchAt(straight, L, 0.5).y - 1);
   ok('뒤쪽 절반에서 더 많이 진다', (c - b) > (b - a) * 1.15);
+}
+
+say('존 안이라도 어디로 들어왔느냐가 결과를 바꾼다');
+{
+  // 「네모 안 아무 데나 던져도 휘두르면 다 쳐진다」가 되면 조준하는 쪽이 할 일이 없다.
+  // 배트가 닿는 창과 정타 경계가 같이 좁아지고, 구석에 붙인 공은 맞아도 안 뻗어야 한다.
+  const jab = (side, high) => {
+    let miss = 0, barrel = 0, ev = 0, hit = 0, n = 0;
+    for (let e = -12; e <= 12; e++) for (let i = 0; i < 120; i++) {
+      n++;
+      const c = contact(e, false, false, PITCHES[0], { side, high });
+      if (!c) { miss++; continue; }
+      hit++; ev += c.ev;
+      if (c.grade === 2) barrel++;
+    }
+    return { miss: miss / n, barrel: barrel / n, ev: ev / Math.max(1, hit) };
+  };
+  const mid = jab(0, 0), edge = jab(1, 0), corner = jab(0.9, 0.9), out = jab(1.35, 0);
+  note(`한가운데 헛스윙 ${(mid.miss*100).toFixed(0)}% · 정타 ${(mid.barrel*100).toFixed(0)}% · ${mid.ev.toFixed(0)}mph`);
+  note(`존 구석   헛스윙 ${(corner.miss*100).toFixed(0)}% · 정타 ${(corner.barrel*100).toFixed(0)}% · ${corner.ev.toFixed(0)}mph`);
+  note(`한 겹 밖  헛스윙 ${(out.miss*100).toFixed(0)}% · 정타 ${(out.barrel*100).toFixed(0)}% · ${out.ev.toFixed(0)}mph`);
+  ok('구석은 더 헛친다', corner.miss > mid.miss + 0.05);
+  ok('존 밖은 더 헛친다', out.miss > edge.miss);
+  ok('구석은 정타가 덜 나온다', corner.barrel < mid.barrel * 0.92);
+  ok('구석은 맞아도 덜 뻗는다', corner.ev < mid.ev * 0.95);
+  ok('한가운데는 늘 맞는다', mid.miss < 0.02);
+  // 홈에 붙어 서면 바깥쪽이 가운데처럼 보인다 — 자리 옮기기가 이 줄을 되민다
+  const far = jab(1.2, 0).miss, near = jab(1.2 - 0.5, 0).miss;   // stand 1 이면 side 가 0.5 준다
+  ok('한 발 붙어 서면 바깥쪽이 쉬워진다', near < far);
+}
+
+say('판이 도는 동안 사람이 사라지지 않는다');
+{
+  // 대본에 줄이 없는 주자(태그업 안 한 사람, 안 밀린 사람)를 안 그렸더니 **판이 도는
+  // 몇 초 동안 화면에서 통째로 없어졌다가** 끝나는 순간 루에 다시 나타났다.
+  const b = { onBase: [true, false, true], play: { runs: [{ from: 0, to: 1 }] } };
+  check('안 뛰는 주자 둘이 남는다', standers(b), [1, 3]);
+  b.play.runs.push({ from: 1, to: 2 });
+  check('뛰기 시작한 사람은 빠진다', standers(b), [3]);
+  check('판이 없으면 이 갈래는 안 쓴다', standers({ onBase: [true, true, true], play: null }), []);
+
+  // 실제 판에서 빠지는 사람이 없는지 — 대본마다 「루에 있던 사람 = 뛰는 사람 + 선 사람」
+  const { makeHands } = await import('./baseball-hands.mjs');
+  const world = mk(); const w2 = world.bag;
+  const hands = makeHands(world);
+  let plays = 0, lost = 0;
+  for (let f = 0; f < 60 * 3000 && plays < 260; f++) {
+    hands(FR); w.update(world, FR);
+    const p = w2.play;
+    if (!p || p.seen2) continue;
+    p.seen2 = true; plays++;
+    const on = w2.onBase.filter(Boolean).length;
+    const moving = new Set(p.runs.map((r) => r.from));
+    const run = [1, 2, 3].filter((i) => w2.onBase[i - 1] && moving.has(i)).length;
+    if (run + standers(w2).length !== on) lost++;
+  }
+  note(`대본 ${plays}개 — 빠진 사람이 있는 대본 ${lost}개`);
+  ok('루에 있던 사람은 모두 화면에 있다', lost === 0);
+}
+
+say('손님 화면도 방장과 같은 것을 본다 — 기록 세 줄 · 머리글 · 이긴 편 · 판정 글자 길이');
+{
+  const host = mk(); const hb = host.bag;
+  host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1;
+  hb.log = [{ no: 3, r: '6-4-3', t: '병살타' }, { no: 4, r: 'K', t: '삼진' }];
+  hb.note = '홈 승 3:1'; hb.winner = 0; hb.errs = [1, 0]; hb.hits = [5, 2];
+  hb.call = { text: '스트라이크', big: false, t: 0 };
+  const guest = mk();
+  guest.mp.on = true; guest.mp.role = 'guest'; guest.mp.myId = 2;
+  ball.unpack(guest, ball.pack(host));
+  const g = guest.bag;
+  check('기록 줄이 그대로 온다', g.log.map((r) => r.r), ['6-4-3', 'K']);
+  check('머리글이 온다', g.note, '홈 승 3:1');
+  check('이긴 편이 온다', g.winner, 0);
+  check('작은 글자는 1초짜리다', g.call.life, 1.0);
+  hb.call = { text: '홈런!', big: true, t: 0 };
+  ball.unpack(guest, ball.pack(host));
+  check('큰 글자는 1.4초짜리다', guest.bag.call.life, 1.4);
+  // 실책은 **저지른 편**에 쌓인다 — 기록지가 그 편 줄에 적는다
+  check('실책은 수비한 편에 쌓인다', hb.errs, [1, 0]);
+}
+
+say('⌥M 은 혼자 하는 야구를 멈춘다 — 방이 열려 있어도 아무도 없으면 혼자다');
+{
+  const world = mk(); const b = world.bag;
+  world.mp.on = true; world.mp.role = 'host'; world.mp.myId = 1;   // 고르면 방이 열린다
+  const { makeHands } = await import('./baseball-hands.mjs');
+  const hands = makeHands(world);
+  for (let f = 0; f < 60 * 20; f++) { hands(FR); w.update(world, FR); }
+  const before = { inn: b.inn, half: b.half, thrown: b.log.length };
+  world.menu.open = true;
+  for (let f = 0; f < 60 * 60; f++) { hands(FR); w.update(world, FR); }
+  check('메뉴를 열면 판이 멎는다', [b.inn, b.half, b.log.length],
+        [before.inn, before.half, before.thrown]);
+  // 남이 들어와 있으면 못 멈춘다 — 남의 시계까지 세울 수는 없다.
+  world.mp.others.set(2, { id: 2, name: '손님', x: 0, groundY: 0, air: 0, vx: 0, vy: 0,
+                           dead: false, waiting: false, deadFor: 0, facing: 1, walk: 0,
+                           crouch: 0, grabbing: -1, heldBy: -1, grabAim: 0, slide: 0 });
+  const was = world.elapsed;
+  for (let f = 0; f < 60; f++) w.update(world, FR);
+  ok('둘이 할 때는 메뉴를 열어도 시계가 돈다', world.elapsed > was + 0.5);
 }
 
 say('배트는 한 방향으로만 돈다 — 맞은 뒤 되감기면 스윙으로 안 보인다');
@@ -1085,9 +1186,24 @@ say('꾸러미 — 방장이 싸고 손님이 풀면 같은 판이 된다');
   check('공이 같은 자리에 있다',
         [Math.round(a[0]), Math.round(a[1]), Math.round(a[2])],
         [Math.round(c[0]), Math.round(c[1]), Math.round(c[2])]);
-  // 대본은 한 번만 실린다
+  // 대본은 한 번만 실린다 — 다만 **0.6초마다 한 번씩 다시** 싣는다.
+  // 그 한 번을 놓친 사람(판 도중에 들어온 손님)은 5초짜리 연기를 통째로 못 본다.
   const again = ball.pack(host);
   check('두 번째 꾸러미에는 대본이 없다', again.s, undefined);
+  host.bag.play.t += 0.7;
+  const later = ball.pack(host);
+  ok('0.6초 뒤에는 다시 싣는다', !!later.s);
+  ok('바로 다음 꾸러미에는 또 안 싣는다', !ball.pack(host).s);
+  // 늦게 받은 사람은 그 자리에서 이어 본다. 이미 지나간 판정 글자는 다시 안 외친다.
+  const late = mk();
+  late.mp.on = true; late.mp.role = 'guest'; late.mp.myId = 3;
+  ball.unpack(late, later);
+  ok('늦게 들어온 손님도 대본을 받는다', !!late.bag.play);
+  ok('지나간 판정은 다시 안 뜬다', late.bag.play.calls.every((c) => c.t > late.bag.play.t || c.shown));
+  // 같은 대본을 또 받아도 처음부터 다시 세우지 않는다
+  const mark = late.bag.play;
+  ball.unpack(late, later);
+  ok('같은 대본은 흘린다', late.bag.play === mark);
   note(`대본 한 개 크기 ${JSON.stringify(packet.s).length} 바이트`);
   ok('대본이 4KB 안', JSON.stringify(packet.s).length < 4096);
 }

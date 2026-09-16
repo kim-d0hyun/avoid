@@ -110,6 +110,25 @@ say('넷이서에서 배구로 갈아 끼우면 코트가 화면 크기로 돌�
   check('똥피하기도 화면 크기로', [solo.w, solo.h], [1512, 944]);
 }
 
+say('혼자 야구를 하다 남의 방에 들어가도 바로 낀다 — 내 화면이 이미 판이어도');
+{
+  // 야구는 고르면 방이 열린다(opensRoom). 그래서 혼자 하던 사람의 state 는 이미 'play' 다.
+  // 예전에는 「내 화면이 판이 아닐 때」만 낄지 말지를 정해서, 이 사람은 waiting 이 굳은 채
+  // 판 내내 구경했다 — joinsAnytime 을 넣은 까닭이 이 길에서 그대로 되살아났다.
+  const late = w.createWorld({ ms: 0, dodged: 0 });
+  late.onRecord = () => {}; late.onGameOver = () => {}; w.resize(late, 1512, 944);
+  w.pickGame(late, 'ball');
+  late.state = 'play';                                  // 혼자 하던 중
+  net.roleChanged(late, 'guest', 'ZR95', 4, '새손님');
+  late.mp.waiting = true; late.player.dead = true;      // 들어가면서 구경으로 굳은 상태
+  net.handleMessage(late, { net: { send() {} }, log() {} }, 0,
+    { t: 's', ms: 0, st: 'play', r: 1, pl: [[0, 300, 0, 0, 0, 0, 1, 0, -1, 0, 0]],
+      vw: 1512, vh: 944, g: 'ball', h: 0 },
+    { restart: w.restart, setSize() {} });
+  check('구경이 아니다', late.mp.waiting, false);
+  check('죽은 사람도 아니다', late.player.dead, false);
+}
+
 say('판 도중에 들어온 사람은 스스로 「구경」을 보고한다 — 방장은 그대로 전하고, 멀쩡한 사람은 안 덮는다');
 {
   const host = w.createWorld({ ms: 0, dodged: 0 }); host.onRecord = () => {}; host.onGameOver = () => {}; w.resize(host, 1512, 944);

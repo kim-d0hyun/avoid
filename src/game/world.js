@@ -398,7 +398,11 @@ export function update(world, dt) {
   const p = world.player;
 
   // 혼자 할 때 메뉴는 판을 멈춘다. 같이 할 때는 못 멈춘다 — 남의 시계까지 세울 수는 없다.
-  if (world.menu.open && !world.mp.on) return;
+  //
+  // **「혼자」는 방을 안 연 것이 아니라 아무도 안 들어온 것이다.** 야구·협동은 고르는 순간
+  // 방이 열리므로(`opensRoom`) 혼자 해도 mp.on 이 참이고, 그래서 메뉴가 판을 못 멈췄다 —
+  // 치는 쪽일 때 메뉴를 열어 두면 컴퓨터 투수가 계속 던져서 1분에 타석 세 개가 지나갔다.
+  if (world.menu.open && (!world.mp.on || world.mp.others.size === 0)) return;
   if (world.frozen > 0) {
     world.frozen -= dt;
     return;
