@@ -42,6 +42,10 @@ const OFF_HIT = [0.35, -0.15];
 const KICK_LEGS = [[0.20, -0.55], [0.55, 0.10]];
 // 토스. 두 팔을 머리 위 앞으로.
 const TOSS_ARMS = [[2.62, 2.95], [2.45, 2.85]];
+// 블로킹 — 두 팔을 **곧게 위로.** 손이 머리 위로 뻗어 네트 너머를 덮는 모양이다.
+// 토스(밀어 올리기)와 달리 팔꿈치를 안 접는다 — 접으면 벽이 아니라 받는 자세로 보인다.
+const BLOCK_ARMS = [[3.02, 3.10], [2.90, 2.98]];
+const BLOCK_LEGS = [[-0.22, -1.30], [0.10, -0.95]];   // 다리는 뒤로 살짝 접는다 (뛴 채)
 
 const lerp = (a, b, t) => a + (b - a) * t;
 /// 각도를 짧은 쪽으로 잇는다. 그냥 섞으면 머리 위로 올라가야 할 팔이 발밑을 지나 돈다.
@@ -208,6 +212,8 @@ function basePose(p, time, spike = true) {
 function pose(p, time, face = faceOf(p), spike = true) {
   const base = basePose(p, time, spike);
   if (p.dead || p.cheer || p.waiting || !spike) return base;
+  // 벽이 먼저다 — 벽을 세운 사람은 휘두르지 않는다.
+  if (p.block > 0) return blockPose(p, base);
   if (p.swing > 0) return swingPose(p, base, face);
   if (p.toss > 0) return tossPose(p, base);
   return base;
@@ -284,6 +290,18 @@ function swingPose(p, base, face) {
 }
 
 /// 받아 올리기(토스). 두 팔을 머리 위로 재빨리 밀어 올렸다가 천천히 내린다. 발끝으로 살짝 선다.
+/// **블로킹** — 두 팔을 곧게 위로 뻗어 벽을 만든다. 0.3초 동안 섰다가 스르르 내린다.
+function blockPose(p, base) {
+  const k = Math.max(0, Math.min(1, p.block / 0.3));
+  const w = smooth(Math.min(1, k * 3));          // 올라갈 땐 빠르게, 내려올 땐 남은 시간만큼
+  return {
+    ...base,
+    lean: lerp(base.lean, -0.06, w),
+    arms: mixLimbs(base.arms, BLOCK_ARMS, w),
+    legs: mixLimbs(base.legs, BLOCK_LEGS, w),
+  };
+}
+
 function tossPose(p, base) {
   const k = Math.max(0, Math.min(1, (TOSS_TIME - p.toss) / TOSS_TIME));
   const w = k < 0.22 ? smooth(k / 0.22) : 1 - smooth((k - 0.22) / 0.78);

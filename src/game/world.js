@@ -935,6 +935,9 @@ export function press(world, action, down) {
   }
   if (!(action in world.input)) return;
   world.input[action] = down;
+  // 게임이 방향키를 **누른 순간**에도 쓸 수 있게 한 번 알려 준다 (배구의 페인트 — 공중에서 ⌥↓).
+  // 움직임 입력은 위에서 이미 넣었으니, 게임이 안 받아도 아무것도 안 달라진다.
+  if (down && !world.menu.open && world.state === 'play') gameOf(world).tap?.(world, action);
 
   if (!down) return;
   if (world.state === 'ready') {

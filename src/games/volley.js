@@ -124,6 +124,57 @@ const COCK_NEAR = 110;
 const COCK_FAR = 230;
 const FX_MAX = 24;
 
+// ── 창을 보이게 ────────────────────────────────────────────────────────────
+//
+// 정타는 **서로 보이지 않는 두 창이 겹칠 때만** 난다: 발이 APEX_AIR 넘게 떴고(때), 공이
+// 손끝 SWEET_R 안이고(자리). 둘 다 표시가 없어서 「어쩔 땐 되고 어쩔 땐 안 된다」로 읽혔다.
+// 재 보니 겹치는 건 잘해야 10프레임, 센 공이면 8프레임이다 — 표시 없이 맞히라는 건 무리다.
+//
+//   발밑 고리   뜨면 생기고, 정타 높이에 닿는 순간 **탁 조여들며 편 색으로 바뀐다**
+//   공 달무리   공이 내 손끝 원 안에 들면 공 둘레가 빛난다
+//
+// 둘이 **같이** 켜진 순간이 정타다. 설명하지 않아도 두어 번이면 안다.
+// 둘 다 공 자리와 사람 자리만으로 정해져서 따로 주고받을 것이 없다 (p.cock 과 같다).
+const RING_R = 30;            // 뜨자마자의 고리 반지름. 정타 높이에서 공 크기까지 조인다
+const RING_FADE = 0.28;       // 내려선 뒤 고리가 사라지는 시간
+
+// ── 빗나간 까닭 ────────────────────────────────────────────────────────────
+//
+// 못 친 이유가 셋인데 셋 다 화면에 아무 표시가 없었다. 무엇이 틀렸는지 모르니 배우질 못한다.
+const MISS_LIFE = 0.42;
+/// 히트스톱에 씹힌 입력을 기억하는 시간. 맞은 공이 멈춰 있는 4~5프레임 동안 누른 건
+/// 통째로 버려져서 랠리 중에 한 번씩 씹혔다 — 그만큼 기억했다가 풀리는 프레임에 친다.
+const BUFFER = 6 / 60;
+
+// ── 블로킹 ─────────────────────────────────────────────────────────────────
+//
+// 강타 하나뿐이라 수비하는 쪽이 할 일이 없었다. 네트 앞에서 뛰어 손을 넘기면 벽이 된다 —
+// 강타를 막고, 막은 공은 상대 코트로 되돌아간다. 늦게 뛰면 그대로 얻어맞는다.
+//
+// **누르는 키는 때리기와 같다.** 손에 닿으면 치고, 안 닿는데 네트 앞이면 막는다 —
+// 「닿으면 치고 안 닿으면 슬라이딩」과 같은 규칙이라 새로 외울 것이 없다.
+const BLOCK_NEAR = 104;       // 네트에서 이 안쪽에 있어야 벽을 세운다 (두 칸 반)
+const BLOCK_TIME = 0.3;
+const BLOCK_UP = 30;          // 손이 머리 위로 뻗는 높이
+const BLOCK_KEEP = 0.92;      // 막은 공이 되돌아가는 세기 (들어온 속도의)
+const BLOCK_MIN = 640 * SLOW;
+const BLOCK_COOL = 0.4;       // 다시 막기까지
+
+// ── 페인트 ─────────────────────────────────────────────────────────────────
+//
+// 블록을 넘기는 유일한 수단. 때리는 대신 손끝으로 톡 건드려 블로커 머리 너머에 떨군다.
+// **⌥↓ 를 강타에서 떼어 여기 준다** — ⌥↓+⌥Space 의 「내리꽂기」는 공이 손 밑이면 어차피
+// 저절로 나오던 것이라(under) 잃는 것이 없고, 공중의 ⌥↓ 는 원래 아무 일도 안 하던 키다.
+const TIP_SIDE = 640 * SLOW;  // 살짝 넘기는 가로 속도. 강타(858)의 절반
+const TIP_UP = 330 * SLOW;    // 조금 떠올랐다 떨어진다
+
+// ── 디그 ───────────────────────────────────────────────────────────────────
+//
+// 웅크리고 받으면 공이 **높고 곧게** 뜬다. 세게 온 공도 팀이 다시 올릴 수 있는 공이 된다 —
+// 지금은 세게 맞으면 그냥 밀려났다. 받아 낸 쪽에도 잘한 보람을 준다.
+const DIG_CROUCH = 0.5;
+const DIG_SIDE = 0.34;        // 가로로 덜 튄다 — 세워 올린다
+
 // 편 가르기.
 //
 // **서 있는 자리가 곧 편이다.** 따로 주고받는 값이 없다 — 자리는 어차피 60Hz 로 오간다.
@@ -185,6 +236,7 @@ function emptySide(world) {
 
 function serve(world, toSide) {
   const b = world.bag;
+  b.serveBy = toSide;
   b.ball.x = toSide === 0 ? world.w * 0.25 : world.w * 0.75;
   b.ball.y = world.groundY - NET_H - 260;
   b.ball.vx = 0;
@@ -225,16 +277,70 @@ const clamp = (v, m) => Math.max(-m, Math.min(m, v));
 /// 이 한 줄이 랠리를 갈수록 빠르게 만든다 — 세게 온 공은 세게 나간다.
 /// 가로는 **몸 가운데에서 얼마나 벗어나 맞았느냐**로 정해진다. 발끝에 맞히면 대각선으로
 /// 멀리 날아가고, 정통으로 받으면 거의 수직으로 뜬다. 대각선을 만드는 건 조준이 아니라 자리다.
+///
+/// **디그** — 웅크린 채로 받으면 가로로 덜 튀고 최대 높이로 올라간다. 세게 온 공을 받아
+/// 그냥 밀려나는 대신 **다시 칠 수 있는 공**으로 세워 올리는 것이다. 돌려주는 값이 그거다.
 function bounceOff(ball, p) {
   const off = ball.x - p.x;
-  ball.vx = clamp(off * OFF_CENTER + p.vx * CARRY, MAX_SPEED);
+  const dug = (p.crouch ?? 0) > DIG_CROUCH && (p.air ?? 0) <= 2;
+  ball.vx = clamp((off * OFF_CENTER + p.vx * CARRY) * (dug ? DIG_SIDE : 1), MAX_SPEED);
   const up = Math.abs(ball.vy);
-  ball.vy = -Math.min(MAX_UP, Math.max(up, MIN_UP));
+  ball.vy = -Math.min(MAX_UP, dug ? MAX_UP : Math.max(up, MIN_UP));
   ball.spinV = clamp(off * 0.12, 8);
   ball.hit = 1;                       // 맞은 자리에 잠깐 뜨는 표시
   ball.hitX = ball.x; ball.hitY = ball.y;
   // 몸 밖으로 밀어내 둔다. 안 그러면 다음 프레임에 또 맞아서 붙어 버린다.
   ball.y = Math.min(ball.y, p.groundY - p.air - BODY_H - BALL_R * 0.3);
+  return dug;
+}
+
+/// 손이 닿는 자리인가. 때리기·빗나간 까닭·달무리가 모두 이 하나를 본다 — 셋이 따로 재면
+/// 화면에 켜진 표시와 실제 판정이 어긋난다.
+function inReach(ball, at) {
+  const dx = ball.x - at.x;
+  const dy = ball.y - (at.groundY - at.air - BODY_H * 0.7);
+  return dx * dx + dy * dy <= SPIKE_REACH * SPIKE_REACH;
+}
+
+/// 손끝 자리 (정타를 재는 기준). 발에서 BODY_H×0.86.
+const handY = (at) => at.groundY - at.air - BODY_H * 0.86;
+
+/// 공이 내 손끝 원 안인가 — 정타의 두 조건 가운데 **자리** 쪽.
+function inSweet(ball, at) {
+  return Math.hypot(ball.x - at.x, ball.y - handY(at)) <= SWEET_R;
+}
+
+/// 벽에 닿았나. 머리 위로 뻗은 손이 네트 쪽으로 한 뼘 나간 넓적한 칸이다.
+function blocks(ball, p, netX) {
+  if (!(p.block > 0)) return false;
+  if (Math.abs(ball.x - netX) > BLOCK_NEAR * 1.6) return false;   // 벽은 네트에서만 선다
+  const feet = p.groundY - p.air;
+  const toward = Math.sign(netX - p.x) || 1;
+  const x0 = Math.min(p.x, p.x + toward * 26) - 15;
+  const x1 = Math.max(p.x, p.x + toward * 26) + 15;
+  const top = feet - BODY_H - BLOCK_UP;
+  const cx = Math.max(x0, Math.min(ball.x, x1));
+  const cy = Math.max(top, Math.min(ball.y, feet - BODY_H * 0.55));
+  const dx = ball.x - cx;
+  const dy = ball.y - cy;
+  return dx * dx + dy * dy < (BALL_R + 8) ** 2;
+}
+
+/// 막았다. **들어온 세기 그대로 상대 코트로 되돌린다** — 세게 친 쪽이 더 세게 돌려받는다.
+/// 그게 블로킹을 무서운 수로 만든다. 살살 온 공도 최소한 네트는 넘어간다.
+function blockBack(ball, p, netX) {
+  const away = Math.sign(netX - p.x) || 1;
+  const back = Math.max(BLOCK_MIN, Math.hypot(ball.vx, ball.vy) * BLOCK_KEEP);
+  ball.vx = clamp(away * back * 0.82, MAX_SPEED);
+  ball.vy = Math.min(MAX_SPEED, Math.max(150, back * 0.34));     // 네트 너머로 꽂힌다
+  ball.spinV = clamp(away * 9, 12);
+  ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y;
+  ball.smash = 0.7;
+  // 벽에 맞은 공은 식는다 — 막힌 강타가 달아오른 채로 가면 막은 보람이 없다.
+  cool(ball);
+  ball.skip = p; ball.skipT = SELF_SKIP;
+  // 벽 바깥으로 밀어내 둔다. 안 그러면 다음 프레임에 또 맞는다.
+  ball.x += away * (BALL_R + 10);
 }
 
 /// 때리기의 알맹이. **누가 쳤든 결국 방장 화면에서 이 함수가 돈다.**
@@ -252,9 +358,7 @@ function applyHit(world, at, want, body = null, who = -1) {
   const ball = b.ball;
   // 이미 누가 치고 있다(히트스톱 중). 멈춘 공을 둘이 동시에 치면 누구 것도 아니게 된다.
   if (b.stop > STOP_EPS) return null;
-  const dx = ball.x - at.x;
-  const dy = ball.y - (at.groundY - at.air - BODY_H * 0.7);
-  if (dx * dx + dy * dy > SPIKE_REACH * SPIKE_REACH) return null;
+  if (!inReach(ball, at)) return null;
 
   const away = at.side === 1 ? -1 : 1;             // 상대 코트 쪽
   const held = want.held | 0;
@@ -264,9 +368,15 @@ function applyHit(world, at, want, body = null, who = -1) {
   let ace = false;
   let lob = false;
   let smash = 0;
-  if (at.air <= 12) {
+  if (want.tip && at.air > 12) {
+    // **페인트.** 때리는 대신 손끝으로 톡 건드려 블로커 머리 너머에 떨군다.
+    // 느리게, 짧게, 조금 떠올랐다 떨어진다 — 블록을 넘기는 유일한 수단이다.
+    vx = away * TIP_SIDE + held * 120;
+    vy = -TIP_UP;
+    kind = 3;
+  } else if (at.air <= 12) {
     // 토스. 위로 올려 주고 옆으로는 살짝만.
-    vx = clamp(dx * OFF_CENTER * 0.6 + held * 240, MAX_SPEED);
+    vx = clamp((ball.x - at.x) * OFF_CENTER * 0.6 + held * 240, MAX_SPEED);
     // 받아 올릴 때마다 조금씩 죽인다. 1에 가까우면 랠리가 돌수록 공이 빨라져서
     // 나중에는 아무도 못 받는다 — 원판도 여기서 조금 깎는다.
     vy = -Math.min(MAX_UP, Math.max(Math.abs(ball.vy), MIN_UP) * 0.90);
@@ -281,15 +391,17 @@ function applyHit(world, at, want, body = null, who = -1) {
     //   공이 손 높이      →  수평 미사일 (원판의 그 장면)
     //   ⌥↓               →  무조건 최대로 꽂는다
     //   ⌥↑               →  높이 넘겨 주기
-    const hand = at.groundY - at.air - BODY_H * 0.86;
+    const hand = handY(at);
     const under = (ball.y - hand) / (BODY_H * 0.55);
-    const dive = want.down ? 1 : want.up ? 0 : Math.max(0, Math.min(1, under));
+    // **⌥↓ 는 이제 페인트다.** 꽂는 각도는 공이 손보다 얼마나 아래냐로만 정해진다 —
+    // 원래도 그게 진짜 규칙이었고 ⌥↓ 는 그걸 최대로 올려 주는 덤이었다.
+    const dive = want.up ? 0 : Math.max(0, Math.min(1, under));
     // 높이 뜰수록 세다. 뛰자마자 치는 것과 꼭대기에서 치는 것이 같으면 점프에 뜻이 없다.
     // (예전엔 120 으로 나눴는데 점프가 65 까지밖에 안 올라가서 끝까지 못 썼다.)
     const lift = 0.78 + 0.34 * Math.min(1, at.air / JUMP_TOP);
     lob = !!want.up && !want.down;
     // 정타 — 꼭대기에서, 손끝으로.
-    ace = !lob && at.air >= APEX_AIR && Math.hypot(ball.x - at.x, ball.y - hand) <= SWEET_R;
+    ace = !lob && at.air >= APEX_AIR && inSweet(ball, at);
     const power = ace ? ACE_POWER : 1;
     const cap = ace ? ACE_CAP : MAX_SPEED;
     const side = held !== 0 ? held : away;
@@ -304,14 +416,15 @@ function applyHit(world, at, want, body = null, who = -1) {
   }
 
   const dir = Math.sign(vx) || away;
-  const hold = kind === 0 ? 0 : ace ? ACE_HOLD : HIT_HOLD;
-  const stop = kind === 0 ? 0 : HIT_WHIP + hold;
+  // 페인트(3)는 때린 게 아니라 얹은 것이다 — 멈춤도 번쩍임도 없다.
+  const hold = kind === 0 || kind === 3 ? 0 : ace ? ACE_HOLD : HIT_HOLD;
+  const stop = kind === 0 || kind === 3 ? 0 : HIT_WHIP + hold;
   // 몸을 어느 쪽으로 돌려 치나 — 공이 가는 쪽. 다만 공이 등 뒤 낮은 데 있으면 공 쪽을 본다
   // (그 자리를 앞으로 휘둘러 치려면 팔이 한 바퀴를 돌아야 한다).
   let face = dir;
   let hx = ball.x;
   let hy = ball.y;
-  if (kind > 0) {
+  if (kind === 1 || kind === 2) {
     if ((ball.x - at.x) * dir < -10 && ball.y > swingShoulder(at, dir).y - 10) face = -dir;
     // **공을 손끝으로.** 치는 거리(88)는 팔이 닿는 거리(팔 22 + 공 20)보다 넉넉하다 — 봐주는 몫이다.
     // 그 틈을 그대로 두면 팔이 허공을 치고 공이 혼자 날아간다. 팔은 1.3배까지 뻗고, 남는 틈은
@@ -330,7 +443,7 @@ function applyHit(world, at, want, body = null, who = -1) {
     ball.vy = vy;
     ball.spinV = clamp(vx * 0.006, 12);
     ball.smash = smash;
-    if (kind > 0) {
+    if (kind === 1 || kind === 2) {
       ball.gx = ball.x - hx; ball.gy = ball.y - hy; ball.gT = HIT_WHIP;
       ball.x = hx; ball.y = hy;
       b.stop = stop; b.stopHold = hold;
@@ -355,7 +468,8 @@ function applyHit(world, at, want, body = null, who = -1) {
 /// late — 이미 이만큼 지난 뒤에 알게 됐다(손님이 꾸러미로 받을 때). 그만큼 앞선 박자에서 시작한다.
 function startSwing(p, info, late = 0) {
   if (!p) return;
-  if (info.kind === 0) { p.toss = Math.max(0, TOSS_TIME - late); return; }
+  // 토스(0)와 페인트(3)는 두 팔로 밀어 올리는 같은 동작이다.
+  if (info.kind === 0 || info.kind === 3) { p.toss = Math.max(0, TOSS_TIME - late); return; }
   p.swing = Math.max(0.001, SWING_TIME - late);
   p.swingDir = info.face;
   p.swingHold = info.hold;
@@ -388,38 +502,88 @@ function nearestHitter(world, x, y, airborne) {
 ///   ⌥↑ 를 누른 채        → 높이 넘겨 주기
 ///
 /// 땅에서 때리면 강타가 아니라 토스다. 뛰어야 세게 나간다.
-export function spike(world) {
+export function spike(world, tipping = false) {
   const b = world.bag;
   const p = world.player;
   if (!b?.ball || world.state !== 'play' || p.dead || b.wait > 0) return false;
-
-  // 손이 안 닿으면 **몸을 던진다.** 같은 키로 치기와 슬라이딩이 갈리는 기준은 거리다 —
-  // 닿으면 치고, 안 닿으면 미끄러진다.
-  //
-  // **어느 쪽으로 던질지는 방향키가 정한다.** 공 쪽으로만 던지게 두면, 공은 대개 네트
-  // 쪽에 있으니 늘 같은 방향으로만 몸을 날리게 된다 — 실제로 그랬다.
-  // ⌥← 나 ⌥→ 를 잡고 누르면 그쪽으로, 아무것도 안 잡았으면 공 쪽으로 간다.
-  const gap = b.ball.x - p.x;
-  const dyNow = b.ball.y - (p.groundY - p.air - BODY_H * 0.7);
-  if (gap * gap + dyNow * dyNow > SPIKE_REACH * SPIKE_REACH && p.air <= 0) {
-    const lean = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
-    return startSlide(world, lean || Math.sign(gap) || p.facing);
-  }
-
-  const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0 };
-  const want = {
+  return attempt(world, {
     held: (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0),
     down: !!world.input.duck,
     up: !!world.input.jump,
-  };
+    tip: tipping,
+  }, true);
+}
+
+/// ⌥↓ — 공중에서 누르면 **페인트**. 땅에서는 그냥 웅크리기(디그)라 여기서 할 일이 없다.
+export function tipHit(world) {
+  const p = world.player;
+  if (!p || p.dead || (p.air ?? 0) <= 12) return false;
+  return spike(world, true);
+}
+
+/// 한 번 쳐 본다. 못 쳤으면 **왜 못 쳤는지** 띄운다 — 이게 없어서 「눌렀는데 안 나갔다」가 됐다.
+/// first — 처음 누른 것인가. 기억해 둔 입력을 다시 쓸 때는 false 라 또 기억하지 않는다.
+function attempt(world, want, first) {
+  const b = world.bag;
+  const p = world.player;
+  const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0 };
+
+  // ① 지금 누가 치는 중인가 (히트스톱). 여기서 버리면 랠리 중에 입력이 한 번씩 씹힌다 —
+  //    **버리지 말고 기억했다가** 풀리는 프레임에 대신 친다.
+  if (b.stop > STOP_EPS) {
+    if (first) { b.hold = { want, t: BUFFER }; missWord(world, p, '늦다'); }
+    return false;
+  }
+
+  // ② 손이 닿나. 안 닿으면 — 땅에서는 몸을 던지고, 네트 앞 공중에서는 **벽을 세운다**.
+  if (!inReach(b.ball, at)) {
+    if (p.air <= 0) {
+      const lean = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
+      return startSlide(world, lean || Math.sign(b.ball.x - p.x) || p.facing);
+    }
+    if (!want.tip && canBlock(world, p)) return doBlock(world, p, true, world.mp.myId);
+    missWord(world, p, '멀다');
+    return false;
+  }
+
+  // ③ 발이 떴나. 12px 을 못 넘으면 강타가 아니라 토스다 — 뛰자마자 누르면 여기 걸린다.
+  if (p.air > 0 && p.air <= 12) missWord(world, p, '낮다');
+
   // 손님은 방장에게 부탁한다. 내 화면에서도 바로 반응은 보여 주되(손맛),
   // 진짜로 정하는 건 방장이다 — 곧 오는 꾸러미가 이 값을 덮는다.
   if (world.mp.role === 'guest') world.send?.({ t: 'gm', k: 'hit', at, want });
   const hit = applyHit(world, at, want, p, world.mp.myId);
   // 손님은 공을 못 건드리지만 **팔은 바로 돈다.** 내 손이 0.1초 늦게 움직이면
   // 내가 친 게 아니라 화면이 친 것처럼 느껴진다.
-  if (hit) { startSwing(p, hit); b.mineAt = 0; }
+  if (hit) { startSwing(p, hit); b.mineAt = 0; b.hold = null; }
   return !!hit;
+}
+
+/// 벽을 세울 수 있나 — 네트 앞이고, 떠 있고, 방금 세우지 않았다.
+function canBlock(world, p) {
+  return (p.air ?? 0) > 12 && !(p.blockCool > 0)
+    && Math.abs(p.x - world.w / 2) <= BLOCK_NEAR;
+}
+
+/// 벽을 세운다. 0.3초 동안 손이 머리 위로 뻗는다.
+///
+/// **모두의 화면에서 서야 한다.** 내 화면에서만 팔이 올라가면, 남들은 공이 왜 튕겨 나갔는지
+/// 모른 채 결과만 본다. 그래서 세 길로 간다: 누른 사람은 제 화면에서 바로(손맛), 손님이면
+/// 방장에게 부탁하고, 방장은 판정한 뒤 **한 줄로 모두에게** 알린다.
+/// mine — 내가 누른 것인가. who — 누가 세웠나 (모두에게 알릴 때 쓴다).
+function doBlock(world, p, mine, who) {
+  p.block = BLOCK_TIME;
+  p.blockCool = BLOCK_TIME + BLOCK_COOL;
+  if (mine && world.mp.role === 'guest') world.send?.({ t: 'gm', k: 'block' });
+  if (world.mp.role !== 'guest') netEvent(world, [4, 0, 0, Number.isFinite(who) ? who : -1]);
+  return true;
+}
+
+/// 빗나간 까닭을 짧게 띄운다. **내 화면에만** 뜬다 — 남이 왜 헛쳤는지는 알 필요가 없고,
+/// 꾸러미에 실을 값도 아니다.
+function missWord(world, p, word) {
+  addFx(world.bag, { k: 'miss', x: p.x, y: p.groundY - p.air - BODY_H - 6,
+                     t: 0, life: MISS_LIFE, word, tint: PENCIL });
 }
 
 /// 지나온 자리를 몇 개 남긴다. 빠른 공이 빨라 보이려면 잔상이 있어야 한다 —
@@ -460,7 +624,12 @@ function visuals(world, b, dt) {
   for (const p of [world.player, ...world.mp.others.values()]) {
     if (p.swing > 0) p.swing = Math.max(0, p.swing - dt);
     if (p.toss > 0) p.toss = Math.max(0, p.toss - dt);
+    // 벽은 0.3초. 내려서면 바로 내린다 — 땅에 선 채로 손만 올라가 있으면 안 된다.
+    if (p.block > 0) p.block = (p.air ?? 0) > 6 ? Math.max(0, p.block - dt) : 0;
+    if (p.blockCool > 0) p.blockCool = Math.max(0, p.blockCool - dt);
   }
+  // 발밑 고리는 내려선 뒤 잠깐 남았다 사라진다.
+  b.ringFade = (world.player.air ?? 0) > 6 ? RING_FADE : Math.max(0, (b.ringFade ?? 0) - dt);
   stepFx(world, b, dt);
 }
 
@@ -501,7 +670,7 @@ function shownBall(b) {
 /// 팔이 아직 머리 뒤에 있는데 공이 먼저 터진다.
 function spawnHit(world, info, late = 0) {
   const b = world.bag;
-  if (info.kind === 0) {
+  if (info.kind === 0 || info.kind === 3) {
     b.ball.hit = 1; b.ball.hitX = info.x; b.ball.hitY = info.y;
     return;
   }
@@ -537,6 +706,40 @@ function spawnSlam(world, x, ace) {
   }
   addFx(b, { k: 'slam', x, y: world.groundY, t: 0, life: 0.65, ace, bits: puffs, cracks,
              shake: ace ? SHAKE_SLAM_ACE : SHAKE_SLAM, word: ace ? '쿵!' : null });
+}
+
+/// 기억해 둔 입력을 푼다. 히트스톱이 풀린 **그 프레임에** 대신 쳐 준다 —
+/// 누른 사람은 「눌렀다」고 알고 있는데 아무 일도 안 일어나는 게 제일 억울하다.
+function releaseHold(world, dt) {
+  const b = world.bag;
+  if (!b.hold) return;
+  b.hold.t -= dt;
+  if (b.hold.t <= 0) { b.hold = null; return; }
+  if (b.stop > STOP_EPS) return;
+  const want = b.hold.want;
+  b.hold = null;
+  attempt(world, want, false);
+}
+
+/// 서브를 올리는 쪽에서 공에 제일 가까운 사람. 그 사람 위로 공이 따라온다.
+function serverOf(world, side) {
+  if (side !== 0 && side !== 1) return null;
+  const b = world.bag;
+  let best = null;
+  let near = Infinity;
+  for (const p of [world.player, ...world.mp.others.values()]) {
+    if (p.dead || p.waiting) continue;
+    if (sideOfX(world, p.x) !== side) continue;
+    const gap = Math.abs(p.x - b.ball.x);
+    if (gap < near) { near = gap; best = p; }
+  }
+  return best;
+}
+
+/// 벽에 막혔다. 막은 쪽에도 보람을 준다 — 잘 뛴 것이다.
+function spawnBlock(world, x, y) {
+  netEvent(world, [3, Math.round(x), Math.round(y), 0]);
+  addFx(world.bag, { k: 'dig', x, y, t: 0, life: 0.55, word: '막았다!', shake: SHAKE_HIT });
 }
 
 /// 달아오른 강타를 몸으로 받아 냈다. 받는 쪽도 칭찬을 받아야 한다.
@@ -588,9 +791,9 @@ function drawFx(ctx, b, upright, front) {
       if (!f.word) continue;
       // 톡 튀어나왔다가(0.08초) 떠오르며 옅어진다.
       const pop = 1 + 0.55 * Math.max(0, 1 - f.t / 0.08);
-      const size = Math.round((f.k === 'dig' ? 14 : f.ace ? 22 : 17) * pop);
-      const y = f.y - (f.k === 'slam' ? 30 : 34) - 20 * (1 - (1 - g) ** 2);
-      const color = f.k === 'dig' ? INK : RED;
+      const size = Math.round((f.k === 'miss' ? 13 : f.k === 'dig' ? 14 : f.ace ? 22 : 17) * pop);
+      const y = f.y - (f.k === 'slam' ? 30 : f.k === 'miss' ? 0 : 34) - 20 * (1 - (1 - g) ** 2);
+      const color = f.tint ?? (f.k === 'dig' ? INK : RED);
       upright(f.x, y, () => text(ctx, f.word, f.x, y, {
         font: `900 ${size}px ${HAN}`, color, align: 'center', halo: 4, alpha: Math.min(1, fade * 1.8),
       }));
@@ -662,6 +865,51 @@ export function slideGauge(p) {
   return 1;
 }
 
+/// **발밑 고리** — 정타의 두 조건 가운데 「때」를 보여 준다.
+///
+/// 뜨면 생기고, 정타 높이(APEX_AIR)에 닿는 순간 **탁 조여들며 편 색으로 바뀐다.**
+/// 내 것만 그린다 — 남이 언제 뛰었는지는 알 필요가 없고, 넷이 다 고리를 달고 있으면 화면이 시끄럽다.
+function drawApexRing(ctx, world, upright) {
+  const b = world.bag;
+  const p = world.player;
+  if (p.dead || world.mp.waiting || world.state !== 'play') return;
+  const air = p.air ?? 0;
+  const fade = air > 6 ? 1 : Math.min(1, (b.ringFade ?? 0) / RING_FADE);
+  if (fade <= 0.01) return;
+
+  const ready = air >= APEX_AIR;
+  // 정타 높이에 가까울수록 조여든다. 닿으면 공 크기까지 와서 멈춘다.
+  const k = Math.max(0, Math.min(1, air / APEX_AIR));
+  const r = RING_R - (RING_R - BALL_R) * k;
+  const y = p.groundY - 3;
+  const tint = ready ? TEAM_INK[world.team ?? 0] : PENCIL;
+  upright(p.x, y, () => {
+    // 바닥에 눕혀 그린다 — 발밑에 놓인 고리라야 「얼마나 떴나」로 읽힌다.
+    ctx.save();
+    ctx.translate(p.x, y); ctx.scale(1, 0.34); ctx.translate(-p.x, -y);
+    circle(ctx, p.x, y, r, { width: ready ? 3 : 1.8, color: tint, seed: 210, amp: 0.5,
+                             halo: false, alpha: (ready ? 0.9 : 0.5) * fade });
+    ctx.restore();
+  });
+}
+
+/// **공 달무리** — 정타의 두 조건 가운데 「자리」를 보여 준다.
+///
+/// 공이 내 손끝 원(SWEET_R) 안에 들면 공 둘레가 빛난다. 발밑 고리와 **같이** 켜진 순간이 정타다.
+function drawSweetHalo(ctx, world, upright, bx, by) {
+  const p = world.player;
+  if (p.dead || world.mp.waiting || world.state !== 'play') return;
+  if ((p.air ?? 0) <= 6) return;                 // 땅에서는 어차피 토스라 뜻이 없다
+  const at = { x: p.x, air: p.air, groundY: p.groundY };
+  if (!inSweet({ x: bx, y: by }, at)) return;
+  const ready = (p.air ?? 0) >= APEX_AIR;
+  const tint = ready ? TEAM_INK[world.team ?? 0] : PENCIL;
+  upright(bx, by, () => {
+    circle(ctx, bx, by, BALL_R + 7, { width: ready ? 3 : 1.8, color: tint, seed: 211, amp: 0.7,
+                                      halo: false, alpha: ready ? 0.95 : 0.45 });
+  });
+}
+
 function drawSlideGauge(ctx, world, upright) {
   const b = world.bag;
   const p = world.player;
@@ -715,7 +963,10 @@ export default {
   line: '빨강 편 대 파랑 편. 우리 쪽에 떨어뜨리면 상대 점수. 다섯 점 먼저, 4:4 부터는 듀스 (두 점 차).',
   keys: [['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
          ['⌥ Space', '때리기 — 뛰어서 누르면 강타'],
-         ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↓', '내리꽂기 (공이 손 밑이면 그냥도)'],
+         ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↑', '높이 넘겨 주기'],
+         ['⌥ ↓ (공중)', '페인트 — 살짝 얹어 블록 너머로'],
+         ['⌥ ↓ (땅)', '디그 — 웅크려 받으면 높고 곧게 뜬다'],
+         ['⌥ Space (네트 앞 공중)', '블로킹 — 손을 넘겨 벽을 세운다'],
          ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 쪽으로, 머리 위 막대가 차면']],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
@@ -740,6 +991,8 @@ export default {
   noResults: true,
   /// ⌥Space 를 이 게임이 가져간다.
   action: (world) => spike(world),
+  /// 방향키를 누른 순간 — 공중의 ⌥↓ 는 페인트다. 나머지는 흘린다.
+  tap: (world, key) => { if (key === 'duck') tipHit(world); },
 
   /// 사람 그리는 법. 졸라맨 그대로인데 **치는 모션 스위치만 켠다.** 졸라맨은 다른 게임도
   /// 쓰니 p.swing·p.toss·p.cock 을 아무나 읽게 두면, 휘두르던 사람이 판을 갈아 끼운 뒤
@@ -781,6 +1034,8 @@ export default {
     tail: [], tailT: 0,
     // 타격 자국(각자 굴린다) · 남에게 알릴 한 줄짜리 일 · 히트스톱 남은 시간.
     fx: [], events: [], stop: 0, stopHold: 0, mineAt: 9,
+    // 기억해 둔 입력 · 발밑 고리 남은 시간 · 서브를 올리는 쪽.
+    hold: null, ringFade: 0, serveBy: 0,
     score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false, emptyFor: 0,
     // 손님이 받은 공을 부드럽게 따라가려고 남겨 두는 것.
     age: 0, errorX: 0, errorY: 0, baseX: undefined,
@@ -831,6 +1086,7 @@ export default {
       const g = GRAVITY + (b.ball.topspin ? TOPSPIN : 0);
       b.ball.y = b.baseY + b.baseVY * b.age + 0.5 * g * b.age * b.age + b.errorY;
       b.ball.spin += b.ball.spinV * dt;
+      releaseHold(world, dt);
       trail(b, dt);
       report(world, b, dt);
       return;
@@ -846,7 +1102,17 @@ export default {
       return;
     }
 
-    if (b.wait > 0) { b.wait -= dt; return; }
+    if (b.wait > 0) {
+      b.wait -= dt;
+      // **올리는 사람 위로 공이 따라온다.** 걸어서 자리를 잡으면 그 자리에서 떨어진다 —
+      // 조준을 새 키로 만들지 않고 이 게임이 이미 쓰는 규칙(「대각선은 조준이 아니라 자리다」)을 그대로 쓴다.
+      const server = serverOf(world, b.serveBy);
+      if (server) {
+        const want = Math.max(BALL_R + 8, Math.min(world.w - BALL_R - 8, server.x));
+        b.ball.x += (want - b.ball.x) * Math.min(1, dt * 7);
+      }
+      return;
+    }
 
     const ball = b.ball;
 
@@ -860,6 +1126,8 @@ export default {
       report(world, b, dt);
       return;
     }
+    // 히트스톱에 씹혔던 입력을 여기서 푼다 — 누른 사람은 「눌렀다」고 알고 있다.
+    releaseHold(world, dt);
     // 친 사람 몸은 잠깐 공을 안 받는다 (SELF_SKIP).
     ball.skipT = Math.max(0, (ball.skipT ?? 0) - dt);
     if (ball.skipT <= 0) ball.skip = null;
@@ -925,15 +1193,28 @@ export default {
 
     // 사람에게 맞았나. 살아 있는 사람만 친다.
     const bodies = [world.player, ...world.mp.others.values()].filter((p) => !p.dead && !p.waiting);
+    // **벽이 먼저다.** 손이 몸보다 위에 있으니, 벽에 맞을 공이 몸에 먼저 맞으면 안 된다.
+    let walled = false;
+    for (const p of bodies) {
+      if (p === ball.skip || !blocks(ball, p, netX)) continue;
+      blockBack(ball, p, netX);
+      spawnBlock(world, ball.x, ball.y);
+      walled = true;
+      break;
+    }
+    if (walled) { trail(b, dt); return; }
+
     for (const p of bodies) {
       // 머리 위 공을 내리꽂으면 공이 제 몸을 지나간다. 그 프레임에 몸에 맞아 도로 떠오르면
       // **강타가 토스가 된다** (vy +1700 → -811 을 실제로 봤다). 친 사람만 잠깐 건너뛴다.
       if (p === ball.skip || !touches(ball, p)) continue;
       // **달아오른 강타를 몸으로 받아 냈다.** 아무리 세게 와도 몸에 맞은 공은 MAX_UP 까지만
       // 떠오른다(bounceOff) — 정타가 사기가 안 되는 건 여기다. 받아 낸 쪽에 「받았다!」가 뜬다.
-      if (ball.hot > 0) spawnDig(world, ball.x, ball.y);
+      const hot = ball.hot > 0;
       cool(ball);
-      bounceOff(ball, p);
+      // **디그** — 웅크린 채 받으면 높고 곧게 세워 올린다. 세게 온 공을 받아 냈어도 마찬가지다.
+      const dug = bounceOff(ball, p);
+      if (dug || hot) spawnDig(world, ball.x, ball.y);
       break;
     }
 
@@ -1009,6 +1290,9 @@ export default {
       });
     }
 
+    // 발밑 고리는 제일 밑에 — 사람과 공이 그 위에 온다.
+    drawApexRing(ctx, world, upright);
+
     // 타격 자국 — 고리·파편·먼지·금은 공 뒤에 깔린다.
     drawFx(ctx, b, upright, false);
 
@@ -1054,6 +1338,9 @@ export default {
              { width: 2, color: PENCIL, seed: 65, amp: 0.5, halo: false });
       ctx.restore();
     });
+
+    // 손끝에 든 공은 빛난다 — 발밑 고리와 같이 켜지면 정타다.
+    drawSweetHalo(ctx, world, upright, bx, by);
 
     // 「쾅!」·「받았다!」는 공 위에 뜬다.
     drawFx(ctx, b, upright, true);
@@ -1108,6 +1395,13 @@ export default {
       world.debug && world.log?.(`손님타격 ${from} ${ok ? '먹힘' : '안닿음'}`);
       return;
     }
+    // 손님이 벽을 세웠다. 자리는 방장이 아는 것을 쓰고, 조건도 방장이 다시 본다 —
+    // 남의 화면 값을 그대로 믿으면 코트 한가운데서도 벽이 선다.
+    if (msg.k === 'block') {
+      const other = world.mp.others.get(from);
+      if (other && !other.dead && canBlock(world, other)) doBlock(world, other, false, from);
+      return;
+    }
     if (typeof msg.s === 'number') (world.bag.picked ??= new Map()).set(from, msg.s ? 1 : 0);
   },
 
@@ -1160,7 +1454,7 @@ export default {
       const who = old ? -1 : data.f[3] | 0;
       const info = {
         kind, ace: kind === 2, face: old ? 1 : (data.f[5] < 0 ? -1 : 1),
-        hold: kind === 2 ? ACE_HOLD : HIT_HOLD, stop: old ? 0 : data.f[6],
+        hold: kind === 2 ? ACE_HOLD : kind === 3 ? 0 : HIT_HOLD, stop: old ? 0 : data.f[6],
         x: hx, y: hy, smash: hard,
       };
       // **내가 친 것이면 이미 내 화면에서 보여 줬다**(spike). 두 번 터뜨리지 않는다.
@@ -1177,6 +1471,14 @@ export default {
       if (!Array.isArray(ev) || ev.length < 4 || !ev.every(Number.isFinite)) continue;
       if (ev[0] === 1) spawnSlam(world, ev[1], !!ev[3]);
       else if (ev[0] === 2) spawnDig(world, ev[1], ev[2]);
+      else if (ev[0] === 3) addFx(world.bag, { k: 'dig', x: ev[1], y: ev[2], t: 0, life: 0.55,
+                                               word: '막았다!', shake: SHAKE_HIT });
+      // 누가 벽을 세웠다. **내가 세운 것이면 이미 내 화면에서 올렸다** — 두 번 걸지 않는다.
+      else if (ev[0] === 4) {
+        const id = ev[3];
+        const one = id === world.mp.myId ? null : world.mp.others.get(id);
+        if (one && !one.dead) { one.block = BLOCK_TIME; one.blockCool = BLOCK_TIME + BLOCK_COOL; }
+      }
     }
     // 방장이 나눠 준 편 명단. 내 편이 여기 적힌 대로 바뀐다.
     if (Array.isArray(data?.tm)) {
