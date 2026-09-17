@@ -12,7 +12,7 @@
 // 그래서 공은 방장 것이다. 방장이 굴리고 60Hz 로 자리와 속도를 뿌린다. 손님은 받은
 // 속도로 사이를 메워 그리고, 어긋난 만큼은 사람한테 쓰는 것과 같은 방식으로 녹인다.
 
-import { INK, RED, PENCIL, stroke, circle, text, PAPER } from '../draw/ink.js';
+import { INK, RED, PENCIL, stroke, circle, text, PAPER, paperScrap } from '../draw/ink.js';
 import { drawStickman } from '../draw/stickman.js';
 import { BODY_H, SWING_TIME, SWING_WHIP, TOSS_TIME, ARM_LEN, swingShoulder } from '../draw/stickman.js';
 import { startSlide, SLIDE_COOL } from '../game/world.js';
@@ -429,6 +429,13 @@ function applyHit(world, at, want, body = null, who = -1) {
   // 이미 누가 치고 있다(히트스톱 중). 멈춘 공을 둘이 동시에 치면 누구 것도 아니게 된다.
   if (b.stop > STOP_EPS) return null;
   if (!inReach(ball, at)) return null;
+  // **네트 너머의 공은 못 친다.** 손이 닿는 거리(88px)가 네트 틈(14px)보다 훨씬 커서,
+  // 네트에 붙어 서면 **상대 코트 60px 안쪽 공까지 그냥 쳤다** — 땅에 서서도 됐다.
+  // 배구에서 그건 반칙이고, 넘어가서 손을 대는 건 **블로킹뿐**이다 (canBlock 이 따로 있다).
+  // 네트 면에 걸친 공(공 반지름만큼)까지는 친다 — 실제 규칙도 그렇다.
+  const netX = world.w / 2;
+  const onMySide = at.side === 1 ? ball.x > netX - BALL_R : ball.x < netX + BALL_R;
+  if (!onMySide) return null;
 
   const away = at.side === 1 ? -1 : 1;             // 상대 코트 쪽
   const held = want.held | 0;
@@ -655,6 +662,40 @@ function doBlock(world, p, mine, who) {
   if (mine && world.mp.role === 'guest') world.send?.({ t: 'gm', k: 'block' });
   if (world.mp.role !== 'guest') netEvent(world, [4, 0, 0, Number.isFinite(who) ? who : -1]);
   return true;
+}
+
+/// **기술표 — 왼쪽 위 구석에 작게.**
+///
+/// 이 게임은 기술이 아홉인데 판 위 어디에도 안 적혀 있었다. 메뉴(⌥M)를 열면 나오지만
+/// **판을 멈추고 메뉴를 여는 사람은 없다.** 그래서 대부분은 「달리고 때리기」만 하다 끝난다.
+/// 서브를 올리는 동안에는 서브 두 줄만 — 그때 쓸 수 없는 기술을 적어 두면 읽을 까닭이 없다.
+export const KEY_ROWS = [
+  ['⌥ ← →', '달리기'],
+  ['⌥ ↑', '점프'],
+  ['⌥ Space', '때리기 · 공중이면 강타'],
+  ['⌥ Space + ← →', '그쪽으로 세게'],
+  ['⌥ Space + ↑', '높이 넘겨 주기'],
+  ['⌥ ↓', '공중이면 페인트 · 땅이면 디그'],
+  ['⌥ Space', '네트 앞 공중이면 블로킹'],
+  ['⌥ Space', '공이 멀면 슬라이딩'],
+];
+export const SERVE_ROWS = [
+  ['⌥ Space 길게', '서브 — 잡은 만큼 세게'],
+  ['⌥ ← →', '깊게 / 짧게'],
+];
+function drawKeys(ctx, world, b) {
+  if (world.state !== 'play') return;
+  const rows = b.serving && myServe(world) ? SERVE_ROWS : KEY_ROWS;
+  const x = 16, y = 14, lh = 15;
+  const h = 14 + rows.length * lh;
+  paperScrap(ctx, x, y, 230, h, 17);
+  rows.forEach(([key, name], i) => {
+    const ly = y + 20 + i * lh;
+    text(ctx, key, x + 12, ly,
+         { font: `700 10px ${HAN}`, color: INK, halo: 0, alpha: 0.75 });
+    text(ctx, name, x + 98, ly,
+         { font: `600 10px ${HAN}`, color: PENCIL, halo: 0, alpha: 0.7 });
+  });
 }
 
 /// 빗나간 까닭을 짧게 띄운다. **내 화면에만** 뜬다 — 남이 왜 헛쳤는지는 알 필요가 없고,
@@ -1547,6 +1588,9 @@ export default {
     drawServeGauge(ctx, world, upright);
     // 내 슬라이딩 게이지. 남의 것은 안 그린다 — 오가는 값도 아니고, 알 필요도 없다.
     drawSlideGauge(ctx, world, upright);
+
+    // 기술표. 왼쪽 위 구석에 작게.
+    drawKeys(ctx, world, b);
 
     // 점수. 네트 위에 좌우로.
     const y = netTop - 34;

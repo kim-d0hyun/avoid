@@ -383,6 +383,34 @@ say('구종은 **눈에 보이게** 다르다 — 오는 길이 다르고 도착
   });
 }
 
+say('아무도 없는 루로는 안 던진다 — 1루수가 나가면 투수가 덮고, 가까우면 제가 밟는다');
+{
+  const BASE = [[0, 0], [45, 90], [0, 127], [-45, 90]];
+  const near = (a, c) => Math.abs(a[0] - c[0]) < 4 && Math.abs(a[1] - c[1]) < 10;
+  let throws = 0, carry = 0, empty = 0;
+  const recs = {};
+  for (let i = 0; i < 20000; i++) {
+    const c = contact((Math.random() * 25 - 12) | 0, Math.random() < 0.3, Math.random() < 0.3,
+                      PITCHES[(Math.random() * 4) | 0],
+                      { side: Math.random() * 2 - 1, high: Math.random() * 2 - 1 });
+    if (!c) continue;
+    const on = [Math.random() < 0.3, Math.random() < 0.2, Math.random() < 0.15];
+    const p = resolveHit(c, { onBase: on, outs: (Math.random() * 3) | 0, leg: 0, shift: 0 });
+    if (p.record) recs[p.record] = (recs[p.record] ?? 0) + 1;
+    for (const h of p.hops) {
+      if (h.k !== 'throw') continue;
+      throws++;
+      if (h.carry) { carry++; continue; }
+      if (!BASE.some((b2) => near(b2, h.b))) continue;      // 마운드로 돌려보내는 공
+      if (!p.men.find((m) => near([m.deg, m.ft], h.b))) empty++;
+    }
+  }
+  note(`송구 ${throws} · 들고 뛴 것 ${carry} · 아무도 없는 루로 던진 것 ${empty}`);
+  ok('아무도 없는 루로 던지지 않는다', empty === 0);
+  ok('가까우면 들고 뛴다', carry > throws * 0.01);
+  ok('제가 밟은 것은 U 로 적는다', Object.keys(recs).some((r) => /U$/.test(r)));
+}
+
 say('배트는 한 방향으로만 돈다 — 맞은 뒤 되감기면 스윙으로 안 보인다');
 {
   const man = (batT) => ({ x: 0, groundY: 0, air: 0, vx: 0, vy: 0, facing: 1, walk: 0,

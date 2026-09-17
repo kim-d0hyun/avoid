@@ -181,7 +181,7 @@ say('시작 자리 — 셋 칸뿐이고, 네 번째 자리를 달라고 해도 �
 
 say('목록에 넷이 있고, 셋이서를 고르면 첫 판부터');
 {
-  check('게임 다섯', games.games.map((g) => g.id), ['dodge', 'volley', 'ball', 'coop', 'trio']);
+  check('게임 여섯', games.games.map((g) => g.id), ['dodge', 'volley', 'ball', 'omok', 'coop', 'trio']);
   check('이름', games.gameById('trio').name, '셋이서');
   check('판이 여럿인 게임 표시', games.games.filter((g) => g.staged).map((g) => g.id), ['coop', 'trio']);
   const world = w.createWorld({ ms: 0, dodged: 0 });

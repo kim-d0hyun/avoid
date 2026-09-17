@@ -7,7 +7,7 @@ const R = new URL('../src/', import.meta.url).href;
 const w = await import(R + 'game/world.js');
 const { games } = await import(R + 'games/index.js');
 const volley = games.find((g) => g.id === 'volley');
-const { spike, tipHit, slideGauge, matchOver, deuce, myServe, hitServe } = await import(R + 'games/volley.js');
+const { spike, tipHit, slideGauge, matchOver, deuce, myServe, hitServe, KEY_ROWS, SERVE_ROWS } = await import(R + 'games/volley.js');
 const { BODY_H, SWING_TIME, SWING_WHIP, TOSS_TIME, swingPhase, handPoint, drawStickman }
   = await import(R + 'draw/stickman.js');
 
@@ -1099,6 +1099,47 @@ say('서브 잠금은 손님에게도 걸린다');
   b.mustCross = 0;
   volley.unpack(g2, volley.pack(host));
   check('손님도 잠금을 받는다', g2.bag.mustCross, 0);
+}
+
+say('기술표가 판 위에 있다 — 메뉴를 안 열어도 보이게');
+{
+  // 이 게임은 기술이 여덟인데 판 어디에도 안 적혀 있었다. 메뉴(⌥M)를 열면 나오지만
+  // 판을 멈추고 메뉴를 여는 사람은 없다.
+  const all = KEY_ROWS.map((r) => r.join(' ')).join(' / ');
+  for (const skill of ['달리기', '점프', '강타', '페인트', '디그', '블로킹', '슬라이딩', '넘겨 주기']) {
+    ok(`${skill} 이 적혀 있다`, all.includes(skill));
+  }
+  ok('한 줄에 키와 이름이 같이 있다', KEY_ROWS.every((r) => r.length === 2 && r[0].includes('⌥')));
+  ok('여덟 줄을 안 넘는다 (구석에 작게 들어가야 한다)', KEY_ROWS.length <= 8);
+  const serve = SERVE_ROWS.map((r) => r.join(' ')).join(' / ');
+  ok('서브 때는 서브 조작만 적는다', serve.includes('서브') && !serve.includes('블로킹'));
+}
+
+say('네트 너머의 공은 못 친다 — 넘어가서 손을 대는 건 블로킹뿐이다');
+{
+  const netX = 1512 / 2;
+  const tryAt = (over, air) => {
+    const world = mk(); world.state = 'play'; world.team = 0;
+    const b = world.bag; b.started = true; b.wait = 0; b.serving = false; b.stop = 0;
+    world.player.x = netX - 14; world.player.air = air; world.player.groundY = world.groundY;
+    b.ball.x = netX + over; b.ball.y = world.groundY - air - 74;
+    b.ball.vx = 0; b.ball.vy = 0;
+    volley.action(world);
+    return b.ball.vx !== 0 || b.ball.vy !== 0;
+  };
+  ok('내 코트 공은 친다', tryAt(-40, 0));
+  ok('네트에 걸친 공도 친다', tryAt(10, 0));
+  // 손이 닿는 거리(88)가 네트 틈(14)보다 훨씬 커서, 막지 않으면 상대 코트 60px 안쪽
+  // 공까지 땅에 서서 그냥 쳤다.
+  ok('네트 너머 공은 못 친다', !tryAt(40, 0));
+  ok('뛰어올라도 못 친다', !tryAt(40, 120));
+  // 블로킹은 다른 길이다 — 네트 앞 공중에서 ⌥Space
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false; b.stop = 0;
+  world.player.x = netX - 14; world.player.air = 120; world.player.groundY = world.groundY;
+  b.ball.x = netX + 300; b.ball.y = world.groundY - 300;      // 손이 안 닿는 공
+  volley.action(world);
+  ok('네트 앞에서 뛰면 벽은 선다', world.player.block > 0);
 }
 
 say('마지막 점수가 나면 **그 자리에서** 끝난다 — 진 쪽 서브를 기다리지 않는다');

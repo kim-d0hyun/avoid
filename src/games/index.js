@@ -17,8 +17,9 @@ import volley from './volley.js';
 import coop from './coop.js';
 import trio from './trio.js';
 import baseball from './baseball.js';
+import omok from './omok.js';
 
-export const games = [dodge, volley, baseball, coop, trio];
+export const games = [dodge, volley, baseball, omok, coop, trio];
 
 export const DEFAULT_GAME = dodge.id;
 

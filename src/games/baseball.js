@@ -778,8 +778,11 @@ function inPlay(hit, state) {
     // 잡은 공을 되돌려 보낸다. 점수가 들어왔으면 홈으로, 아니면 마운드로.
     const back = scored ? BASES[0] : [0, MOUND_FT];
     const dist = ftDist(hit.deg, ballFt, back[0], back[1]);
-    addThrow(p, [hit.deg, ballFt], back, hang + 0.35,
-             hang + 0.35 + TRANSFER + dist / THROW, scored ? CATCHER : undefined);
+    if (!(who === PITCHER && !scored)) {          // 투수가 잡았으면 제자리다
+      addThrow(p, [hit.deg, ballFt], back, hang + 0.35,
+               hang + 0.35 + TRANSFER + dist / THROW,
+               scored ? coverFor(p, 0, who) : undefined);
+    }
     p.outs = made; p.runs2 = scored; p.onBase = base;
     return p;
   }
@@ -816,8 +819,8 @@ function inPlay(hit, state) {
     // 타자는 그 뒤에 1루에 세운다.
     made = 1;
     // 잡은 사람이 그 루를 지키는 사람이면 번호를 한 번만 적는다 (3루수가 3루를 밟는 5-5 대신 5).
-    const guard = baseGuard(leadBase % 4);
-    const chain = guard === who ? [noOf(who)] : [noOf(who), noOf(guard)];
+    const guard = coverFor(p, leadBase % 4, who);
+    const chain = guard === null || guard === who ? [noOf(who)] : [noOf(who), noOf(guard)];
     const where = leadBase >= 4 ? '홈' : `${leadBase}루`;
     p.calls.push({ t: leadT, text: '아웃', big: false });
     p.runs.push({ from: lead, to: leadBase, t0: 0.05, t1: leadRun, out: true, outAt: leadT });
@@ -850,18 +853,20 @@ function inPlay(hit, state) {
     scored += freeThird(base, onBase, p, lead, hit.deg, ballFt, ballAt);
     p.over = Math.max(leadT, TO_FIRST) + 1.2;
     addThrow(p, [hit.deg, ballFt], pivot, ballAt, leadT, guard);
-    if (made === 2) addThrow(p, pivot, firstBase, leadT + PIVOT, dpT, baseGuard(1));
+    // 병살 송구를 받는 1루도 마찬가지다 — 1루수가 공을 쫓아 나갔으면 투수가 덮는다.
+    if (made === 2) addThrow(p, pivot, firstBase, leadT + PIVOT, dpT, coverFor(p, 1, guard ?? who));
   } else if (gotFirst) {
     // 1루에서 타자를 잡았다 — 흔한 땅볼 아웃.
     made = 1;
     p.calls.push({ t: firstT, text: '아웃', big: false });
     p.runs.push({ from: 0, to: 1, t0: LEAVE, t1: TO_FIRST, out: true, outAt: firstT });
-    p.record = `${noOf(who)}-${noOf(2)}`;
     p.label = `${POSTS[who].name} ${grounder ? '땅볼' : '뜬공 처리'}`;
     advanceFree(base, p, hit.deg, ballFt, ballAt);
     scored += p.freeRuns ?? 0;
     p.over = Math.max(firstT, TO_FIRST) + 1.2;
-    addThrow(p, [hit.deg, ballFt], BASES[1], ballAt, firstT, baseGuard(1));
+    const [, helper] = deliver(p, [hit.deg, ballFt], BASES[1], ballAt, firstT, who);
+    // 제가 밟으면 「3U」, 누가 덮어 주면 「3-1」. 기록지가 그대로 말해 준다.
+    p.record = helper === null ? `${noOf(who)}U` : `${noOf(who)}-${noOf(helper)}`;
   } else {
     // 아무도 못 잡았다 — 안타다. 주자들이 어디까지 가나.
     //
@@ -900,8 +905,10 @@ function inPlay(hit, state) {
     // 안타라도 **던지기는 한다.** 제일 앞선 주자보다 한 루 앞으로 — 더 못 가게 붙잡는 송구다.
     const lead2 = Math.max(...crew.map((r) => Math.min(r.at, 3)));
     const hold = (lead2 + 1) % 4;
-    addThrow(p, [hit.deg, ballFt], BASES[hold], ballAt,
-             ballAt + throwTime(hit.deg, ballFt, hold), baseGuard(hold));
+    // 안타 때도 **받을 사람이 가 있어야** 한다 — 그 루를 지키는 사람이 공을 쫓아 나갔으면
+    // 다른 사람이 덮는다. 가까우면 아예 들고 간다.
+    deliver(p, [hit.deg, ballFt], BASES[hold], ballAt,
+            ballAt + throwTime(hit.deg, ballFt, hold), who);
   }
 
   p.outs = made;
@@ -975,6 +982,54 @@ function baseGuard(base) {
   return base === 1 ? 2 : base === 2 ? 3 : base === 3 ? 4 : CATCHER;
 }
 
+/// 그 루에 **대신 가 설 사람.** 1루는 투수가 덮는다(3-1) — 야구에서 제일 흔한 백업이다.
+/// 2·3루는 가운데 둘이 서로 덮는다.
+const BACKUP = [PITCHER, PITCHER, 5, 5];
+
+/// **누가 그 루를 지키러 가나.** 정해진 사람이 공을 쫓아갔으면 다른 사람이 간다.
+/// 이걸 안 보고 늘 정해진 사람을 불렀더니, **1루수가 공을 잡으러 나간 사이 아무도 없는
+/// 1루로 공이 날아가서 아웃이 됐다.**
+function coverFor(p, base, who) {
+  const busy = (i) => i === who || p.men.some((m) => m.i === i);
+  const want = baseGuard(base % 4);
+  if (!busy(want)) return want;
+  const alt = BACKUP[base % 4];
+  if (!busy(alt)) return alt;
+  for (const i of [PITCHER, 3, 5, 2, 4, CATCHER]) if (!busy(i)) return i;
+  return null;                                   // 아무도 없다 — 던지지 않는다
+}
+
+/// 이 안이면 **던지지 않고 제가 들고 가서 밟는다** (ft).
+const UNASSISTED = 38;
+
+/// 공을 그 루로 **보낸다.** 가까우면 들고 뛰고, 멀면 덮으러 온 사람에게 던진다.
+/// 돌려주는 값은 [끝나는 때, 거든 사람(없으면 null)] 이다.
+function deliver(p, from, to, t0, t1, who) {
+  const near = ftDist(from[0], from[1], to[0], to[1]) <= UNASSISTED;
+  const leg = p.men.find((m) => m.i === who);
+  if (near && leg) {
+    // 들고 뛴다. 공과 사람이 같이 간다 — 그래서 송구 구간에 carry 를 달아 낮게 그린다.
+    const run = ftDist(from[0], from[1], to[0], to[1]) / RUN_FIELD;
+    const end = Math.max(t0 + 0.2, t0 + run);
+    leg.via = [from[0], from[1]];
+    leg.deg = to[0]; leg.ft = to[1]; leg.t1 = end;
+    p.hops.push({ k: 'throw', t0, t1: end, a: from, b: to, carry: 1 });
+    p.hops.push({ k: 'rest', t0: end, t1: 99, deg: to[0], ft: to[1], z: 3.2 });
+    p.over = Math.max(p.over, end + 0.7);
+    return [end, null];
+  }
+  const cover = coverFor(p, to === BASES[1] ? 1 : baseOf(to), who);
+  return [addThrow(p, from, to, t0, t1, cover), cover];
+}
+
+/// 이 자리가 몇 루인가 (BASES 에서 찾는다).
+function baseOf(at) {
+  for (let i = 0; i < BASES.length; i++) {
+    if (Math.abs(BASES[i][0] - at[0]) < 0.01 && Math.abs(BASES[i][1] - at[1]) < 0.01) return i;
+  }
+  return 0;
+}
+
 /// **송구 한 줄.** 공이 잡힌 자리에서 그 루까지 날아가고, 그 루를 지키는 사람이 미리 가 선다.
 ///
 /// 이게 없으면 수비수가 공을 잡은 채로 가만히 서 있고 판만 끝난다 — 실제로 그렇게 만들어
@@ -1027,7 +1082,8 @@ export function ballAt(play, t) {
       const a = flat(h.a[0], h.a[1]);
       const c = flat(h.b[0], h.b[1]);
       const [deg, ft] = polar(lerp(a[0], c[0], k), lerp(a[1], c[1], k));
-      last = [deg, ft, 3.2 + Math.sin(k * Math.PI) * 11];
+      // 들고 뛰는 공은 안 뜬다 — 그 사람 글러브 안에 있다.
+      last = [deg, ft, h.carry ? 3.2 : 3.2 + Math.sin(k * Math.PI) * 11];
     }
   }
   return last;
@@ -1469,8 +1525,26 @@ export function runnerAt(r, t) {
 export function manAt(m, post, t) {
   const a = flat(post.deg, post.ft);
   const c = flat(m.deg, m.ft);
+  const top = OUTFIELD.includes(m.i) ? RUN_OUT : RUN_FIELD;
+  // **들고 뛰는 길.** 공을 주운 자리(via)를 거쳐 루까지 간다 — 1루수가 공을 잡으러
+  // 나갔으면 그대로 1루를 밟으러 뛰는 것이 야구다. 한 다리로 그리면 공 있는 데를
+  // 안 거치고 곧장 루로 가서, 공이 저 혼자 날아간 것처럼 보인다.
+  if (m.via) {
+    const v = flat(m.via[0], m.via[1]);
+    const d1 = Math.max(0.1, Math.hypot(v[0] - a[0], v[1] - a[1]) / top);
+    const d2 = Math.max(0.1, Math.hypot(c[0] - v[0], c[1] - v[1]) / top);
+    const u = t - m.t0;
+    if (u < d1) {
+      const k1 = clamp(u / d1, 0, 1);
+      const e1 = k1 < 0.18 ? (k1 * k1) / 0.18 : k1;
+      return polar(lerp(a[0], v[0], e1), lerp(a[1], v[1], e1));
+    }
+    // 주워 담는 한 박자는 대본이 이미 t0 와 via 사이에 넣어 뒀다.
+    const k2 = clamp((u - d1) / d2, 0, 1);
+    return polar(lerp(v[0], c[0], k2), lerp(v[1], c[1], k2));
+  }
   const far = Math.hypot(c[0] - a[0], c[1] - a[1]);
-  const secs = Math.max(0.1, far / (OUTFIELD.includes(m.i) ? RUN_OUT : RUN_FIELD));
+  const secs = Math.max(0.1, far / top);
   const k = clamp((t - m.t0) / secs, 0, 1);
   // 첫 한 걸음만 붙인다 — 멈춰 있다 갑자기 최고 속도가 되면 미끄러지는 것으로 보인다.
   const e = k < 0.18 ? (k * k) / 0.18 : k;
@@ -2074,10 +2148,11 @@ function packPlay(p) {
     h: p.hops.map((h) => (h.k === 'fly'
       ? [0, r2(h.t0), r2(h.t1), r2(h.deg), h.pts.flat()]
       : h.k === 'roll' ? [1, r2(h.t0), r2(h.t1), r2(h.deg), r2(h.ft0), r2(h.v), r2(h.g)]
-      : h.k === 'throw' ? [3, r2(h.t0), r2(h.t1), r2(h.a[0]), r2(h.a[1]), r2(h.b[0]), r2(h.b[1])]
+      : h.k === 'throw' ? [3, r2(h.t0), r2(h.t1), r2(h.a[0]), r2(h.a[1]), r2(h.b[0]), r2(h.b[1]), h.carry ? 1 : 0]
       : [2, r2(h.t0), r2(h.t1), r2(h.deg), r2(h.ft), r2(h.z)])),
     m: p.men.map((m) => [m.i, r2(m.t0), r2(m.t1), r2(m.deg), r2(m.ft),
-                         m.dive === null || m.dive === undefined ? -1 : r2(m.dive), m.shift ?? 0]),
+                         m.dive === null || m.dive === undefined ? -1 : r2(m.dive), m.shift ?? 0,
+                         ...(m.via ? [r2(m.via[0]), r2(m.via[1])] : [])]),
     r: p.runs.map((r) => [r.from, r.to, r.t0, r.t1, r.out ? 1 : 0, r.outAt ?? -1]
       .map((v) => Math.round(v * 100) / 100)),
     c: p.calls.map((c) => [c.t, c.text, c.big ? 1 : 0]),
@@ -2104,11 +2179,20 @@ function unpackPlay(d) {
     : r[0] === 1
       ? { k: 'roll', t0: num(r[1]), t1: num(r[2]), deg: num(r[3]), ft0: num(r[4]),
           v: num(r[5]), g: num(r[6], ROLL_DIRT) || ROLL_DIRT }
+    // **송구 구간.** 이 갈래가 없어서 3번(송구)이 마지막 갈래로 흘러 rest 가 됐다 —
+    // 손님 화면에서는 공이 던져지지 않고 수비수 손에서 멎어 있었다. 각도를 높이로 읽는
+    // 바람에 엉뚱한 자리에 떠 있기도 했다.
+    : r[0] === 3
+      ? { k: 'throw', t0: num(r[1]), t1: num(r[2]), a: [num(r[3]), num(r[4])],
+          b: [num(r[5]), num(r[6])], carry: r[7] ? 1 : 0 }
       : { k: 'rest', t0: num(r[1]), t1: num(r[2]), deg: num(r[3]), ft: num(r[4]), z: num(r[5]) }));
   p.men = rows(d?.m, 5).map((r) => ({ i: clamp(r[0] | 0, 0, POSTS.length - 1),
                                       t0: num(r[1]), t1: num(r[2]), deg: num(r[3]), ft: num(r[4]),
                                       dive: num(r[5], -1) < 0 ? null : num(r[5]),
-                                      shift: clamp(num(r[6]) | 0, -1, 1) }));
+                                      shift: clamp(num(r[6]) | 0, -1, 1),
+                                      // 들고 뛰는 길 — 공을 주운 자리를 거쳐 간다
+                                      via: r.length >= 9 && Number.isFinite(r[7]) && Number.isFinite(r[8])
+                                        ? [num(r[7]), num(r[8])] : undefined }));
   p.runs = rows(d?.r, 5).map((r) => ({ from: clamp(r[0] | 0, 0, 4), to: clamp(r[1] | 0, 0, 4),
                                        t0: num(r[2]), t1: num(r[3]), out: !!r[4],
                                        outAt: num(r[5], -1) < 0 ? undefined : num(r[5]) }));
