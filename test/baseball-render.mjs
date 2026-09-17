@@ -94,6 +94,20 @@ if (process.env.SHOTS) {
       writeFileSync(`${dir}/${String(++shot).padStart(2, '0')}-데드볼.png`, ctx.canvas.toBuffer('image/png'));
     }
   }
+  // **타자 차례**는 봇이 말(1회 말)에 가서야 오므로 따로 한 장 만든다 — 미트가 보이는 장면.
+  {
+    const w3 = make(); const c = w3.bag;
+    c.half = 1;                                  // 말 — 내가 친다
+    c.wait = 0; c.mitt = { x: -0.55, y: 0.5 }; c.stand = 0.55;
+    for (let k = 0; k < 60 * 30 && !(c.pitch && c.pitch.t > c.pitch.dur * 0.55); k++) {
+      w.update(w3, 1 / 60);
+      c.mitt = { x: -0.55, y: 0.5 }; c.stand = 0.55;
+    }
+    if (c.pitch) {
+      frame(ctx, w3, 0);
+      writeFileSync(`${dir}/${String(++shot).padStart(2, '0')}-미트.png`, ctx.canvas.toBuffer('image/png'));
+    }
+  }
   console.log(`${shot}장 → ${dir}`);
 } else {
   const world = make();

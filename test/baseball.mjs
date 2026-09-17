@@ -220,13 +220,13 @@ say('데드볼 — 겨눠서는 못 맞힌다. 몸쪽을 파다 밀리면 맞는
     let n = 0, m = 0;
     for (let i = 0; i < 400; i++) {
       c.pitch = null; c.play = null; c.wait = 0; c.balls = 0; c.strikes = 0;
-      c.aim.x = -AIM_OUT; c.aim.y = 0; c.stand = stand;
+      c.aim.x = -AIM_OUT; c.aim.y = 0; c.mitt = { x: -stand, y: 0 }; c.stand = stand;
       ball.action(w2);
       if (!c.pitch) continue;
       m++; c.aiSwing = null;
       for (let f = 0; f < 90 && !c.play; f++) bb.default.update(w2, FR);
       if (c.log.some((x) => x.r === 'HBP')) n++;
-      c.log.length = 0; c.stand = stand;
+      c.log.length = 0; c.mitt = { x: -stand, y: 0 }; c.stand = stand;
     }
     return n / m;
   };
@@ -351,6 +351,38 @@ say('⌥M 은 혼자 하는 야구를 멈춘다 — 방이 열려 있어도 아�
   ok('둘이 할 때는 메뉴를 열어도 시계가 돈다', world.elapsed > was + 0.5);
 }
 
+say('구종은 **눈에 보이게** 다르다 — 오는 길이 다르고 도착은 같다');
+{
+  const L = layout(mk());
+  const z = zone(L);
+  const fast = { type: 0, kind: PITCHES[0], ax: 0, ay: 0 };
+  const swerve = (i) => {
+    const p = { type: i, kind: PITCHES[i], ax: 0, ay: 0 };
+    let dx = 0, dy = 0;
+    for (let u = 0; u <= 1.0001; u += 0.02) {
+      const a = pitchAt(p, L, u), s = pitchAt(fast, L, u);
+      dx = Math.max(dx, Math.abs(a.x - s.x)); dy = Math.max(dy, Math.abs(a.y - s.y));
+    }
+    return [dx / (z.w / 2), dy / (z.h / 2)];
+  };
+  PITCHES.forEach((k, i) => {
+    const [dx, dy] = swerve(i);
+    note(`${k.name} — 곧은 선에서 가로 ${dx.toFixed(2)} · 세로 ${dy.toFixed(2)} (존 반폭 기준) · ${Math.round(k.dur * 60)}프레임`);
+  });
+  const [, curveY] = swerve(PITCHES.findIndex((k) => k.name === '커브'));
+  const [slideX] = swerve(PITCHES.findIndex((k) => k.name === '슬라이더'));
+  // 존 반폭의 0.3배면 90픽셀짜리 존에서 13픽셀 — 이보다 작으면 구종이 넷이나 있어도
+  // 화면에서는 속도밖에 안 다르다. 처음에 커브가 0.21, 슬라이더가 0.14였다.
+  ok('커브는 눈에 보이게 진다', curveY > 0.45);
+  ok('슬라이더는 눈에 보이게 휜다', slideX > 0.3);
+  // 그래도 **도착 자리는 겨눈 그 자리**다. 휨을 도착까지 밀면 조준 한계가 뜻을 잃는다.
+  PITCHES.forEach((k, i) => {
+    const p = { type: i, kind: k, ax: 0.7, ay: -0.4 };
+    const end = pitchEnd(p, L), last = pitchAt(p, L, 1);
+    ok(`${k.name} 은 겨눈 자리로 온다`, Math.abs(end.x - last.x) < 0.5 && Math.abs(end.y - last.y) < 0.5);
+  });
+}
+
 say('배트는 한 방향으로만 돈다 — 맞은 뒤 되감기면 스윙으로 안 보인다');
 {
   const man = (batT) => ({ x: 0, groundY: 0, air: 0, vx: 0, vy: 0, facing: 1, walk: 0,
@@ -397,27 +429,51 @@ say('공이 들어온 자리가 타구를 바꾼다 — 안 그러면 조준하�
   ok('한가운데가 제일 세게 맞는다', mid.ev > out.ev && mid.ev > high.ev);
 }
 
-say('타석에서 한 발 — 홈에 붙으면 바깥쪽이 닿고 몸쪽에 막힌다');
+say('미트 — 치는 쪽도 조준한다 (게임빌·컴투스 프로야구의 그 미트)');
 {
   const world = mk();
   const b = world.bag;
   world.team = 0; b.half = 1;                    // 말 → 내가 친다
-  check('처음엔 가운데', b.stand, 0);
-  world.input.right = true;
+  check('처음엔 한복판', [b.mitt.x, b.mitt.y], [0, 0]);
+  world.input.right = true; world.input.jump = true;
   for (let f = 0; f < 30; f++) w.update(world, FR);
-  ok('⌥→ 로 홈 쪽으로 붙는다', b.stand > 0.3);
-  world.input.right = false; world.input.left = true;
+  ok('⌥→↑ 로 바깥쪽 위로 간다', b.mitt.x > 0.3 && b.mitt.y > 0.3);
+  world.input.right = false; world.input.jump = false;
+  world.input.left = true; world.input.duck = true;
   for (let f = 0; f < 90; f++) w.update(world, FR);
-  ok('⌥← 로 물러선다', b.stand < -0.3);
-  world.input.left = false;
+  ok('⌥←↓ 로 몸쪽 아래로 간다', b.mitt.x < -0.3 && b.mitt.y < -0.3);
+  ok('몸쪽을 노리면 홈에 붙어 선다', b.stand > 0.3);
+  world.input.left = false; world.input.duck = false;
   for (let f = 0; f < 240; f++) w.update(world, FR);
-  ok('끝까지는 안 나간다', b.stand >= -1.001);
+  ok('끝까지는 안 나간다', b.mitt.x >= -AIM_OUT && b.mitt.y >= -AIM_OUT);
   // 던지는 쪽일 때는 안 움직인다 (같은 키가 조준이다)
   const w2 = mk(); w2.team = 0; w2.bag.half = 0;
   w2.input.right = true;
   for (let f = 0; f < 60; f++) w.update(w2, FR);
-  check('던지는 쪽은 타석이 안 움직인다', w2.bag.stand, 0);
+  check('던지는 쪽은 미트가 안 움직인다', w2.bag.mitt.x, 0);
   ok('대신 조준이 움직인다', w2.bag.aim.x > 0.3);
+}
+
+say('미트가 결과를 바꾼다 — 같은 공도 미트를 어디 뒀느냐로 갈린다');
+{
+  // 바깥쪽 낮은 공(0.9, −0.9) 하나를 두고, 미트를 맞춰 놓았을 때와 한복판에 뒀을 때.
+  const jab = (mx, my) => {
+    let miss = 0, barrel = 0, ev = 0, hit = 0, n = 0;
+    for (let e = -12; e <= 12; e++) for (let i = 0; i < 120; i++) {
+      n++;
+      const c = contact(e, false, false, PITCHES[0], { side: 0.9 - mx, high: -0.9 - my });
+      if (!c) { miss++; continue; }
+      hit++; ev += c.ev;
+      if (c.grade === 2) barrel++;
+    }
+    return { miss: miss / n, barrel: barrel / n, ev: ev / Math.max(1, hit) };
+  };
+  const on = jab(0.9, -0.9), mid = jab(0, 0);
+  note(`미트를 맞추면 헛스윙 ${(on.miss*100).toFixed(0)}% · 정타 ${(on.barrel*100).toFixed(0)}% · ${on.ev.toFixed(0)}mph`);
+  note(`한복판에 두면 헛스윙 ${(mid.miss*100).toFixed(0)}% · 정타 ${(mid.barrel*100).toFixed(0)}% · ${mid.ev.toFixed(0)}mph`);
+  ok('맞춰 두면 덜 헛친다', on.miss < mid.miss - 0.05);
+  ok('맞춰 두면 정타가 더 난다', on.barrel > mid.barrel * 1.1);
+  ok('맞춰 두면 더 뻗는다', on.ev > mid.ev * 1.05);
 }
 
 // ── 수비 ──────────────────────────────────────────────────────────────────
@@ -620,20 +676,20 @@ say('투구 시계 — 안 던지면 볼 하나. 안 그러면 판이 영영 멎
   ok('컴퓨터는 시계 없이 바로 던진다', !!w3.bag.pitch && !(w3.bag.clock > 0));
 }
 
-say('새 타자는 타석 가운데서 시작한다');
+say('새 타자는 미트가 한복판에서 시작한다');
 {
   const world = mk(); const b = world.bag;
   world.team = 0; b.half = 1;
   world.input.right = true;
   for (let f = 0; f < 40; f++) w.update(world, FR);
   world.input.right = false;
-  ok('한 발 옮겼다', b.stand > 0.3);
+  ok('미트를 옮겼다', b.mitt.x > 0.3);
   b.strikes = 2;
   b.pitch = { type: 0, kind: PITCHES[0], ax: 0, ay: 0, t: 0, dur: 0.4, plate: 24, done: false, wind: 0 };
   b.aiSwing = null;
   for (let f = 0; f < 90 && b.log.length === 0; f++) w.update(world, FR);
   check('타석이 끝났다', b.log.length, 1);
-  check('다음 타자는 가운데', b.stand, 0);
+  check('다음 타자는 미트가 한복판', [b.mitt.x, b.mitt.y], [0, 0]);
 }
 
 say('수비 시프트 — 당겨 치는 타자를 막고 반대쪽을 내준다');

@@ -208,7 +208,12 @@ export const BARREL = 3;        // 정타
 export const SOLID = 7;         // 안타권
 export const CONTACT = 12;      // 한가운데 공. 여기까지는 맞기는 한다. 넘으면 헛스윙
 export const EASY = 0.38;       // 이 안쪽은 어디로 오든 한가운데와 같다 (배트 가운데)
-export const REACH_DROP = 0.24; // 구석으로 갈수록 창이 이만큼씩 좁아진다
+export const REACH_DROP = 0.24;
+export const MITT_OUT = 1.2;    // 미트가 나갈 수 있는 끝 (존 반폭 기준)
+const MITT_STEP = 2.2;          // 미트가 움직이는 속도 (초당)
+const READ_MISS = 0.62;         // 컴퓨터 타자가 자리를 짚는 솜씨 (작을수록 잘 짚는다)
+const SWING_TILT = 0.45;        // 미트를 이만큼 올리면 띄워 치기, 내리면 눌러 치기
+const BREAK_SHOW = 3.4;         // 오는 길의 휨을 눈에 보이게 부풀리는 값 (도착 자리는 그대로) // 구석으로 갈수록 창이 이만큼씩 좁아진다
 
 /// 제일 잘 맞았을 때의 타구 속도 (ft/s). 공기 저항을 안 넣었으므로 진짜 값(150)보다 낮다 —
 /// 이 값에서 28도로 뜨면 400피트가 나온다.
@@ -1035,7 +1040,10 @@ function freshBag() {
     inn: 1, half: 0, outs: 0, balls: 0, strikes: 0,
     score: [0, 0], onBase: [null, null, null],
     log: [],                          // 한 타석마다 한 줄
-    aim: { x: 0, y: 0 }, type: 0, stand: 0, shift: 0, hitBy: 0,
+    aim: { x: 0, y: 0 }, type: 0, shift: 0, hitBy: 0,
+    // **타자의 미트.** 게임빌·컴투스 프로야구가 그랬듯 **치는 쪽도 조준한다** —
+    // 투수가 코스를 고르고 타자가 미트를 놓는다. 둘의 어긋남이 곧 타구의 질이다.
+    mitt: { x: 0, y: 0 }, stand: 0,
     // 던진 공 기록 — 배합을 읽는 자리. 공수 교대 때 지운다.
     thrown: [],
     pitch: null, play: null, seq: 0, seen: -1,
@@ -1063,7 +1071,8 @@ function nextBatter(world, b, line) {
   b.balls = 0; b.strikes = 0;
   b.pitch = null; b.play = null;
   b.wait = 1.5;
-  b.stand = 0;                      // **새 타자는 가운데서 시작한다** — 앞사람이 옮긴 자리를 물려받지 않는다
+  b.mitt = { x: 0, y: 0 };          // **새 타자는 가운데서 시작한다** — 앞사람이 놓은 자리를 물려받지 않는다
+  b.stand = 0;
   b.clock = null;
   b.ai = null; b.aiSwing = null;
   if (b.outs >= 3) halfOver(world, b);
@@ -1250,7 +1259,12 @@ function aiSwing(b, pitch, L) {
   const guess = rnd() < (b.strikes === 2 ? 0.45 : 0.62) ? 0 : 1 + ((rnd() * 3) | 0);
   // 눈 좋은 타자는 손이 덜 떨린다.
   const err = guessErr(guess, pitch.type, 10 - (me.eye ?? 0) * 1.1);
-  return { err, up: rnd() < 0.26, down: rnd() < 0.2 };
+  // **컴퓨터도 미트를 놓는다.** 눈이 좋을수록 공이 올 자리를 잘 짚는다 —
+  // 안 놓아 두면 컴퓨터는 늘 한가운데만 노리는 셈이라 구석 공에 손도 못 댄다.
+  const read = READ_MISS - (me.eye ?? 0) * 0.12;
+  const mitt = { x: clamp(pitch.ax + gauss() * read, -MITT_OUT, MITT_OUT),
+                 y: clamp(pitch.ay + gauss() * read, -MITT_OUT, MITT_OUT) };
+  return { err, mitt, up: mitt.y > SWING_TILT, down: mitt.y < -SWING_TILT };
 }
 
 // ── 투구 그림 ─────────────────────────────────────────────────────────────
@@ -1283,8 +1297,13 @@ export function pitchAt(pitch, L, u) {
   // 갑자기 사라지는 것처럼 보인다.
   const e = u ** 1.28;
   // 커브는 **늦게** 떨어진다. 떨어지는 몫을 u³ 에 실어서, 끝에 가서야 뚝 진다.
-  const late = pitch.kind.drop * z.h * 0.5 * (u ** 3 - e);
-  const bend = pitch.kind.bend * z.w * 0.5 * (u ** 2.4 - e);
+  //
+  // **크게 휘어야 한다.** 도착 자리는 그대로 두고 오는 길만 부풀리는 값(BREAK_SHOW)이다.
+  // 이걸 안 곱했을 때 커브가 곧은 선에서 벗어나는 폭이 존 반높이의 0.21배 — 90픽셀짜리
+  // 존에서 9픽셀이었다. **구종을 넷이나 만들어 놓고 화면에서는 속도밖에 안 달랐다.**
+  // 도착 자리는 겨눈 그 자리 그대로니, 부풀려도 판정은 하나도 안 바뀐다.
+  const late = pitch.kind.drop * z.h * 0.5 * (u ** 3 - e) * BREAK_SHOW;
+  const bend = pitch.kind.bend * z.w * 0.5 * (u ** 2.4 - e) * BREAK_SHOW;
   return {
     x: lerp(from.x, to.x, e) + bend,
     y: lerp(from.y, to.y, e) + late,
@@ -1342,9 +1361,11 @@ export function swing(world, frame, up, down) {
   p.done = true;
   const L = layout(world);
   const err = frame - p.plate;
-  // 공이 존 어디로 들어왔나. 커브가 늦게 지는 몫(drop)을 빼야 **눈에 보인 자리**가 된다.
-  // 타자가 홈에 붙어 섰으면 바깥쪽 공이 한 칸 가운데로 온다 — 대신 몸쪽에 막힌다.
-  const spot = { side: p.ax - (b.stand ?? 0) * 0.5, high: p.ay };
+  // **공이 미트에서 얼마나 어긋났나.** 자리 그 자체가 아니라 **어긋남**이다 —
+  // 미트를 그 자리에 놓았으면 구석 공도 한가운데처럼 맞고, 한가운데 공도 미트가
+  // 딴 데 있으면 빗맞는다. 게임빌·컴투스의 수싸움이 이 한 줄에 있다.
+  const mitt = b.mitt ?? { x: 0, y: 0 };
+  const spot = { side: p.ax - mitt.x, high: p.ay - mitt.y };
   const me = atBat(b);
   const hit = contact(err, up, down, p.kind, spot, me);
   b.spotWord = spotName(spot);
@@ -1383,10 +1404,13 @@ export function resolveHit(hit, state) {
 
 /// 들어온 자리를 사람 말로. 휘두른 뒤 화면에 한 줄로 뜬다 — 왜 그 방향으로 갔는지 알아야
 /// 다음에 조준이 뜻을 갖는다.
+/// 공이 **미트에서 어느 쪽으로 어긋났나.** 자리 이름이 아니라 어긋난 쪽이다 —
+/// 다음 공에 미트를 어디로 옮길지가 여기서 나온다.
 function spotName(spot) {
   const side = spot.side < -0.55 ? '몸쪽' : spot.side > 0.55 ? '바깥쪽' : '';
-  const high = spot.high > 0.55 ? '높은' : spot.high < -0.55 ? '낮은' : '';
-  return [high, side].filter(Boolean).join(' ') || '한가운데';
+  const high = spot.high > 0.55 ? '위' : spot.high < -0.55 ? '아래' : '';
+  const both = [side, high].filter(Boolean).join('·');
+  return both ? `미트에서 ${both}으로` : '미트 한복판';
 }
 
 /// 맞은 공을 판에 띄운다.
@@ -1492,9 +1516,10 @@ export default {
     ['⌥ ← → ↑ ↓', '조준 — 내 화면에만 보인다 (던질 때)'],
     ['⌥ 1 · 2 · 3 · 4', '직구 · 슬라이더 · 커브 · 체인지업'],
     ['⌥ Space', '던진다 / 휘두른다'],
-    ['⌥ Space + ↑', '띄워 치기 — 뜬공과 홈런'],
-    ['⌥ Space + ↓', '눌러 치기 — 빠른 땅볼'],
-    ['⌥ ← →', '타석에서 한 발 — 홈에 붙으면 바깥쪽이 닿고 몸쪽에 막힌다'],
+    ['⌥ ← → ↑ ↓', '미트 — 칠 자리를 고른다 (칠 때). 내 화면에만 보인다'],
+    ['미트 위', '띄워 치기 — 뜬공과 홈런'],
+    ['미트 아래', '눌러 치기 — 빠른 땅볼'],
+    ['미트 몸쪽', '홈에 붙어 선다 — 바깥쪽이 닿는 대신 몸에 맞는다'],
     ['⌥ 5', '수비 시프트 — 보통 / 당김 / 밀어침 (던질 때)'],
   ],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
@@ -1582,10 +1607,12 @@ export default {
     // 치는 쪽.
     if (amBatting(world) && b.pitch && !b.pitch.done && !b.play) {
       const frame = Math.round(b.pitch.t / FR);
-      const up = !!world.input.jump, down = !!world.input.duck;
+      // **띄워 칠지 눌러 칠지는 미트가 정한다.** 방향키를 스윙 옵션으로도 쓰면 미트를 위로
+      // 올리는 동안 저절로 띄워 치기가 되어 두 조작이 서로 물린다 — 미트 하나로 모은다.
+      const up = b.mitt.y > SWING_TILT, down = b.mitt.y < -SWING_TILT;
       if (world.mp.role === 'guest') {
         world.send?.({ t: 'gm', k: 'swing', f: frame, u: up ? 1 : 0, d: down ? 1 : 0,
-                       s: Math.round((b.stand ?? 0) * 100) });
+                       s: Math.round(b.mitt.x * 100), v: Math.round(b.mitt.y * 100) });
         // 내 화면에서도 배트는 바로 돈다. 판정은 방장이 한다 —
         // 배트가 한 왕복 뒤에 돌면 「안 눌렸나」 싶어 또 누르게 된다.
         b.batT = BAT_TIME;
@@ -1630,7 +1657,11 @@ export default {
     // 치는 쪽이 **같은 한 줄(몸쪽↔바깥쪽)을 서로 당긴다.** 공이 날아오는 중에도 움직인다.
     if (amBatting(world) && !b.play && !b.over) {
       const dx = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
-      if (dx) b.stand = clamp((b.stand ?? 0) + dx * 1.7 * dt, -1, 1);
+      const dy = (world.input.jump ? 1 : 0) - (world.input.duck ? 1 : 0);
+      if (dx) b.mitt.x = clamp(b.mitt.x + dx * MITT_STEP * dt, -MITT_OUT, MITT_OUT);
+      if (dy) b.mitt.y = clamp(b.mitt.y + dy * MITT_STEP * dt, -MITT_OUT, MITT_OUT);
+      // 몸쪽을 노리면 저절로 홈에 붙어 선다 — 바깥쪽이 닿는 대신 몸에 맞는다.
+      b.stand = clamp(-b.mitt.x, -1, 1);
     }
 
     // 손님은 방장이 굴린 것을 따라 그리기만 한다. 다만 **투구 시계는 자기가 센다** —
@@ -1688,6 +1719,7 @@ export default {
         b.aiSwing = humanOn(world, batSide(b)) ? null : aiSwing(b, p, L);
       }
       if (b.aiSwing && !p.done && p.t >= (p.plate + b.aiSwing.err) * FR) {
+        if (b.aiSwing.mitt) { b.mitt = { ...b.aiSwing.mitt }; b.stand = clamp(-b.mitt.x, -1, 1); }
         b.batT = BAT_TIME;
         swing(world, p.plate + b.aiSwing.err, b.aiSwing.up, b.aiSwing.down);
         return;
@@ -1891,7 +1923,9 @@ export default {
       const here = Math.round(b.pitch.t / FR);
       const f = clamp(msg.f | 0, here - 40, here + 2);
       // 타석에서 선 자리도 손님이 보내온 것을 쓴다. 내 화면의 값은 그 사람 것이 아니다.
-      b.stand = clamp((+msg.s || 0) / 100, -1, 1);
+      b.mitt = { x: clamp((+msg.s || 0) / 100, -MITT_OUT, MITT_OUT),
+                 y: clamp((+msg.v || 0) / 100, -MITT_OUT, MITT_OUT) };
+      b.stand = clamp(-b.mitt.x, -1, 1);
       swing(world, f, !!msg.u, !!msg.d);
       return;
     }
@@ -1938,7 +1972,7 @@ export default {
       w: Math.round((b.wait ?? 0) * 100),
       bt: Math.round((b.batT ?? 0) * 1000),
       hb: Math.round((b.hitBy ?? 0) * 100),
-      sd: Math.round((b.stand ?? 0) * 100),
+      md: [Math.round(b.mitt.x * 100), Math.round(b.mitt.y * 100)],
     };
   },
 
@@ -2018,7 +2052,11 @@ export default {
     if (!(b.batT > 0) && Number.isFinite(data.bt)) b.batT = data.bt / 1000;
     if (Number.isFinite(data.hb)) b.hitBy = data.hb / 100;
     // 타석 자리는 **치는 사람 것이 맞다.** 내가 치는 쪽이면 내 값을 쓰고, 아니면 받아 쓴다.
-    if (!amBatting(world) && Number.isFinite(data.sd)) b.stand = clamp(data.sd / 100, -1, 1);
+    if (!amBatting(world) && Array.isArray(data.md) && data.md.every(Number.isFinite)) {
+      b.mitt = { x: clamp(data.md[0] / 100, -MITT_OUT, MITT_OUT),
+                 y: clamp(data.md[1] / 100, -MITT_OUT, MITT_OUT) };
+      b.stand = clamp(-b.mitt.x, -1, 1);
+    }
     b.wait = Number.isFinite(data.w) ? data.w / 100 : 0;
     b.started = true;
   },
@@ -2239,6 +2277,21 @@ function drawZone(ctx, L, world, b, time) {
     stroke(ctx, [...out, out[0]], { width: 1.3, color: PENCIL, seed: 45, amp: 0.5,
                                     alpha: 0.26, sharp: true, halo: false });
   }
+  // **타자의 미트 — 치는 쪽 화면에만.** 던지는 쪽이 미리 알면 수싸움이 통째로 없어진다.
+  // 공이 날아오는 동안에도 그린다. 미트 안으로 들어왔는지를 눈으로 봐야 다음 공에
+  // 어디로 옮길지가 정해진다.
+  if (amBatting(world) && !b.play && !b.over) {
+    const mx = z.cx + b.mitt.x * half[0];
+    const my = z.cy - b.mitt.y * half[1];
+    const rx = half[0] * EASY, ry = half[1] * EASY;      // 이 안이면 한가운데와 같다
+    const tint = TEAM_INK[batSide(b)];
+    const box = [[mx - rx, my - ry], [mx + rx, my - ry], [mx + rx, my + ry], [mx - rx, my + ry]];
+    stroke(ctx, [...box, box[0]], { width: 2, color: tint, seed: 46, amp: 0.5,
+                                    alpha: b.pitch ? 0.9 : 0.66, sharp: true, halo: false });
+    // 가운데 십자 — 네모만 있으면 어디가 한복판인지 안 보인다.
+    stroke(ctx, [[mx - 4, my], [mx + 4, my]], { width: 1.6, color: tint, seed: 47, amp: 0.3, halo: false, alpha: 0.8 });
+    stroke(ctx, [[mx, my - 4], [mx, my + 4]], { width: 1.6, color: tint, seed: 48, amp: 0.3, halo: false, alpha: 0.8 });
+  }
   if (!amPitching(world) || b.pitch || b.play) return;
   const x = z.cx + b.aim.x * half[0];
   const y = z.cy - b.aim.y * half[1];
@@ -2442,7 +2495,7 @@ function drawBoard(ctx, world, time) {
     if (swung) {
       const e = b.swungAt.err;
       const when = e === 0 ? '정확!' : `${Math.abs(e)}프레임 ${e < 0 ? '빨랐다' : '늦었다'}`;
-      text(ctx, `${when}${b.spotWord ? ` · ${b.spotWord} 공` : ''}`, world.w / 2, 74,
+      text(ctx, `${when}${b.spotWord ? ` · ${b.spotWord}` : ''}`, world.w / 2, 74,
            { font: `700 13px ${HAN}`, color: RED, align: 'center', halo: 0 });
     }
   }
