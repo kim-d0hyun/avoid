@@ -335,25 +335,28 @@ const cellAt = (L, x, y) => [L.x + x * L.step, L.y + y * L.step];
 const STARS = [3, 9, 15];
 
 function drawBoard(ctx, L, b) {
-  // **판은 아주 옅게.** 몰래 하는 게임이다 — 화면에서 제일 큰 것이 바둑판인데, 그게 진하면
-  // 옆에서 지나가는 사람 눈에 제일 먼저 걸린다. 종이 바닥도 깔지 않는다(바탕이 곧 종이다).
-  // 진해야 하는 것은 **돌**뿐이다. 돌만 보이면 판은 눈이 알아서 잇는다.
+  // 몰래 하는 게임이라 판은 옅게 긋는다 — 화면에서 제일 큰 것이 바둑판인데 그게 진하면
+  // 옆에서 지나가는 사람 눈에 제일 먼저 걸린다. 종이 바닥(큰 흰 판)도 안 깐다.
+  //
+  // **다만 후광은 넣는다.** 이 앱은 남의 바탕화면 위에 그려지고, 그래서 모든 획을 두 번
+  // 긋는 것이 규칙이다 — 먼저 두꺼운 종이색으로, 그 위에 잉크로. 판만 그걸 빼 뒀더니
+  // **어두운 벽지에서는 판이 아예 안 보였다.** 옅게 하는 것과 안 보이게 하는 것은 다르다.
   for (let i = 0; i < N; i++) {
     const [x0, y0] = cellAt(L, 0, i), [x1] = cellAt(L, N - 1, i);
     stroke(ctx, [[x0, y0], [x1, y0]],
-           { width: 0.9, color: PENCIL, seed: 10 + i, amp: 0.4, alpha: 0.26, halo: false });
+           { width: 1.1, color: PENCIL, seed: 10 + i, amp: 0.4, alpha: 0.52, haloWidth: 3 });
     const [ax, ay] = cellAt(L, i, 0), [, by] = cellAt(L, i, N - 1);
     stroke(ctx, [[ax, ay], [ax, by]],
-           { width: 0.9, color: PENCIL, seed: 40 + i, amp: 0.4, alpha: 0.26, halo: false });
+           { width: 1.1, color: PENCIL, seed: 40 + i, amp: 0.4, alpha: 0.52, haloWidth: 3 });
   }
-  // 네 귀퉁이만 조금 진하게 — 판이 어디까지인지는 알아야 한다.
+  // 네 귀퉁이는 조금 더 진하게 — 판이 어디까지인지는 알아야 한다.
   const edge = [[L.x, L.y], [L.x + L.size, L.y], [L.x + L.size, L.y + L.size], [L.x, L.y + L.size]];
   stroke(ctx, [...edge, edge[0]],
-         { width: 1.1, color: PENCIL, seed: 9, amp: 0.4, alpha: 0.4, sharp: true, halo: false });
+         { width: 1.5, color: PENCIL, seed: 9, amp: 0.4, alpha: 0.78, sharp: true, haloWidth: 4 });
   for (const sy of STARS) for (const sx of STARS) {
     const [px, py] = cellAt(L, sx, sy);
-    circle(ctx, px, py, 2.2, { width: 1.2, color: PENCIL, fill: PENCIL, halo: false,
-                               alpha: 0.34, seed: 70 + sx * 3 + sy, amp: 0.2 });
+    circle(ctx, px, py, 2.4, { width: 1.3, color: PENCIL, fill: PENCIL,
+                               alpha: 0.6, seed: 70 + sx * 3 + sy, amp: 0.2 });
   }
 }
 
@@ -365,9 +368,11 @@ function drawStones(ctx, L, b, time, world) {
       if (!v) continue;
       const [px, py] = cellAt(L, x, y);
       const side = v - 1;
+      // **돌에도 후광을 두른다.** 검은 돌을 어두운 벽지 위에 그냥 그리면 안 보인다 —
+      // 종이색 테를 한 겹 두르면 흰 벽지에서는 안 보이고 검은 벽지에서는 돌이 된다.
       circle(ctx, px, py, r, {
         width: 2, color: STONE_EDGE[side], fill: STONE_FILL[side],
-        seed: 100 + y * N + x, amp: 0.4, halo: false,
+        seed: 100 + y * N + x, amp: 0.4, halo: true,
       });
       // 하양 돌에 **왼쪽 위 빛** 한 점. 종이 위에서 하양 돌은 그냥 빈 동그라미로 보이는데,
       // 이 점 하나로 「놓인 돌」이 된다.
@@ -425,7 +430,7 @@ function drawAim(ctx, L, world, b, time) {
   if (mine && !b.cells[b.aim.y * N + b.aim.x] && !forbidden(b.cells, b.aim.x, b.aim.y, side + 1)) {
     circle(ctx, px, py, L.step * 0.42, {
       width: 1.6, color: STONE_EDGE[side], fill: STONE_FILL[side],
-      alpha: 0.4, seed: 7, amp: 0.3, halo: false,
+      alpha: 0.4, seed: 7, amp: 0.3,
     });
   }
   // **금수 자리는 미리 알려 준다.** 눌러 보고 나서야 알면 늦다.
@@ -470,7 +475,7 @@ function drawCrew(ctx, world, b, time, boil) {
       // 이 사람이 **어느 돌**인가. 사람 색(빨강·파랑)과 돌 색(흑백)은 따로다 —
       // 사람은 서로 가려야 하고, 돌은 오목이라 흑백이라야 한다.
       circle(ctx, baseX, y - 96, 8, { width: 1.8, color: STONE_EDGE[side],
-                                      fill: STONE_FILL[side], seed: 5 + i, amp: 0.3, halo: false });
+                                      fill: STONE_FILL[side], seed: 5 + i, amp: 0.3 });
       // 지금 둘 사람을 가리킨다. **머리 위가 아니라 판 쪽 옆구리**에 — 위에는 이름이 있다.
       if (who && who.id === s.id && !b.over) {
         text(ctx, side === 0 ? '▶' : '◀', baseX + (side === 0 ? 34 : -34), y - 52,
@@ -657,7 +662,7 @@ export default {
     if (!b.over) {
       const sx = world.w / 2 - wide / 2 + 20;
       circle(ctx, sx, 32, 9, { width: 2, color: STONE_EDGE[b.turn], fill: STONE_FILL[b.turn],
-                               seed: 3, amp: 0.3, halo: false });
+                               seed: 3, amp: 0.3 });
     }
     text(ctx, `${b.moves.length}수`, world.w / 2, 57,
          { font: `600 12px ${MONO}`, color: PENCIL, align: 'center', halo: 0 });
