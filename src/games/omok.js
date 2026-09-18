@@ -23,6 +23,9 @@ const TEAM_INK = ['#b5352f', '#2f6fb0'];
 /// 돌 위로 비쳐서 돌이 아니라 동그라미로 보인다).
 const STONE_FILL = ['#26221c', PAPER_SOLID];
 const STONE_EDGE = ['#15120e', '#2f2a22'];
+/// 판 뒤에 까는 바닥. 진한 흰 판이 아니라 **비치는 한 겹**이다 (알파 0.5 로 깐다).
+const BOARD_BACK = '#efe9da';
+const BOARD_EDGE = '#cfc7b4';
 const TEAM_NAME = ['검정', '하양'];
 const HAN = '"Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 const MONO = '"American Typewriter", "Courier New", monospace';
@@ -335,28 +338,33 @@ const cellAt = (L, x, y) => [L.x + x * L.step, L.y + y * L.step];
 const STARS = [3, 9, 15];
 
 function drawBoard(ctx, L, b) {
-  // 몰래 하는 게임이라 판은 옅게 긋는다 — 화면에서 제일 큰 것이 바둑판인데 그게 진하면
-  // 옆에서 지나가는 사람 눈에 제일 먼저 걸린다. 종이 바닥(큰 흰 판)도 안 깐다.
-  //
-  // **다만 후광은 넣는다.** 이 앱은 남의 바탕화면 위에 그려지고, 그래서 모든 획을 두 번
-  // 긋는 것이 규칙이다 — 먼저 두꺼운 종이색으로, 그 위에 잉크로. 판만 그걸 빼 뒀더니
-  // **어두운 벽지에서는 판이 아예 안 보였다.** 옅게 하는 것과 안 보이게 하는 것은 다르다.
+  // **판 뒤에 아주 옅은 바닥 한 장.** 벽지가 줄 사이로 그대로 비치면 벽지 무늬와 줄이
+  // 섞여서 눈이 아프다 — 줄을 아무리 옅게 해도 그건 안 없어진다. 바닥이 한 겹 깔리면
+  // 줄은 오히려 더 옅게 그어도 읽힌다. 진한 흰 판이 아니라 **비치는 한 겹**이다.
+  const pad = L.step * 0.8;
+  const back = [[L.x - pad, L.y - pad], [L.x + L.size + pad, L.y - pad],
+                [L.x + L.size + pad, L.y + L.size + pad], [L.x - pad, L.y + L.size + pad]];
+  // sharp 를 안 주면 네 점을 곡선으로 이어서 **네모가 아니라 동그란 얼룩**이 된다.
+  stroke(ctx, [...back, back[0]], { width: 1, color: BOARD_EDGE, fill: BOARD_BACK,
+                                    alpha: 0.32, seed: 2, amp: 1.1, sharp: true, halo: false });
+  // 줄은 **얇게.** 열아홉 줄이 다 굵으면 격자가 웅웅거린다. 흔들림(amp)도 줄인다 —
+  // 긴 줄이 구불거리면 그 자체로 눈이 피로하다.
   for (let i = 0; i < N; i++) {
     const [x0, y0] = cellAt(L, 0, i), [x1] = cellAt(L, N - 1, i);
     stroke(ctx, [[x0, y0], [x1, y0]],
-           { width: 1.1, color: PENCIL, seed: 10 + i, amp: 0.4, alpha: 0.52, haloWidth: 3 });
+           { width: 0.8, color: PENCIL, seed: 10 + i, amp: 0.2, alpha: 0.46, haloWidth: 2 });
     const [ax, ay] = cellAt(L, i, 0), [, by] = cellAt(L, i, N - 1);
     stroke(ctx, [[ax, ay], [ax, by]],
-           { width: 1.1, color: PENCIL, seed: 40 + i, amp: 0.4, alpha: 0.52, haloWidth: 3 });
+           { width: 0.8, color: PENCIL, seed: 40 + i, amp: 0.2, alpha: 0.46, haloWidth: 2 });
   }
   // 네 귀퉁이는 조금 더 진하게 — 판이 어디까지인지는 알아야 한다.
   const edge = [[L.x, L.y], [L.x + L.size, L.y], [L.x + L.size, L.y + L.size], [L.x, L.y + L.size]];
   stroke(ctx, [...edge, edge[0]],
-         { width: 1.5, color: PENCIL, seed: 9, amp: 0.4, alpha: 0.78, sharp: true, haloWidth: 4 });
+         { width: 1.1, color: PENCIL, seed: 9, amp: 0.25, alpha: 0.6, sharp: true, haloWidth: 3 });
   for (const sy of STARS) for (const sx of STARS) {
     const [px, py] = cellAt(L, sx, sy);
-    circle(ctx, px, py, 2.4, { width: 1.3, color: PENCIL, fill: PENCIL,
-                               alpha: 0.6, seed: 70 + sx * 3 + sy, amp: 0.2 });
+    circle(ctx, px, py, 2.2, { width: 1.1, color: PENCIL, fill: PENCIL,
+                               alpha: 0.5, seed: 70 + sx * 3 + sy, amp: 0.2 });
   }
 }
 
