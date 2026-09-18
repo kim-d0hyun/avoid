@@ -7,7 +7,7 @@ const { createWorld, resize, press, menuItems, update, restart, clearedStage } =
 const { interpolate } = await import(new URL('../src/game/net.js', import.meta.url));
 const { games } = await import(new URL('../src/games/index.js', import.meta.url));
 
-import { check, say, done } from './check.mjs';
+import { check, ok, say, done } from './check.mjs';
 
 function make(screens = []) {
   const w = createWorld({ ms: 0, dodged: 0 });
@@ -67,6 +67,26 @@ say('메뉴 — 게임 도중 홈으로 나간다');
   check('홈 메뉴', labels(w), ['고르던 데로', '같이 하기', '설정', '화면 숨기기', '게임 끝내기']);
 }
 
+say('아무도 안 들어온 내 방에서도 남의 방에 들어갈 수 있다');
+{
+  // 야구·오목은 고르는 순간 방이 열린다(opensRoom). 그러면 곧바로 「방 안」이 되는데
+  // 방 안 메뉴에 코드 입력이 없어서 **친구가 불러 준 코드를 넣을 데가 사라졌다.**
+  const w = make([]);
+  w.mp.on = true; w.mp.role = 'host'; w.mp.code = 'AB12'; w.mp.myId = 1;
+  tap(w, 'menu');
+  into(w, 'together');
+  ok('혼자 있는 방에서는 코드로 입장이 보인다', labels(w).includes('코드로 입장'));
+  // 남이 들어와 있으면 안 보인다 — 두고 나가면 그 사람만 남는다
+  w.mp.others.set(2, { id: 2, name: '손2', dead: false, waiting: false });
+  tap(w, 'left'); into(w, 'together');
+  ok('남이 들어오면 안 보인다', !labels(w).includes('코드로 입장'));
+  // 손님일 때도 안 보인다 (나가기가 따로 있다)
+  const g = make([]);
+  g.mp.on = true; g.mp.role = 'guest'; g.mp.code = 'AB12'; g.mp.myId = 2;
+  tap(g, 'menu'); into(g, 'together');
+  ok('손님 화면에도 안 보인다', !labels(g).includes('코드로 입장'));
+}
+
 say('같이 하기 — 방을 열 때 무슨 게임인지부터 고른다');
 {
   const w = make([]);
@@ -93,7 +113,7 @@ say('같이 하기 — 방 안에서는 코드 복사와 닫기');
   tap(w, 'menu');
   check('방 이름이 옆에 뜬다', menuItems(w)[1].note, '방 K3P9 · 1명');
   into(w, 'together');
-  check('고를 것', labels(w), ['이름 바꾸기', '코드 복사', '게임 바꾸기', '방 깨기 — 모두 홈으로']);   // 방장은 게임도 바꾼다
+  check('고를 것', labels(w), ['이름 바꾸기', '코드 복사', '코드로 입장', '게임 바꾸기', '방 깨기 — 모두 홈으로']);   // 방장은 게임도 바꾼다. 혼자면 남의 방에도 갈 수 있다
   check('코드가 옆에', menuItems(w)[1].note, 'K3P9');
   w.mp.role = 'guest';
   check('손님은 나가기', labels(w)[2], '방에서 나가기');
@@ -152,7 +172,7 @@ say('내보내기 — 방장만, 그 자리에서');
 
   w.mp.others.delete(3);                             // 셸이 끊고 알려 준다
   w.mp.others.delete(2);
-  check('다 내보내면 한 겹 나온다', labels(w), ['이름 바꾸기', '코드 복사', '게임 바꾸기', '방 깨기 — 모두 홈으로']);
+  check('다 내보내면 한 겹 나온다', labels(w), ['이름 바꾸기', '코드 복사', '코드로 입장', '게임 바꾸기', '방 깨기 — 모두 홈으로']);
   check('길도 나왔다', w.menu.path, ['together']);
 }
 
