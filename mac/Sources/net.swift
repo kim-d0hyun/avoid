@@ -128,6 +128,18 @@ protocol NetDelegate: AnyObject {
     func netRoleChanged(role: String, code: String?, myId: Int, note: String?)
     func netPeerChanged(id: Int, name: String, joined: Bool)
     func netReceived(from: Int, json: String)
+    /// 같은 와이파이에 열려 있는 방 목록이 바뀌었다.
+    func netRoomsChanged()
+}
+
+/// 목록에 뜨는 방 하나. 이름표(TXT)에 적힌 것만 안다 — 들어가 보기 전까지는 이게 전부다.
+struct FoundRoom {
+    let code: String
+    let game: String
+    let people: Int
+    let version: String
+    /// 내 판과 다른 판이면 들어가도 같이 못 한다. 목록에 그렇게 적어 준다.
+    var old: Bool { !version.isEmpty && version != appVersion }
 }
 
 private final class Peer {
@@ -139,6 +151,42 @@ private final class Peer {
     init(id: Int, connection: NWConnection) {
         self.id = id
         self.connection = connection
+    }
+}
+
+/// 이름표(TXT)를 따로 풀어 온다.
+///
+/// **NWBrowser 가 주는 TXT 는 비어 오는 때가 있다** — 같은 맥 안에서 찾을 때가 특히 그렇다
+/// (시험으로 굴려 보니 게임 이름도 사람 수도 통째로 빈 채로 왔다). NetService 로 한 번 더
+/// 물어보면 제대로 온다. 목록에 코드 네 글자만 뜨면 어느 방에 들어가야 할지 알 수가 없다.
+final class TxtPeek: NSObject, NetServiceDelegate {
+    private let service: NetService
+    private var done: (([String: String]) -> Void)?
+
+    init(room: String) {
+        service = NetService(domain: "local.", type: netServiceType + ".", name: room)
+        super.init()
+        service.delegate = self
+    }
+
+    func read(timeout: TimeInterval, _ finished: @escaping ([String: String]) -> Void) {
+        done = finished
+        service.resolve(withTimeout: timeout)
+    }
+
+    func netServiceDidResolveAddress(_ sender: NetService) { finish(sender.txtRecordData()) }
+    func netService(_ sender: NetService, didNotResolve error: [String: NSNumber]) { finish(nil) }
+
+    private func finish(_ data: Data?) {
+        guard let done else { return }
+        self.done = nil
+        var fields: [String: String] = [:]
+        if let data {
+            for (key, value) in NetService.dictionary(fromTXTRecord: data) {
+                fields[key] = String(data: value, encoding: .utf8) ?? ""
+            }
+        }
+        done(fields)
     }
 }
 
@@ -161,6 +209,85 @@ final class Net {
     private var candidates: [NWEndpoint] = []
     private var attempt = 0
     private var joinedAt: Date?
+
+    // MARK: 방 목록
+    //
+    // **방을 연 사람은 Bonjour 로 자기 코드를 광고하고 있다.** 그러니 목록은 새로 만들 것이
+    // 없다 — 이미 떠 있는 광고를 계속 듣고 있기만 하면 된다. 코드를 불러 주고 받아 적는
+    // 일이 통째로 없어진다.
+    private var lobby: NWBrowser?
+    private(set) var rooms: [FoundRoom] = []
+    /// 이름표를 따로 물어보는 중인 방들.
+    private var peeks: [String: TxtPeek] = [:]
+    /// 내 방에 지금 몇 명인가 · 무슨 게임인가. 이름표에 적어서 목록에 보이게 한다.
+    var roomGame = "" { didSet { if roomGame != oldValue { republish() } } }
+
+    /// 열려 있는 방을 계속 듣는다. 앱이 떠 있는 동안 내내 돈다 — 가볍고(광고 듣기뿐),
+    /// 메뉴를 열었을 때 그제야 찾기 시작하면 빈 목록부터 보게 된다.
+    func watchRooms() {
+        guard lobby == nil else { return }
+        let params = NWParameters()
+        params.includePeerToPeer = false
+        let browser = NWBrowser(for: .bonjour(type: netServiceType, domain: nil), using: params)
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
+            guard let self else { return }
+            var found: [FoundRoom] = []
+            for result in results {
+                guard case .service(let name, _, _, _) = result.endpoint else { continue }
+                var game = "", people = 0, version = ""
+                if case .bonjour(let txt) = result.metadata {
+                    game = txt["g"] ?? ""
+                    people = Int(txt["n"] ?? "") ?? 0
+                    version = txt["v"] ?? ""
+                }
+                found.append(FoundRoom(code: name, game: game, people: people, version: version))
+            }
+            let sorted = found.sorted { $0.code < $1.code }
+            DispatchQueue.main.async {
+                let same = sorted.count == self.rooms.count
+                    && zip(sorted, self.rooms).allSatisfy { $0.code == $1.code && $0.people == $1.people && $0.game == $1.game }
+                if !same {
+                    self.rooms = sorted
+                    self.delegate?.netRoomsChanged()
+                }
+                // 이름표가 비어 온 방은 따로 물어본다.
+                for room in sorted where room.version.isEmpty {
+                    self.peek(room.code)
+                }
+                // 사라진 방에 걸어 둔 것은 치운다.
+                let alive = Set(sorted.map { $0.code })
+                self.peeks = self.peeks.filter { alive.contains($0.key) }
+            }
+        }
+        browser.start(queue: .main)
+        lobby = browser
+    }
+
+    /// 이름표가 비어 온 방 하나를 따로 풀어서 채운다. 한 방에 한 번만 건다.
+    private func peek(_ room: String) {
+        guard peeks[room] == nil else { return }
+        let peek = TxtPeek(room: room)
+        peeks[room] = peek
+        peek.read(timeout: 4) { [weak self] fields in
+            guard let self, !fields.isEmpty else { return }
+            guard let at = self.rooms.firstIndex(where: { $0.code == room }) else { return }
+            let filled = FoundRoom(code: room,
+                                   game: fields["g"] ?? self.rooms[at].game,
+                                   people: Int(fields["n"] ?? "") ?? self.rooms[at].people,
+                                   version: fields["v"] ?? self.rooms[at].version)
+            guard filled.game != self.rooms[at].game || filled.people != self.rooms[at].people
+                    || filled.version != self.rooms[at].version else { return }
+            self.rooms[at] = filled
+            self.delegate?.netRoomsChanged()
+        }
+    }
+
+    /// 사람이 드나들거나 게임이 바뀌면 이름표를 다시 붙인다 — 목록의 「2명」이 따라 움직인다.
+    private func republish() {
+        guard role == "host", let code, let listener else { return }
+        listener.service = Net.service(room: code, port: listener.port?.rawValue,
+                                       game: roomGame, people: peers.count + 1)
+    }
 
     init(name: String) {
         myName = name
@@ -189,7 +316,7 @@ final class Net {
 
         // 이름표는 **시작 전에** 박는다. 뜬 뒤에 바꾸면 이미 방을 본 손님은 옛 이름표를 들고 있어
         // 주소를 못 읽고 이름으로 붙으려 한다 — 그 길이 바로 IPv6 링크로컬로 새는 길이다.
-        listener.service = Net.service(room: room, port: known)
+        listener.service = Net.service(room: room, port: known, game: roomGame)
         listener.newConnectionHandler = { [weak self] connection in
             DispatchQueue.main.async { self?.accept(connection) }
         }
@@ -198,7 +325,7 @@ final class Net {
             case .ready:
                 let port = listener.port?.rawValue ?? netDefaultPort
                 // 기본 포트를 못 잡아 다른 포트로 떴을 때만 이름표를 고친다.
-                if known != port { listener.service = Net.service(room: room, port: port) }
+                if known != port { listener.service = Net.service(room: room, port: port, game: self?.roomGame ?? "") }
                 debugLog("방 열림 \(localIPv4() ?? "?"):\(port)")
             case .failed(let error):
                 DispatchQueue.main.async {
@@ -221,10 +348,14 @@ final class Net {
     }
 
     /// 방 이름표. **내 숫자 주소를 적어 둔다** — 손님이 이름을 풀지 않고 여기로 바로 오게.
-    private static func service(room: String, port: UInt16?) -> NWListener.Service {
+    private static func service(room: String, port: UInt16?,
+                                game: String = "", people: Int = 1) -> NWListener.Service {
         var fields = ["v": appVersion]
         if let ip = localIPv4() { fields["ip"] = ip }
         if let port { fields["port"] = String(port) }
+        // 목록에 보일 것 — 무슨 게임인지, 몇 명인지. 이게 없으면 코드 네 글자만 뜬다.
+        if !game.isEmpty { fields["g"] = game }
+        fields["n"] = String(max(1, people))
         return NWListener.Service(name: room, type: netServiceType, domain: nil,
                                   txtRecord: NWTXTRecord(fields).data)
     }
@@ -414,6 +545,7 @@ final class Net {
         guard let peer = peers.removeValue(forKey: id) else { return }
         peer.connection.cancel()
         if peer.ready { delegate?.netPeerChanged(id: id, name: peer.name, joined: false) }
+        republish()
     }
 
     // MARK: 주고받기
@@ -481,6 +613,7 @@ final class Net {
             peer.ready = true
             line(peer, #"{"t":"__id","id":\#(peer.id),"code":"\#(code ?? "")"}"#)
             delegate?.netPeerChanged(id: peer.id, name: peer.name, joined: true)
+            self.republish()
             return
         }
         if text.hasPrefix(#"{"t":"__deny""#) {
@@ -536,6 +669,7 @@ final class Net {
         let connection = peer.connection
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { connection.cancel() }
         delegate?.netPeerChanged(id: id, name: peer.name, joined: false)
+        republish()
     }
 
     /// 지금 방에 있는 사람들. 메뉴에 이름을 세울 때 쓴다.

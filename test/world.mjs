@@ -67,6 +67,27 @@ say('메뉴 — 게임 도중 홈으로 나간다');
   check('홈 메뉴', labels(w), ['고르던 데로', '같이 하기', '설정', '화면 숨기기', '게임 끝내기']);
 }
 
+say('방 목록 — 코드를 받아 적지 않아도 골라서 들어간다');
+{
+  const w = make([]);
+  tap(w, 'menu'); into(w, 'together');
+  ok('같이 하기에 방 목록이 있다', labels(w).includes('방 목록'));
+  into(w, 'rooms');
+  check('찾은 게 없으면 없다고 적는다', labels(w), ['열려 있는 방이 없다']);
+  // 셸이 목록을 밀어 주면 그대로 뜬다
+  w.rooms = [{ code: 'K3P9', game: '야구', people: 2, old: false },
+             { code: 'QW21', game: '오목', people: 1, old: true }];
+  check('찾은 방이 줄로 뜬다', labels(w), ['K3P9', 'QW21']);
+  const rows = menuItems(w);
+  check('무슨 게임에 몇 명인지 적는다', rows[0].note, '야구 · 2명');
+  check('버전이 다르면 그것도 적는다', rows[1].note, '오목 · 1명 · 버전 다름');
+  check('고르면 그 방으로 들어간다', rows[0].id, 'join:K3P9');
+  // 같이 하기 줄에는 몇 개 열려 있는지 적힌다
+  tap(w, 'left');
+  const back = menuItems(w).find((r) => r.id === 'rooms');
+  check('몇 개 열려 있는지', back.note, '2개');
+}
+
 say('아무도 안 들어온 내 방에서도 남의 방에 들어갈 수 있다');
 {
   // 야구·오목은 고르는 순간 방이 열린다(opensRoom). 그러면 곧바로 「방 안」이 되는데
@@ -93,7 +114,7 @@ say('같이 하기 — 방을 열 때 무슨 게임인지부터 고른다');
   tap(w, 'menu');
   into(w, 'together');
   check('안으로 들어왔다', w.menu.path, ['together']);
-  check('고를 것', labels(w), ['방 만들기', '코드로 입장', '이름 바꾸기']);
+  check('고를 것', labels(w), ['방 만들기', '방 목록', '코드로 입장', '이름 바꾸기']);
 
   into(w, 'host');
   check('또 한 겹', w.menu.path, ['together', 'host']);
@@ -113,7 +134,7 @@ say('같이 하기 — 방 안에서는 코드 복사와 닫기');
   tap(w, 'menu');
   check('방 이름이 옆에 뜬다', menuItems(w)[1].note, '방 K3P9 · 1명');
   into(w, 'together');
-  check('고를 것', labels(w), ['이름 바꾸기', '코드 복사', '코드로 입장', '게임 바꾸기', '방 깨기 — 모두 홈으로']);   // 방장은 게임도 바꾼다. 혼자면 남의 방에도 갈 수 있다
+  check('고를 것', labels(w), ['이름 바꾸기', '코드 복사', '방 목록', '코드로 입장', '게임 바꾸기', '방 깨기 — 모두 홈으로']);   // 방장은 게임도 바꾼다. 혼자면 남의 방에도 갈 수 있다
   check('코드가 옆에', menuItems(w)[1].note, 'K3P9');
   w.mp.role = 'guest';
   check('손님은 나가기', labels(w)[2], '방에서 나가기');
@@ -124,7 +145,7 @@ say('이름 바꾸기 — 메뉴에 있다');
   const w = make([]);
   tap(w, 'menu');
   into(w, 'together');
-  check('혼자일 때도 고칠 수 있다', labels(w), ['방 만들기', '코드로 입장', '이름 바꾸기']);
+  check('혼자일 때도 고칠 수 있다', labels(w), ['방 만들기', '방 목록', '코드로 입장', '이름 바꾸기']);
   while (menuItems(w)[w.menu.index].id !== 'name') tap(w, 'duck');
   tap(w, 'right');
   check('셸이 이름 묻는 창을 연다', w.picked, ['name']);
@@ -172,7 +193,7 @@ say('내보내기 — 방장만, 그 자리에서');
 
   w.mp.others.delete(3);                             // 셸이 끊고 알려 준다
   w.mp.others.delete(2);
-  check('다 내보내면 한 겹 나온다', labels(w), ['이름 바꾸기', '코드 복사', '코드로 입장', '게임 바꾸기', '방 깨기 — 모두 홈으로']);
+  check('다 내보내면 한 겹 나온다', labels(w), ['이름 바꾸기', '코드 복사', '방 목록', '코드로 입장', '게임 바꾸기', '방 깨기 — 모두 홈으로']);
   check('길도 나왔다', w.menu.path, ['together']);
 }
 

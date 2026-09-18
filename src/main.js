@@ -21,6 +21,10 @@ const shell = window.ddong ?? {
   onVisible() {},
   screens: [],
   onScreens() {},
+  rooms: [],
+  onRooms() {},
+  joinRoom() {},
+  setRoomGame() {},
   pickScreen() {},
   fade: 1,
   setFade() {},
@@ -70,6 +74,8 @@ world.onMenu = (action) => {
   if (action.startsWith('host:')) {
     pickGame(world, action.slice(5));
     spread(world);
+    // 무슨 게임으로 연 방인지 이름표에 적는다 — 남의 목록에 「야구 · 2명」으로 뜬다.
+    shell.setRoomGame?.(world.gameId);
     shell.menu?.('host');
     return;
   }
@@ -80,6 +86,7 @@ world.onMenu = (action) => {
     if (id === world.gameId) return;
     pickGame(world, id);
     spread(world);
+    shell.setRoomGame?.(id);
     world.mp.results = null; world.mp.winner = null; world.mp.waiting = false;
     shell.log?.(`게임 바꾸기 → ${gameOf(world).name}`);
     return;
@@ -102,6 +109,11 @@ world.onMenu = (action) => {
   }
   if (action.startsWith('spot:')) {
     shell.setSpot?.(action.slice(5));
+    return;
+  }
+  // **목록에서 고른 방으로 바로 들어간다.** 코드를 받아 적고 치는 일이 없어진다.
+  if (action.startsWith('join:')) {
+    shell.joinRoom?.(action.slice(5));
     return;
   }
   // 방장이 한 사람을 내보낸다. 끊는 건 전송 계층이 한다.
@@ -195,6 +207,10 @@ world.bare = !!shell.bare;
 world.capture = !!shell.capture;
 world.screens = shell.screens ?? [];
 shell.onScreens?.((list) => { world.screens = Array.isArray(list) ? list : []; });
+// 같은 와이파이에 열려 있는 방들. 셸이 Bonjour 로 찾아서 바뀔 때마다 밀어 준다.
+world.rooms = Array.isArray(shell.rooms) ? shell.rooms : [];
+shell.onRooms?.((list) => { world.rooms = Array.isArray(list) ? list : []; });
+shell.setRoomGame?.(world.gameId);
 
 let ground = null;
 let hidden = false;

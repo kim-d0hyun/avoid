@@ -24,6 +24,7 @@ private let spotKey = "windowSpot"
 private let optionHideKey = "hideOnOption"
 private let bareKey = "bareKeys"
 private let captureKey = "captureVisible"
+private let autoUpdateKey = "autoUpdate"
 
 /// 설정이 사는 곳.
 ///
@@ -254,6 +255,13 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         }
     }
 
+    /// **뜰 때 스스로 새 판으로 갈아 끼운다.** 기본은 켜짐 —
+    /// 고쳐 놓고 안 받아 가면 고친 적이 없는 것과 같다. 끄면 메뉴 막대에서 손으로 받는다.
+    private var autoUpdate: Bool {
+        get { store.object(forKey: autoUpdateKey) == nil ? true : store.bool(forKey: autoUpdateKey) }
+        set { store.set(newValue, forKey: autoUpdateKey); refreshMenu() }
+    }
+
     /// **⌥ 고정.** 켜 두면 게임이 보이는 동안 방향키·스페이스가 ⌥ 없이 그대로 게임에 간다.
     ///
     /// 넷이서 하는 협동 게임을 ⌥ 를 잡은 채로 삼십 분씩 할 수는 없다. 대신 그동안 방향키는
@@ -403,7 +411,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                 self?.updater.check(quiet: true)
             }
         }
-        updater.start()
+        updater.start(auto: autoUpdate)
+        // 같은 와이파이에 열려 있는 방을 계속 듣는다. 메뉴를 열었을 때 그제야 찾기
+        // 시작하면 빈 목록부터 보게 된다.
+        net.watchRooms()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -600,6 +611,15 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
           // 물려 있는 화면들. 뽑거나 꽂으면 셸이 onScreens 로 새 목록을 밀어 준다.
           screens: \(screensJSON()),
           onScreens: (handler) => { window.__ddongScreens = handler },
+          // 같은 와이파이에 열려 있는 방들. 열리고 닫힐 때마다 onRooms 로 새 목록이 온다.
+          rooms: \(roomsJSON()),
+          onRooms: (handler) => { window.__ddongRooms = handler },
+          joinRoom: (code) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'joinRoom', code,
+          }),
+          setRoomGame: (id) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'roomGame', id,
+          }),
           pickScreen: (number) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'screen', number,
           }),
@@ -726,6 +746,22 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         webView.evaluateJavaScript("window.__ddongScreens && window.__ddongScreens(\(screensJSON()))")
     }
 
+    /// 방 목록을 게임 안 메뉴로. 이름표에 적힌 게임 아이디를 **사람이 읽는 이름**으로 바꿔서 준다 —
+    /// 게임 이름은 게임 쪽이 알고 있고, 셸은 setGames 로 받아 둔 목록이 있다.
+    private func roomsJSON() -> String {
+        let rows = net.rooms.map { room -> String in
+            let name = games.first(where: { $0.id == room.game })?.name ?? room.game
+            return "{\"code\":\"\(room.code)\",\"game\":\"\(name)\",\"people\":\(room.people),"
+                 + "\"old\":\(room.old ? "true" : "false")}"
+        }
+        return "[" + rows.joined(separator: ",") + "]"
+    }
+
+    private func pushRooms() {
+        guard webView != nil else { return }
+        webView.evaluateJavaScript("window.__ddongRooms && window.__ddongRooms(\(roomsJSON()))")
+    }
+
     /// 게임 안 메뉴에서도, 메뉴 막대에서도 여기로 온다. 고른 화면은 다음에 켤 때도 기억한다.
     private func chooseScreen(_ number: Int) {
         guard NSScreen.screens.contains(where: { $0.number == number }) else { return }
@@ -795,6 +831,24 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                 menu.addItem(withTitle: "방 만들기", action: #selector(makeRoom), keyEquivalent: "").target = self
             }
             menu.addItem(withTitle: "코드로 입장…", action: #selector(askJoin), keyEquivalent: "").target = self
+            // **열려 있는 방 목록.** 코드를 부르고 받아 적는 일이 없어진다.
+            if !net.rooms.isEmpty {
+                let rooms = NSMenu()
+                for room in net.rooms {
+                    let name = games.first(where: { $0.id == room.game })?.name ?? room.game
+                    let note = [name.isEmpty ? nil : name,
+                                room.people > 0 ? "\(room.people)명" : nil,
+                                room.old ? "버전 다름" : nil].compactMap { $0 }.joined(separator: " · ")
+                    let item = NSMenuItem(title: note.isEmpty ? room.code : "\(room.code)  \(note)",
+                                          action: #selector(joinFromList(_:)), keyEquivalent: "")
+                    item.representedObject = room.code
+                    item.target = self
+                    rooms.addItem(item)
+                }
+                let parent = NSMenuItem(title: "방 목록  (\(net.rooms.count)개)", action: nil, keyEquivalent: "")
+                parent.submenu = rooms
+                menu.addItem(parent)
+            }
         }
         menu.addItem(withTitle: "이름 바꾸기…  (\(playerName))",
                      action: #selector(askName), keyEquivalent: "").target = self
@@ -894,6 +948,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             menu.addItem(withTitle: "업데이트 확인  (v\(appVersion))",
                          action: #selector(checkUpdate), keyEquivalent: "").target = self
         }
+        let auto = NSMenuItem(title: "뜰 때 자동으로 받기", action: #selector(toggleAutoUpdate), keyEquivalent: "")
+        auto.state = autoUpdate ? .on : .off
+        auto.target = self
+        menu.addItem(auto)
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -1149,6 +1207,14 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         }
     }
 
+    /// 목록에서 고른 방으로 들어간다.
+    @objc private func joinFromList(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String, confirmName() else { return }
+        net.join(code)
+        refreshMenu()
+    }
+
+    @objc private func toggleAutoUpdate() { autoUpdate = !autoUpdate }
     @objc private func checkUpdate() { updater.check(quiet: false) }
     @objc private func installUpdate() { updater.install() }
 
@@ -1217,8 +1283,13 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
 
     @objc private func askJoin() {
         guard confirmName() else { return }
-        guard let typed = ask(title: "코드로 입장", body: "네 자리 코드를 친다. 방이 안 잡히면 코드@호스트IP 로.",
-                              placeholder: "K3P9", initial: "")
+        // 복사해 둔 코드가 있으면 미리 넣어 둔다. 대개는 Enter 한 번이면 끝난다.
+        let guess = codeOnClipboard()
+        let body = guess.isEmpty
+            ? "네 자리 코드를 친다. 방이 안 잡히면 코드@호스트IP 로. (⌘V 로 붙여넣어도 된다)"
+            : "복사해 둔 \(guess) 를 넣어 뒀다. 다른 방이면 지우고 치면 된다."
+        guard let typed = ask(title: "코드로 입장", body: body,
+                              placeholder: "K3P9", initial: guess)
         else { return }
         net.join(typed)
         refreshMenu()
@@ -1254,6 +1325,19 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     // MARK: 창 띄우기
 
     /// 오버레이는 포커스를 안 가져가서 글자를 못 받는다. 코드를 칠 자리는 이렇게 따로 연다.
+    /// 클립보드에 방 코드처럼 생긴 것이 들어 있으면 그걸 돌려준다 (네 글자, 혹은 `코드@주소`).
+    ///
+    /// 코드는 남이 채팅으로 불러 주는 것이라 **거의 늘 복사된 채로 온다.** 미리 넣어 두면
+    /// 대개는 Enter 한 번이면 끝난다. 아니면 지우고 치면 된다.
+    private func codeOnClipboard() -> String {
+        let raw = (NSPasteboard.general.string(forType: .string) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard raw.count <= 40 else { return "" }
+        let room = raw.split(separator: "@", maxSplits: 1).first.map(String.init) ?? ""
+        let ok = room.count == 4 && room.allSatisfy { $0.isLetter || $0.isNumber }
+        return ok ? raw.uppercased() : ""
+    }
+
     private func ask(title: String, body: String, placeholder: String, initial: String,
                      limit: Int? = nil) -> String? {
         let panel = NSAlert()
@@ -1269,6 +1353,26 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         panel.accessoryView = field
         NSApp.activate(ignoringOtherApps: true)
         panel.window.initialFirstResponder = field
+
+        // **⌘V 가 안 먹던 것.** 메뉴 막대에만 사는 앱(accessory)은 편집 메뉴가 없어서
+        // 잘라내기·복사·붙여넣기 단축키를 아무도 안 받아 준다 — 받아 적어 둔 방 코드를
+        // 붙여넣지 못하고 손으로 다시 쳐야 했다. 첫 응답자에게 직접 넘겨 준다.
+        //
+        // **이 창이 떠 있는 동안만** 지켜본다. 앱 전체에 걸어 두면 게임이 떠 있을 때 누른
+        // ⌘V 까지 가로채게 된다 — 옆 창에 붙여넣으려던 것이 여기로 샌다.
+        let watcher = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  let key = event.charactersIgnoringModifiers?.lowercased()
+            else { return event }
+            let edits: [String: Selector] = [
+                "x": #selector(NSText.cut(_:)), "c": #selector(NSText.copy(_:)),
+                "v": #selector(NSText.paste(_:)), "a": #selector(NSText.selectAll(_:)),
+            ]
+            guard let action = edits[key] else { return event }
+            return NSApp.sendAction(action, to: nil, from: nil) ? nil : event
+        }
+        defer { if let watcher { NSEvent.removeMonitor(watcher) } }
+
         guard panel.runModal() == .alertFirstButtonReturn else { return nil }
         return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -1324,6 +1428,14 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             case "hide": toggleWindow()
             case "quit": NSApp.terminate(nil)
             default: break
+            }
+        case "roomGame":
+            if let id = body["id"] as? String { net.roomGame = id }
+        case "joinRoom":
+            if let code = body["code"] as? String, !code.isEmpty {
+                guard confirmName() else { return }
+                net.join(code)
+                refreshMenu()
             }
         case "screen":
             if let number = body["number"] as? Int { chooseScreen(number) }
@@ -1387,6 +1499,14 @@ extension App: NetDelegate {
     /// 배열(inbound)도 여기서만 만지게 해서 두 스레드가 같이 손대는 일을 없앤다.
     private func onMain(_ block: @escaping () -> Void) {
         if Thread.isMainThread { block() } else { DispatchQueue.main.async(execute: block) }
+    }
+
+    /// 열려 있는 방이 바뀌었다 — 메뉴 막대와 게임 안 메뉴 둘 다에 새 목록을 준다.
+    func netRoomsChanged() {
+        onMain { [self] in
+            refreshMenu()
+            pushRooms()
+        }
     }
 
     func netRoleChanged(role: String, code: String?, myId: Int, note: String?) {

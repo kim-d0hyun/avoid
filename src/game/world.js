@@ -102,6 +102,9 @@ export function createWorld(best, gameId = DEFAULT_GAME) {
     myResult: null,
     /// ⌥M 으로 여는 게임 안 메뉴. 메뉴 막대 아이콘을 못 찾아도 여기서 다 된다.
     menu: { open: false, index: 0, confirmQuit: false, path: [] },
+    /// 셸이 알려 주는, 같은 와이파이에 열려 있는 방들. Bonjour 로 찾은 것이라
+    /// 코드를 받아 적지 않아도 목록에서 골라 들어간다.
+    rooms: [],
     /// 셸이 알려 주는, 지금 물려 있는 화면들. 한 대뿐이면 비어 있는 것과 같이 친다.
     screens: [],
     /// 고르는 화면에서 짚고 있는 줄.
@@ -515,6 +518,12 @@ function screenNote(world) {
   return parts.join(' · ');
 }
 
+/// 「방 목록」 옆에 적는 한 줄. 들어가 보지 않고도 몇 개 열려 있는지 안다.
+function roomsNote(world) {
+  const n = (world.rooms ?? []).length;
+  return n ? `${n}개` : '찾는 중…';
+}
+
 function togetherItems(world) {
   const mp = world.mp;
   if (!mp.on) {
@@ -522,6 +531,9 @@ function togetherItems(world) {
       // 방을 열 때 **무슨 게임인지부터 고른다.** 들어온 사람이 보게 될 판이라
       // 열고 나서 바꾸는 것보다 열기 전에 정하는 게 맞다.
       { id: 'host', into: 'host', label: '방 만들기' },
+      // **열려 있는 방을 보여 준다.** 코드를 부르고 받아 적는 일이 없어진다 —
+      // 같은 와이파이면 방을 연 순간 남들 목록에 뜬다.
+      { id: 'rooms', into: 'rooms', label: '방 목록', note: roomsNote(world) },
       { id: 'join', label: '코드로 입장' },
       // 남들 머리 위에 뜨는 이름. 방에 들어가기 전에 고쳐 두는 게 맞다 —
       // 들어간 뒤에 고치면 이미 다들 옛 이름으로 부르고 있다.
@@ -535,6 +547,7 @@ function togetherItems(world) {
   // 방 안 메뉴에는 코드 입력이 없었다 — 그래서 **친구가 불러 준 코드를 넣을 데가 사라졌다.**
   // 혼자 있는 방은 떠나도 아쉬울 것이 없다 (셸의 join 이 알아서 먼저 나간다).
   if (mp.role === 'host' && mp.others.size === 0) {
+    rows.push({ id: 'rooms', into: 'rooms', label: '방 목록', note: roomsNote(world) });
     rows.push({ id: 'join', label: '코드로 입장' });
   }
   // **방장은 하던 중에도 게임을 바꾼다.** 배구를 하다가 똥피하기로 — 방 전체가 따라간다 (손님은 방장 스냅샷의
@@ -609,6 +622,18 @@ export function menuItems(world) {
       }));
     }
     case 'together': return togetherItems(world);
+    // **같은 와이파이에 열려 있는 방들.** 코드를 받아 적지 않아도 골라서 들어간다.
+    case 'together/rooms': {
+      const rows = (world.rooms ?? []).map((room) => ({
+        id: `join:${room.code}`,
+        label: room.code,
+        note: [room.game, room.people > 0 ? `${room.people}명` : null, room.old ? '버전 다름' : null]
+          .filter(Boolean).join(' · '),
+      }));
+      if (rows.length) return rows;
+      // 하나도 없으면 「없다」를 보여 준다. 빈 메뉴를 띄우면 고장 난 것으로 읽힌다.
+      return [{ id: 'none', label: '열려 있는 방이 없다', note: '찾는 중…' }];
+    }
     // 내보낼 사람 고르기. 다 내보내고 나면 고를 게 없으니 한 겹 나온다.
     case 'together/kick': {
       const rows = [...world.mp.others.values()].map((other) => ({

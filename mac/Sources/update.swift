@@ -14,7 +14,8 @@ let releasePage = "https://github.com/kim-d0hyun/avoid/releases/latest"
 /// CI 가 붙이는 자산 이름의 끝. 이걸로 dmg 와 가른다.
 private let assetSuffix = "-mac.zip"
 private let checkInterval: TimeInterval = 24 * 60 * 60
-private let firstCheckDelay: TimeInterval = 20
+/// 뜨자마자 본다. 창이 한 번 뜬 뒤라야 「받는 중」이 메뉴 막대에 보인다.
+private let firstCheckDelay: TimeInterval = 1.5
 
 var appVersion: String {
     Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
@@ -48,10 +49,20 @@ final class Updater {
     private(set) var note: String?
 
     var onChange: (() -> Void)?
+    /// 자동으로 갈아 끼우다 실패한 판. **같은 판으로 다시 시도하지 않는다** —
+    /// 안 그러면 뜰 때마다 받고 실패하고를 되풀이한다 (권한이 없는 자리에 깔린 앱이 그렇다).
+    private var gaveUpOn: String?
 
-    func start() {
+    /// **뜰 때 한 번 스스로 갈아 끼운다.** 그 뒤로 하루에 한 번 하는 확인은 알리기만 한다 —
+    /// 판을 하고 있는 중에 앱이 저 혼자 꺼졌다 뜨면 그게 더 나쁘다.
+    func start(auto: Bool) {
+        // **깔린 자리에서만 스스로 갈아 끼운다.** 빌드해서 dist 나 Downloads 에서 바로 띄운
+        // 것까지 갈아 끼우면, 방금 고쳐 만든 것이 릴리스 판으로 조용히 덮인다.
+        let installed = Bundle.main.bundleURL.deletingLastPathComponent().path
+        let homeApps = (NSHomeDirectory() as NSString).appendingPathComponent("Applications")
+        let here = installed == "/Applications" || installed == homeApps
         DispatchQueue.main.asyncAfter(deadline: .now() + firstCheckDelay) { [weak self] in
-            self?.check(quiet: true)
+            self?.check(quiet: true, thenInstall: auto && here)
         }
         Timer.scheduledTimer(withTimeInterval: checkInterval, repeats: true) { [weak self] _ in
             self?.check(quiet: true)
@@ -59,7 +70,8 @@ final class Updater {
     }
 
     /// quiet 이면 없을 때 아무 말도 안 한다. 사람이 직접 누른 확인은 결과를 알려 준다.
-    func check(quiet: Bool) {
+    /// thenInstall 이면 새것이 있을 때 **묻지 않고 바로** 갈아 끼운다.
+    func check(quiet: Bool, thenInstall: Bool = false) {
         var request = URLRequest(url: URL(string: releaseAPI)!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 12
@@ -89,10 +101,18 @@ final class Updater {
                 }
                 self.pending = Release(version: tag, zip: zip)
                 self.onChange?()
+                if thenInstall, !self.busy, self.gaveUpOn != tag {
+                    self.autoTag = tag
+                    self.install()
+                    return
+                }
                 if !quiet { self.say("새 버전 \(tag) 이 있다. 메뉴 막대에서 받으면 된다") }
             }
         }.resume()
     }
+
+    /// 지금 자동으로 하고 있는 판. 실패하면 이 판을 다시 시도하지 않는다.
+    private var autoTag: String?
 
     /// 받아서 자기를 갈아 끼우고 다시 뜬다.
     func install() {
@@ -155,8 +175,9 @@ final class Updater {
             }
         } catch {
             // /Applications 에 쓸 권한이 없는 경우가 대부분이다. 받는 곳을 열어 준다.
+            let auto = autoTag != nil
             fail("갈아 끼우지 못했다. 직접 받아서 덮어써야 한다")
-            NSWorkspace.shared.open(URL(string: releasePage)!)
+            if !auto { NSWorkspace.shared.open(URL(string: releasePage)!) }
             return
         }
         try? FileManager.default.removeItem(at: work)
@@ -181,6 +202,16 @@ final class Updater {
     private func fail(_ text: String) {
         busy = false
         note = nil
+        // 자동으로 하다 실패한 것이면 **조용히 접는다.** 뜨자마자 경고창이 뜨면
+        // 게임을 켠 게 아니라 경고창을 켠 것이 된다. 메뉴 막대에는 「받기」로 남는다.
+        let auto = autoTag
+        autoTag = nil
+        if let auto {
+            gaveUpOn = auto
+            note = nil
+            onChange?()
+            return
+        }
         onChange?()
         say(text)
     }
