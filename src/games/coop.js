@@ -200,6 +200,18 @@ function rallyKey(b, tx, ty) {
   return `${x},${ty}`;
 }
 function ladderTile(b, ch) { return ch === 'H' || ch === '|' || (ch === 'L' && b.ladderOpen); }
+
+/// 접이식 사다리(L)가 놓인 자리들 — 판 좌표(픽셀)로. 펴졌다고 알려 줄 때 쓴다.
+function ladderSpots(b) {
+  const out = [];
+  for (let y = 0; y < b.rows.length; y++) {
+    const row = b.rows[y];
+    for (let x = 0; x < row.length; x++) {
+      if (row[x] === 'L') out.push([(x + 0.5) * T, (y + 0.5) * T]);
+    }
+  }
+  return out;
+}
 /// 위에서만 딛는 칸인가 (밑에서는 통과).
 function onewayTile(b, ch, tx, ty) {
   if (ch === '=' || ch === '>' || ch === '<' || ch === 'S' || ch === 'J' || ch === 'j') return true;
@@ -799,7 +811,16 @@ function stepObjects(world, dt) {
       const ch = tile(b, tx, y);
       if (ch === 'a') b.latched = true;
       if (ch === 't') b.timed = TIMED_FOR;
-      if (ch === 'l') b.ladderOpen = true;
+      // **구조 레버.** 밟으면 점선 사다리가 펴지고 판이 끝날 때까지 남는다.
+      //
+      // 펴지는 것을 **알려 주지 않으면 아무 일도 안 일어난 것으로 보인다** — 레버는 여기,
+      // 사다리는 저 멀리 아래에 있어서 밟은 사람은 사다리를 볼 수도 없다. 그래서 밟은
+      // 그 순간 사다리 자리마다 고리를 한 번 튀긴다. 「밟았는데 왜 안 타져」의 절반이 이거다.
+      if (ch === 'l' && !b.ladderOpen) {
+        b.ladderOpen = true;
+        const at = ladderSpots(b);
+        if (at.length) b.flash = { x: at[0][0], y: at[0][1], t: 0.9, color: '#2f9c9c' };
+      }
       if ((ch === 'r' || ch === 'y' || ch === 'b') && !b.opened.has(ch)) {
         b.opened.add(ch); b.keys[ch].taken = true;
         b.flash = { x: (tx + 0.5) * T, y: (y + 0.5) * T, t: 0.6, color: KEY_COLOR[ch] };
