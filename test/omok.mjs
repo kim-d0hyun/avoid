@@ -36,15 +36,15 @@ const mark = (b, list, stone) => { for (const [x, y] of list) b.cells[y * N + x]
 say('판 — 열다섯 줄, 빈 판에서 검정이 먼저');
 {
   const world = mk(); const b = world.bag;
-  check('줄 수', N, 15);
+  check('줄 수', N, 19);
   check('이기는 길이', WIN, 5);
-  check('칸 수', b.cells.length, 225);
+  check('칸 수', b.cells.length, N * N);
   ok('처음엔 다 비어 있다', b.cells.every((v) => v === 0));
   check('검정이 먼저', b.turn, 0);
-  check('커서는 한가운데', [b.aim.x, b.aim.y], [7, 7]);
+  check('커서는 한가운데', [b.aim.x, b.aim.y], [(N / 2) | 0, (N / 2) | 0]);
   const L = layout(world);
   ok('판이 화면 안에 들어간다', L.x > 0 && L.y > 0 && L.x + L.size < world.w && L.y + L.size < world.h);
-  ok('칸이 손가락만큼은 된다', L.step >= 14);
+  ok('칸이 손가락만큼은 된다', L.step >= 11);
 }
 
 say('다섯 줄 — 가로 · 세로 · 두 대각선');
@@ -163,7 +163,7 @@ say('컴퓨터가 막을 것은 막고, 이길 수 있으면 이긴다');
   ok('이길 수 있으면 이긴다', win[1] === 7 && (win[0] === 2 || win[0] === 7));
   // 빈 판이면 한가운데
   const d = mk().bag;
-  check('빈 판이면 한가운데', bestSpot(d.cells, 1), [7, 7]);
+  check('빈 판이면 한가운데', bestSpot(d.cells, 1), [(N / 2) | 0, (N / 2) | 0]);
 }
 
 say('자리 값 — 열린 셋이 막힌 셋보다 값지다');
@@ -241,16 +241,17 @@ say('컴퓨터도 금수를 안 둔다');
 say('커서 — 한 칸씩, 꾹 누르면 이어서, 판 밖으로는 안 나간다');
 {
   const world = mk(); const b = world.bag;
+  const mid = (N / 2) | 0;
   omok.tap(world, 'right');
-  check('누른 순간 한 칸', [b.aim.x, b.aim.y], [8, 7]);
+  check('누른 순간 한 칸', [b.aim.x, b.aim.y], [mid + 1, mid]);
   omok.tap(world, 'jump');
-  check('위로도 한 칸', [b.aim.x, b.aim.y], [8, 6]);
+  check('위로도 한 칸', [b.aim.x, b.aim.y], [mid + 1, mid - 1]);
   // 꾹 누르고 있으면 잠깐 뒤부터 이어서 간다
   world.input.right = true;
   for (let f = 0; f < 18; f++) w.update(world, FR);     // 0.3초 — 아직
-  check('바로는 안 흐른다', b.aim.x, 8);
+  check('바로는 안 흐른다', b.aim.x, mid + 1);
   for (let f = 0; f < 42; f++) w.update(world, FR);     // 0.7초
-  ok('꾹 누르면 이어서 간다', b.aim.x > 9);
+  ok('꾹 누르면 이어서 간다', b.aim.x > mid + 2);
   world.input.right = false;
   for (let f = 0; f < 600; f++) { world.input.left = true; w.update(world, FR); }
   check('왼쪽 끝에서 멎는다', b.aim.x, 0);

@@ -11,12 +11,18 @@
 // 자리는 **방장이 정한다.** 손님은 「여기 놓고 싶다」만 보내고, 놓을 수 있는지(내 차례인가,
 // 빈 자리인가)는 방장이 다시 본다. 안 그러면 두 사람이 같은 칸에 동시에 놓는다.
 
-import { INK, RED, PENCIL, stroke, circle, text, paperScrap } from '../draw/ink.js';
+import { INK, RED, PENCIL, PAPER_SOLID, stroke, circle, text, paperScrap } from '../draw/ink.js';
 import { drawStickman } from '../draw/stickman.js';
 
-const N = 15;                     // 열다섯 줄 — 오목판의 크기
+const N = 19;                     // 열아홉 줄 — 진짜 바둑판과 같은 크기
 const WIN = 5;                    // 다섯이면 이긴다
+/// **사람**의 색 (판 옆에 선 졸라맨과 커서). 이 앱의 편 색 그대로다.
 const TEAM_INK = ['#b5352f', '#2f6fb0'];
+/// **돌**의 색. 오목은 흑백이다 — 편 색으로 그리면 「빨강 편 돌」이지 바둑돌이 아니다.
+/// 검정은 속을 채우고, 하양은 종이색으로 채운 뒤 테두리를 두른다 (안 채우면 판의 줄이
+/// 돌 위로 비쳐서 돌이 아니라 동그라미로 보인다).
+const STONE_FILL = ['#26221c', PAPER_SOLID];
+const STONE_EDGE = ['#15120e', '#2f2a22'];
 const TEAM_NAME = ['검정', '하양'];
 const HAN = '"Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 const MONO = '"American Typewriter", "Courier New", monospace';
@@ -30,6 +36,10 @@ const THINK = 0.65;
 const OVER_HOLD = 2.6;
 
 const at = (cells, x, y) => (x < 0 || y < 0 || x >= N || y >= N ? -1 : cells[y * N + x]);
+/// 내가 어느 편인가 (구경하는 사람은 −1 — 어느 쪽도 「상대」가 아니다).
+const side0 = (world) => (world.mp.waiting ? -1 : (world.team ?? 0));
+/// 방금 둔 자리를 크게 보이는 시간.
+const MARK_LOUD = 2.5;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 // ── 판 읽기 ───────────────────────────────────────────────────────────────
@@ -264,6 +274,8 @@ export function put(world, x, y, side) {
   b.cells[y * N + x] = side + 1;
   b.moves.push(y * N + x);
   b.last = [x, y];
+  b.lastBy = side;                          // 누가 뒀나 — 「상대가 둔 자리」로 적으려고
+  b.mark = 0;                               // 방금 둔 자리를 얼마나 오래 크게 보일지
   b.fresh = true;                       // 손님에게 판을 다시 보낸다
   const line = winLine(b.cells, x, y, side + 1);
   if (line) {
@@ -293,7 +305,7 @@ function freshBag() {
     seat: [0, 0],                         // 편마다 누구 차례인가
     aim: { x: (N / 2) | 0, y: (N / 2) | 0 },
     held: 0, rep: 0,
-    last: null, line: null,
+    last: null, lastBy: null, mark: null, line: null,
     over: false, winner: null, hold: 0,
     note: null, say: null, sayT: 0,
     think: THINK,
@@ -309,35 +321,43 @@ export function layout(world) {
   const w = world.w ?? 1200, h = world.h ?? 800;
   // 위쪽 100px 은 차례를 적는 자리, 아래 60px 은 사람이 서는 자리.
   const room = Math.min(w - 300, h - 190);
-  const step = Math.max(14, room / (N - 1));
+  // 열아홉 줄이라 칸이 작아진다. 작은 창에서도 판이 통째로 보이는 쪽을 고른다 —
+  // 칸이 커서 판이 잘리면 둘 자리가 화면 밖으로 나간다.
+  const step = Math.max(11, room / (N - 1));
   const size = step * (N - 1);
   return { x: (w - size) / 2, y: 104 + (h - 190 - size) / 2, step, size };
 }
 
 const cellAt = (L, x, y) => [L.x + x * L.step, L.y + y * L.step];
 
-/// 별점 — 진짜 오목판에 찍혀 있는 아홉 점. 눈이 자리를 세는 기준이 된다.
-const STARS = [3, 7, 11];
+/// 별점 — 진짜 바둑판에 찍혀 있는 아홉 점(화점). 눈이 자리를 세는 기준이 된다.
+/// 열아홉 줄이면 4·10·16번째 줄, 곧 0부터 세어 3·9·15 다.
+const STARS = [3, 9, 15];
 
 function drawBoard(ctx, L, b) {
-  // 판 바닥. 종이 위에 연필로 그은 것처럼.
-  paperScrap(ctx, L.x - 22, L.y - 22, L.size + 44, L.size + 44, 7);
+  // **판은 아주 옅게.** 몰래 하는 게임이다 — 화면에서 제일 큰 것이 바둑판인데, 그게 진하면
+  // 옆에서 지나가는 사람 눈에 제일 먼저 걸린다. 종이 바닥도 깔지 않는다(바탕이 곧 종이다).
+  // 진해야 하는 것은 **돌**뿐이다. 돌만 보이면 판은 눈이 알아서 잇는다.
   for (let i = 0; i < N; i++) {
     const [x0, y0] = cellAt(L, 0, i), [x1] = cellAt(L, N - 1, i);
     stroke(ctx, [[x0, y0], [x1, y0]],
-           { width: 1.1, color: PENCIL, seed: 10 + i, amp: 0.5, alpha: 0.75, halo: false });
+           { width: 0.9, color: PENCIL, seed: 10 + i, amp: 0.4, alpha: 0.26, halo: false });
     const [ax, ay] = cellAt(L, i, 0), [, by] = cellAt(L, i, N - 1);
     stroke(ctx, [[ax, ay], [ax, by]],
-           { width: 1.1, color: PENCIL, seed: 40 + i, amp: 0.5, alpha: 0.75, halo: false });
+           { width: 0.9, color: PENCIL, seed: 40 + i, amp: 0.4, alpha: 0.26, halo: false });
   }
+  // 네 귀퉁이만 조금 진하게 — 판이 어디까지인지는 알아야 한다.
+  const edge = [[L.x, L.y], [L.x + L.size, L.y], [L.x + L.size, L.y + L.size], [L.x, L.y + L.size]];
+  stroke(ctx, [...edge, edge[0]],
+         { width: 1.1, color: PENCIL, seed: 9, amp: 0.4, alpha: 0.4, sharp: true, halo: false });
   for (const sy of STARS) for (const sx of STARS) {
     const [px, py] = cellAt(L, sx, sy);
-    circle(ctx, px, py, 2.6, { width: 1.4, color: PENCIL, fill: PENCIL, halo: false,
-                               alpha: 0.6, seed: 70 + sx * 3 + sy, amp: 0.2 });
+    circle(ctx, px, py, 2.2, { width: 1.2, color: PENCIL, fill: PENCIL, halo: false,
+                               alpha: 0.34, seed: 70 + sx * 3 + sy, amp: 0.2 });
   }
 }
 
-function drawStones(ctx, L, b, time) {
+function drawStones(ctx, L, b, time, world) {
   const r = L.step * 0.42;
   for (let y = 0; y < N; y++) {
     for (let x = 0; x < N; x++) {
@@ -345,18 +365,41 @@ function drawStones(ctx, L, b, time) {
       if (!v) continue;
       const [px, py] = cellAt(L, x, y);
       const side = v - 1;
-      // 검정은 속을 채우고 하양은 테두리만 — 색만으로 가르면 색맹인 사람이 못 가른다.
       circle(ctx, px, py, r, {
-        width: 2.2, color: TEAM_INK[side], fill: side === 0 ? TEAM_INK[0] : null,
-        seed: 100 + y * N + x, amp: 0.45, halo: side === 1,
+        width: 2, color: STONE_EDGE[side], fill: STONE_FILL[side],
+        seed: 100 + y * N + x, amp: 0.4, halo: false,
       });
+      // 하양 돌에 **왼쪽 위 빛** 한 점. 종이 위에서 하양 돌은 그냥 빈 동그라미로 보이는데,
+      // 이 점 하나로 「놓인 돌」이 된다.
+      if (side === 1) {
+        circle(ctx, px - r * 0.3, py - r * 0.32, r * 0.22, {
+          width: 1.1, color: PENCIL, halo: false, alpha: 0.5, seed: 400 + y * N + x, amp: 0.2,
+        });
+      }
     }
   }
-  // 마지막 수 — 어디에 뒀는지 모르면 다음 수를 생각할 수가 없다.
-  if (b.last && !b.over) {
+  // **마지막 수.** 어디에 뒀는지 모르면 다음 수를 생각할 수가 없다 — 특히 남이 둔 수는
+  // 눈앞에서 놓이는 것을 못 보니 **판이 바뀐 것조차 모른다.** 그래서 두 겹으로 남긴다:
+  // 놓인 뒤 2.5초 동안은 고리가 퍼지며 크게, 그 뒤로는 작은 점으로 다음 수까지 계속.
+  if (b.last) {
     const [px, py] = cellAt(L, b.last[0], b.last[1]);
-    circle(ctx, px, py, r * 0.42, { width: 2, color: RED, halo: false, seed: 9, amp: 0.3,
-                                    alpha: 0.6 + 0.3 * Math.sin(time * 4) });
+    const age = b.mark ?? 99;
+    if (age < MARK_LOUD) {
+      const k = age / MARK_LOUD;
+      // 퍼지는 고리 — 눈이 저절로 그리로 간다.
+      circle(ctx, px, py, r * (1.1 + k * 1.5),
+             { width: 2.4 * (1 - k), color: RED, halo: false, seed: 11, amp: 0.5, alpha: 1 - k });
+      circle(ctx, px, py, r * 0.95,
+             { width: 2.6, color: RED, halo: false, seed: 12, amp: 0.4, alpha: 0.9 - k * 0.5 });
+      // 누가 둔 자리인가. 내 편이 둔 것과 상대가 둔 것은 뜻이 다르다.
+      const foe = b.lastBy !== null && b.lastBy !== side0(world);
+      text(ctx, foe ? '상대가 둔 자리' : '방금 둔 자리', px, py - r * 2.2 - 4,
+           { font: `800 12px ${HAN}`, color: RED, align: 'center', halo: 3, alpha: 1 - k * 0.8 });
+    }
+    if (!b.over) {
+      circle(ctx, px, py, r * 0.42, { width: 2.2, color: RED, halo: false, seed: 9, amp: 0.3,
+                                      alpha: 0.6 + 0.25 * Math.sin(time * 4) });
+    }
   }
   // 이긴 줄 — 다섯을 가로질러 긋는다.
   if (b.line?.length >= 2) {
@@ -378,6 +421,13 @@ function drawAim(ctx, L, world, b, time) {
   const box = [[px - r, py - r], [px + r, py - r], [px + r, py + r], [px - r, py + r]];
   stroke(ctx, [...box, box[0]], { width: 2, color: tint, seed: 6, amp: 0.6,
                                   alpha: puls, sharp: true, halo: false });
+  // 내 차례면 **놓을 돌을 옅게 비쳐 둔다.** 다음 수가 어떤 모양이 되는지 눈으로 본다.
+  if (mine && !b.cells[b.aim.y * N + b.aim.x] && !forbidden(b.cells, b.aim.x, b.aim.y, side + 1)) {
+    circle(ctx, px, py, L.step * 0.42, {
+      width: 1.6, color: STONE_EDGE[side], fill: STONE_FILL[side],
+      alpha: 0.4, seed: 7, amp: 0.3, halo: false,
+    });
+  }
   // **금수 자리는 미리 알려 준다.** 눌러 보고 나서야 알면 늦다.
   if (mine && !b.cells[b.aim.y * N + b.aim.x]) {
     const no = forbidden(b.cells, b.aim.x, b.aim.y, (world.team ?? 0) + 1);
@@ -417,6 +467,10 @@ function drawCrew(ctx, world, b, time, boil) {
       drawStickman(ctx, p, time, boil, {
         color: TEAM_INK[side], name: s.mine ? '나' : (s.name ?? null), mine: s.mine,
       });
+      // 이 사람이 **어느 돌**인가. 사람 색(빨강·파랑)과 돌 색(흑백)은 따로다 —
+      // 사람은 서로 가려야 하고, 돌은 오목이라 흑백이라야 한다.
+      circle(ctx, baseX, y - 96, 8, { width: 1.8, color: STONE_EDGE[side],
+                                      fill: STONE_FILL[side], seed: 5 + i, amp: 0.3, halo: false });
       // 지금 둘 사람을 가리킨다. **머리 위가 아니라 판 쪽 옆구리**에 — 위에는 이름이 있다.
       if (who && who.id === s.id && !b.over) {
         text(ctx, side === 0 ? '▶' : '◀', baseX + (side === 0 ? 34 : -34), y - 52,
@@ -514,6 +568,8 @@ export default {
   update(world, dt) {
     const b = world.bag;
     if (b.say) { b.sayT += dt; if (b.sayT > 1.2) b.say = null; }
+    if (b.mark !== null && b.mark < 99) b.mark += dt;    // 방금 둔 자리가 사그라드는 시계
+    if (b.foul) { b.foul.t += dt; if (b.foul.t > 1.4) b.foul = null; }
     if (world.state !== 'play') return;
     if (world.mp.role === 'host') {
       b.sides = rosterSides(world);
@@ -567,7 +623,7 @@ export default {
     if (!b?.cells) return;
     const L = layout(world);
     drawBoard(ctx, L, b);
-    drawStones(ctx, L, b, time);
+    drawStones(ctx, L, b, time, world);
     drawAim(ctx, L, world, b, time);
     drawCrew(ctx, world, b, time, boil);
   },
@@ -596,7 +652,13 @@ export default {
     const wide = Math.max(180, ctx.measureText(line).width + 60);
     paperScrap(ctx, world.w / 2 - wide / 2, 14, wide, 54, 9);
     text(ctx, line, world.w / 2, 37,
-         { font: `800 17px ${HAN}`, color: b.over ? RED : TEAM_INK[b.turn], align: 'center', halo: 0 });
+         { font: `800 17px ${HAN}`, color: b.over ? RED : INK, align: 'center', halo: 0 });
+    // 지금 두는 돌을 글자 옆에 하나 그려 둔다 — 「검정」이라고 읽는 것보다 빠르다.
+    if (!b.over) {
+      const sx = world.w / 2 - wide / 2 + 20;
+      circle(ctx, sx, 32, 9, { width: 2, color: STONE_EDGE[b.turn], fill: STONE_FILL[b.turn],
+                               seed: 3, amp: 0.3, halo: false });
+    }
     text(ctx, `${b.moves.length}수`, world.w / 2, 57,
          { font: `600 12px ${MONO}`, color: PENCIL, align: 'center', halo: 0 });
     // 「내 차례가 아니다」 같은 한 줄.
@@ -638,6 +700,7 @@ export default {
       wn: b.winner === 0 || b.winner === 1 ? b.winner : -1,
       nt: b.note ?? null,
       ls: b.last ?? null,
+      lb: b.lastBy === 0 || b.lastBy === 1 ? b.lastBy : -1,
       ln: b.line ?? null,
       mv: fresh || again ? b.moves : undefined,
     };
@@ -663,7 +726,12 @@ export default {
     b.over = !!data.o;
     b.winner = data.wn === 0 || data.wn === 1 ? data.wn : null;
     if (typeof data.nt === 'string' || data.nt === null) b.note = data.nt;
+    const was = b.last;
     b.last = Array.isArray(data.ls) && data.ls.length === 2 ? data.ls : null;
+    // **새 수가 왔으면 시계를 되감는다.** 손님은 남이 두는 것을 눈앞에서 못 보니,
+    // 여기서 안 알려 주면 판이 언제 바뀌었는지 알 길이 없다.
+    if (b.last && (!was || was[0] !== b.last[0] || was[1] !== b.last[1])) b.mark = 0;
+    if (Number.isFinite(data.lb)) b.lastBy = data.lb === 0 || data.lb === 1 ? data.lb : null;
     b.line = Array.isArray(data.ln) ? data.ln : null;
   },
 };
