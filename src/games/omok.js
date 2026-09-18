@@ -236,6 +236,28 @@ function rosterSides(world) {
   return sides;
 }
 
+/// **편을 바꾼다.** 방장이 정한다.
+///
+/// 1:1 에서 내가 상대 편으로 가면 **색을 맞바꾼다.** 안 바꾸면 둘이 같은 편에 서고
+/// 빈 편은 컴퓨터가 맡는다 — 편을 고른 게 아니라 상대를 컴퓨터로 갈아 치운 셈이 된다.
+/// 셋 이상이면 그냥 옮긴다 (누구와 바꿀지 알 수 없다).
+function takeSide(world, id, side) {
+  const want = side ? 1 : 0;
+  const picked = picks(world);
+  const before = id === world.mp.myId ? (world.team ?? 0) : (picked.get(id) ?? 0);
+  const ids = [world.mp.myId, ...world.mp.others.keys()];
+  const sideOf = (who) => (who === world.mp.myId ? (world.team ?? 0) : (picked.get(who) ?? 0));
+  const foes = ids.filter((who) => who !== id && sideOf(who) === want);
+  picked.set(id, want);
+  if (id === world.mp.myId) world.team = want;
+  // 둘뿐이고 그 한 사람이 내가 가려는 편에 있으면 자리를 맞바꾼다.
+  if (ids.length === 2 && foes.length === 1 && before !== want) {
+    const other = foes[0];
+    picked.set(other, before);
+    if (other === world.mp.myId) world.team = before;
+  }
+}
+
 /// 그 편에 선 사람들 (번호 순). 번호 순이라 방장과 손님이 같은 차례를 센다.
 export function seatsOf(world, side) {
   const b = world.bag;
@@ -545,8 +567,14 @@ export default {
     world.player.vx = 0;
   },
   swap(world, shell, side) {
-    world.team = side === undefined ? 1 - (world.team ?? 0) : (side ? 1 : 0);
-    picks(world).set(world.mp.myId, world.team);
+    const want = side === undefined ? 1 - (world.team ?? 0) : (side ? 1 : 0);
+    // 손님은 **부탁만** 한다. 맞바꾸기는 방장이 정한다 — 손님이 제 화면에서 바꿔 놓으면
+    // 방장이 뿌리는 명단에 곧 덮여서, 편이 잠깐 깜빡였다 돌아온다.
+    if (world.mp.on && world.mp.role === 'guest') {
+      (shell?.net?.send ?? world.send)?.({ t: 'gm', s: want });
+      return;
+    }
+    takeSide(world, world.mp.myId, want);
     if (world.mp.on) (shell?.net?.send ?? world.send)?.({ t: 'gm', s: world.team });
   },
   begin(world) { Object.assign(world.bag, freshBag()); },
@@ -686,7 +714,7 @@ export default {
   message(world, from, msg) {
     if (world.mp.role !== 'host') return;
     const b = world.bag;
-    if (typeof msg.s === 'number') { picks(world).set(from, msg.s ? 1 : 0); return; }
+    if (typeof msg.s === 'number') { takeSide(world, from, msg.s ? 1 : 0); return; }
     if (world.state !== 'play' || b.over) return;
     if (msg.k !== 'put') return;
     const side = b.sides?.get(from) ?? 0;

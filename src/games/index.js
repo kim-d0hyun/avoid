@@ -18,8 +18,9 @@ import coop from './coop.js';
 import trio from './trio.js';
 import baseball from './baseball.js';
 import omok from './omok.js';
+import alkkagi from './alkkagi.js';
 
-export const games = [dodge, volley, baseball, omok, coop, trio];
+export const games = [dodge, volley, baseball, omok, alkkagi, coop, trio];
 
 export const DEFAULT_GAME = dodge.id;
 

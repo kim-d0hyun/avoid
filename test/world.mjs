@@ -118,7 +118,7 @@ say('같이 하기 — 방을 열 때 무슨 게임인지부터 고른다');
 
   into(w, 'host');
   check('또 한 겹', w.menu.path, ['together', 'host']);
-  check('게임 목록', labels(w), ['똥피하기', '배구', '야구', '오목', '넷이서', '셋이서']);
+  check('게임 목록', labels(w), ['똥피하기', '배구', '야구', '오목', '알까기', '넷이서', '셋이서']);
   check('처음 짚는 것은 하던 게임', w.menu.index, 0);
 
   tap(w, 'duck');                                    // 배구
@@ -159,7 +159,7 @@ say('방장은 하던 중에도 게임을 바꾼다 — 같이 하기 ▸ 게임
   tap(w, 'menu'); into(w, 'together');
   check('방장 메뉴에 게임 바꾸기가 있다', labels(w).includes('게임 바꾸기'), true);
   into(w, 'game');
-  check('게임 여섯을 고른다', labels(w), ['똥피하기', '배구', '야구', '오목', '넷이서', '셋이서']);
+  check('게임 일곱을 고른다', labels(w), ['똥피하기', '배구', '야구', '오목', '알까기', '넷이서', '셋이서']);
   check('처음 짚는 것은 하던 게임', w.menu.index, 0);
   tap(w, 'duck'); tap(w, 'right');
   check('고르면 game: 으로 알린다', w.picked, ['game:volley']);
