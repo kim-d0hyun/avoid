@@ -230,7 +230,12 @@ final class Net {
         guard lobby == nil else { return }
         let params = NWParameters()
         params.includePeerToPeer = false
-        let browser = NWBrowser(for: .bonjour(type: netServiceType, domain: nil), using: params)
+        // **이름표(TXT)까지 달라고 해야 온다.** `.bonjour(...)` 로 찾으면 이름과 주소만 오고
+        // metadata 는 **늘 비어 있다.** 그래서 목록에 무슨 게임인지·몇 명인지가 안 뜨고,
+        // 방마다 따로 풀어 보느라(peek) 판이 도는 중에도 mDNS 를 계속 두드렸다.
+        // 두 프로세스로 재 보니 `.bonjour` 는 「이름표없음」, `.bonjourWithTXTRecord` 는
+        // 첫 결과부터 `v=3.20.0 g=volley n=2` 가 그대로 왔다.
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: netServiceType, domain: nil), using: params)
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             guard let self else { return }
             var found: [FoundRoom] = []
@@ -245,6 +250,11 @@ final class Net {
                 found.append(FoundRoom(code: name, game: game, people: people, version: version))
             }
             let sorted = found.sorted { $0.code < $1.code }
+            // 무엇을 찾았는지 남긴다 — 「방이 안 보인다」가 **정말 빈 것인지 못 찾는 것인지**
+            // 로그만 보면 갈린다 (DDONG_DEBUG 일 때만 찍힌다).
+            debugLog("방 목록 " + (sorted.isEmpty ? "비었다" : sorted.map {
+                "\($0.code)(\($0.game.isEmpty ? "?" : $0.game))/\($0.people)명/v\($0.version.isEmpty ? "?" : $0.version)"
+            }.joined(separator: " · ")))
             DispatchQueue.main.async {
                 self.seen = sorted
                 self.rebuild(sorted)
@@ -261,17 +271,45 @@ final class Net {
         // 있으면 브라우저가 한 번 실패하는데, 그대로 두면 **그 뒤로 영영 아무 방도 못 찾는다.**
         // 목록이 비어 있는 것과 목록을 못 보는 것은 화면에서 똑같이 보여서, 고장인 줄도 모른다.
         browser.stateUpdateHandler = { [weak self] state in
+            guard let self, self.lobby === browser else { return }
             switch state {
-            case .failed, .cancelled:
-                guard let self, self.lobby === browser else { return }
+            case .failed(let error):
+                debugLog("방 목록 브라우저가 멈췄다(\(error)) — 3초 뒤 다시")
+                self.again()
+            case .cancelled:
                 debugLog("방 목록 브라우저가 멈췄다 — 3초 뒤 다시")
-                self.lobby = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.watchRooms() }
+                self.again()
+            // **기다림에 갇히는 것이 제일 나쁘다.** 와이파이가 아직 안 붙었거나 로컬 네트워크
+            // 권한이 안 떨어진 채로 켜면 브라우저가 `.waiting` 에 앉아 **아무 결과도 안 주고
+            // 실패로도 안 넘어간다.** 화면에서는 「열려 있는 방이 없다」와 똑같이 보인다 —
+            // 「동료가 만든 방이 안 보인다」가 이것일 수 있다. 그래서 여기서도 다시 건다.
+            case .waiting(let error):
+                debugLog("방 목록 브라우저가 기다리고 있다(\(error)) — 3초 뒤 다시")
+                self.again()
+            case .ready:
+                debugLog("방 목록 브라우저 준비됐다")
             default: break
             }
         }
         browser.start(queue: .main)
         lobby = browser
+    }
+
+    /// 3초 뒤 브라우저를 다시 건다. 멈췄든 기다림에 갇혔든 같은 처방이다.
+    private func again() {
+        lobby?.cancel()
+        lobby = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.watchRooms() }
+    }
+
+    /// **다시 찾기.** 목록이 비어 보일 때 사람이 직접 누르는 길이다 — 브라우저를 접고 새로 건다.
+    /// 망이 바뀌었거나(와이파이 갈아탐) 권한을 뒤늦게 허용한 경우에 이것만이 방법이다.
+    func refreshRooms() {
+        debugLog("방 목록 다시 찾기")
+        lobby?.cancel()
+        lobby = nil
+        seen = []
+        watchRooms()
     }
 
     /// 찾은 방들에 **내 방을 얹어** 목록을 세운다.
@@ -425,7 +463,10 @@ final class Net {
         // 닿지 않는 주소를 물어 와, 붙자마자 끊기는 일이 생긴다.
         let params = NWParameters()
         params.includePeerToPeer = false
-        let browser = NWBrowser(for: .bonjour(type: netServiceType, domain: nil), using: params)
+        // 이름표(TXT)에 적힌 주소로 바로 붙으려면 **이름표까지 달라고 해야 한다** —
+        // `.bonjour(...)` 는 metadata 를 안 준다. 그래서 아래 「이름표에 적힌 주소」 길은
+        // 여태 한 번도 안 탔고, 늘 느린 쪽(직접 풀기)으로 돌았다.
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: netServiceType, domain: nil), using: params)
 
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             guard let self, self.uplink == nil else { return }

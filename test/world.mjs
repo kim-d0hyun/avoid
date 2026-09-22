@@ -73,7 +73,9 @@ say('방 목록 — 코드를 받아 적지 않아도 골라서 들어간다');
   tap(w, 'menu'); into(w, 'together');
   ok('같이 하기에 방 목록이 있다', labels(w).includes('방 목록'));
   into(w, 'rooms');
-  check('찾은 게 없으면 없다고 적는다', labels(w), ['열려 있는 방이 없다']);
+  // 빈 목록에는 **「다시 찾기」를 같이 둔다.** 진짜 방이 없는 것과 찾는 쪽이 멈춰 선 것이
+  // 화면에서 똑같이 보이기 때문이다 (와이파이를 갈아탔거나 권한을 뒤늦게 허용한 경우).
+  check('찾은 게 없으면 없다고 적고 다시 찾기를 준다', labels(w), ['열려 있는 방이 없다', '다시 찾기']);
   // 셸이 목록을 밀어 주면 그대로 뜬다
   w.rooms = [{ code: 'K3P9', game: '야구', people: 2, old: false },
              { code: 'QW21', game: '오목', people: 1, old: true }];
@@ -86,6 +88,16 @@ say('방 목록 — 코드를 받아 적지 않아도 골라서 들어간다');
   tap(w, 'left');
   const back = menuItems(w).find((r) => r.id === 'rooms');
   check('몇 개 열려 있는지', back.note, '2개');
+
+  // 다시 찾기를 고르면 셸로 넘어간다 (셸이 브라우저를 접고 새로 건다).
+  const e = make([]);
+  tap(e, 'menu'); into(e, 'together'); into(e, 'rooms');
+  const rescan = menuItems(e).findIndex((r) => r.id === 'rescan');
+  ok('빈 목록에 다시 찾기 줄이 있다', rescan >= 0);
+  e.menu.index = rescan;
+  e.picked.length = 0;
+  tap(e, 'right');
+  check('고르면 셸에 rescan 을 알린다', e.picked, ['rescan']);
 }
 
 say('아무도 안 들어온 내 방에서도 남의 방에 들어갈 수 있다');

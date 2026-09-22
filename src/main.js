@@ -24,6 +24,7 @@ const shell = window.ddong ?? {
   rooms: [],
   onRooms() {},
   joinRoom() {},
+  rescanRooms() {},
   setRoomGame() {},
   pickScreen() {},
   fade: 1,
@@ -109,6 +110,11 @@ world.onMenu = (action) => {
   }
   if (action.startsWith('spot:')) {
     shell.setSpot?.(action.slice(5));
+    return;
+  }
+  // 방을 다시 찾는다 — 찾는 쪽이 멈춰 섰을 때 사람이 직접 누르는 길.
+  if (action === 'rescan') {
+    shell.rescanRooms?.();
     return;
   }
   // **목록에서 고른 방으로 바로 들어간다.** 코드를 받아 적고 치는 일이 없어진다.

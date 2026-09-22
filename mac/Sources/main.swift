@@ -139,7 +139,7 @@ final class WebAssetHandler: NSObject, WKURLSchemeHandler {
 
 // MARK: - 앱
 
-final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate {
+final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, NSMenuDelegate {
     static var shared: App?
 
     private var window: NSWindow!
@@ -617,6 +617,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
           joinRoom: (code) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'joinRoom', code,
           }),
+          // 목록이 비어 보일 때 「다시 찾기」. 브라우저를 접고 새로 건다.
+          rescanRooms: () => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'rescanRooms',
+          }),
           setRoomGame: (id) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'roomGame', id,
           }),
@@ -957,6 +961,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.delegate = self          // 메뉴를 열 때 방 목록을 다시 건다 (menuWillOpen)
         statusItem.menu = menu
     }
 
@@ -1437,6 +1442,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             }
         case "roomGame":
             if let id = body["id"] as? String { net.roomGame = id }
+        case "rescanRooms":
+            net.refreshRooms()
         case "joinRoom":
             if let code = body["code"] as? String, !code.isEmpty {
                 guard confirmName() else { return }
@@ -1505,6 +1512,12 @@ extension App: NetDelegate {
     /// 배열(inbound)도 여기서만 만지게 해서 두 스레드가 같이 손대는 일을 없앤다.
     private func onMain(_ block: @escaping () -> Void) {
         if Thread.isMainThread { block() } else { DispatchQueue.main.async(execute: block) }
+    }
+
+    /// 메뉴 막대를 열면 방 목록을 한 번 다시 건다 — 사람이 목록을 **보려고** 여는 순간이다.
+    /// 브라우저가 기다림에 갇혀 있었다면 이때 풀린다.
+    func menuWillOpen(_ menu: NSMenu) {
+        net.refreshRooms()
     }
 
     /// 열려 있는 방이 바뀌었다 — 메뉴 막대와 게임 안 메뉴 둘 다에 새 목록을 준다.
