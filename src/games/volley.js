@@ -99,6 +99,10 @@ const SERVE_BAR = 46;             // 머리 위 힘 막대 길이
 /// 자기 코트 폭의 이만큼까지만 앞으로 나갈 수 있다 (0 이 맨 뒤, 1 이 네트).
 const SERVE_ZONE = 0.5;
 const EMPTY_WAIT = 1.1;         // 빈 코트가 올리기까지 (사람이 있으면 안 쓴다)
+/// 손님이 **옛 속도로 앞질러 그리는** 한도. 네 프레임.
+const AGE_CAP = 0.066;
+/// 이 넘게 어긋나면 녹이지 않고 그 자리에 놓는다.
+const SNAP_AT = 220;
 
 // ── 스파이크의 손맛 ────────────────────────────────────────────────────────
 //
@@ -1285,7 +1289,13 @@ export default {
       // 그 NaN 이 다음 꾸러미의 오차 계산에 다시 들어가 영영 안 돌아온다.
       if (b.myCharge >= 0) b.myCharge += dt;
       if (b.baseX === undefined) return;
-      b.age = Math.min(b.age + dt, 0.18);
+      // **앞질러 그리는 것은 짧게.** 0.18초까지 이어 그렸더니, 강타(약 3800px/s)가 났을 때
+      // 손님은 **옛 속도로 684픽셀을 날아간 뒤** 새 꾸러미를 받고 그만큼 순간이동했다 —
+      // 한 랠리에 두 번씩. 「참가자가 렉 걸린다」가 이것이다.
+      //
+      // 꾸러미는 초당 예순 번 온다. 네 프레임(0.066초)까지만 이어 그리고 그 뒤로는 멈춰
+      // 서서 기다린다 — **잠깐 멎는 것이 엉뚱한 데로 날아갔다 되돌아오는 것보다 낫다.**
+      b.age = Math.min(b.age + dt, AGE_CAP);
       b.errorX *= Math.exp(-dt / 0.06);
       b.errorY *= Math.exp(-dt / 0.06);
       b.ball.x = b.baseX + b.baseVX * b.age + b.errorX;
@@ -1778,7 +1788,9 @@ export default {
     b.age = 0;
     b.errorX = first ? 0 : showX - x;
     b.errorY = first ? 0 : showY - y;
-    if (Math.abs(b.errorX) > 200 || Math.abs(b.errorY) > 200) { b.errorX = 0; b.errorY = 0; }
+    // 오차가 너무 크면 녹이지 않고 그 자리에 놓는다 — 화면을 가로질러 스르르 미끄러지는
+    // 공은 더 이상하다. 앞질러 그리는 창을 좁혀 놨으니 여기 걸리는 일 자체가 드물다.
+    if (Math.abs(b.errorX) > SNAP_AT || Math.abs(b.errorY) > SNAP_AT) { b.errorX = 0; b.errorY = 0; }
     if (first) { b.ball.x = x; b.ball.y = y; b.tail = []; }
     if (Array.isArray(data.s) && data.s.length === 2 && data.s.every(Number.isFinite)) b.score = data.s;
     b.wait = Number.isFinite(data.w) ? data.w : 0;

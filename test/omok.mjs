@@ -316,6 +316,129 @@ say('손님이 보내는 말 — 차례인 사람 것만 받는다');
   check('명단에 없는 사람 말도 흘린다', b.moves.length, 2);
 }
 
+say('차례인 사람의 커서 — 방장이 모아서 모두에게 보낸다');
+{
+  const host = mk();
+  host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1; host.team = 0;
+  join(host, 2, 1);
+  const b = host.bag;
+  b.aim = { x: 5, y: 6 };
+  w.update(host, FR);
+  check('방장 차례면 방장 커서가 실린다', [b.turnAim.x, b.turnAim.y], [5, 6]);
+  check('누구 것인지도 붙는다', b.turnAim.id, 1);
+  // 손님 차례로 넘긴다. **알려 오기 전에는 없다** — 없는 것을 옛 자리로 그리면 거짓말이다.
+  put(host, 7, 7, 0);
+  w.update(host, FR);
+  check('손님이 아직 안 알려 왔으면 없다', b.turnAim, null);
+  omok.message(host, 2, { k: 'aim', x: 3, y: 12 });
+  w.update(host, FR);
+  check('손님이 알려온 칸이 실린다', [b.turnAim.x, b.turnAim.y], [3, 12]);
+  check('손님 번호가 붙는다', b.turnAim.id, 2);
+  // 차례가 아닌 사람은 온 화면의 커서를 못 끌고 다닌다
+  omok.message(host, 9, { k: 'aim', x: 0, y: 0 });
+  w.update(host, FR);
+  check('차례 아닌 사람 커서는 흘린다', [b.turnAim.x, b.turnAim.y], [3, 12]);
+  // 판 밖은 판 안으로 접는다
+  omok.message(host, 2, { k: 'aim', x: 999, y: -5 });
+  w.update(host, FR);
+  check('판 밖으로는 안 나간다', [b.turnAim.x, b.turnAim.y], [N - 1, 0]);
+  // **굳어 버린 커서는 지운다.** 앱이 멈춘 사람의 커서가 계속 한 자리를 가리키면
+  // 그건 알려 주는 것이 아니라 거짓말이다.
+  host.elapsed += 2;
+  w.update(host, FR);
+  check('오래 안 오면 지운다', b.turnAim, null);
+}
+
+say('컴퓨터 차례에는 커서가 없다');
+{
+  const world = mk(); world.team = 0;            // 혼자 — 하양은 컴퓨터
+  const b = world.bag;
+  b.aim = { x: 4, y: 4 };
+  w.update(world, FR);
+  check('내 차례엔 있다', [b.turnAim.x, b.turnAim.y], [4, 4]);
+  put(world, 4, 4, 0);                           // 이제 컴퓨터 차례
+  w.update(world, FR);
+  check('컴퓨터 차례엔 없다', b.turnAim, null);
+  ok('그릴 자리도 없다', b.turnGlide === null);
+}
+
+say('남의 커서가 내 커서를 끌고 가지 않는다');
+{
+  const host = mk();
+  host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1; host.team = 0;
+  join(host, 2, 1);
+  host.bag.aim = { x: 2, y: 2 };
+  w.update(host, FR);
+  const guest = mk();
+  guest.mp.on = true; guest.mp.role = 'guest'; guest.mp.myId = 2;
+  guest.bag.aim = { x: 15, y: 15 };              // 손님은 딴 데를 재고 있다
+  omok.unpack(guest, omok.pack(host));
+  // **이게 이 기능의 고비다.** 차례인 사람 커서를 b.aim 에 받으면 남이 내 커서를 끌고
+  // 다니고, 내 차례가 왔을 때 엉뚱한 칸에서 시작한다.
+  check('내 커서는 그대로다', [guest.bag.aim.x, guest.bag.aim.y], [15, 15]);
+  check('차례인 사람 커서는 따로 온다', [guest.bag.turnAim.x, guest.bag.turnAim.y], [2, 2]);
+  check('누구 것인지도 온다', guest.bag.turnAim.id, 1);
+  // 방장 커서가 움직이면 손님 화면에서도 움직인다
+  host.bag.aim = { x: 9, y: 3 };
+  w.update(host, FR);
+  omok.unpack(guest, omok.pack(host));
+  check('움직인 것이 따라온다', [guest.bag.turnAim.x, guest.bag.turnAim.y], [9, 3]);
+  check('내 커서는 여전히 그대로', [guest.bag.aim.x, guest.bag.aim.y], [15, 15]);
+  // 커서가 없을 때도 내 커서는 안 다친다
+  omok.unpack(guest, { ...omok.pack(host), ca: null });
+  check('없다고 와도 내 커서는 산다', [guest.bag.aim.x, guest.bag.aim.y], [15, 15]);
+  check('차례 커서만 지워진다', guest.bag.turnAim, null);
+}
+
+say('손님은 제 차례에만 커서를 알린다');
+{
+  const host = mk();
+  host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1; host.team = 0;
+  join(host, 2, 1);
+  w.update(host, FR);
+  const guest = mk();
+  guest.mp.on = true; guest.mp.role = 'guest'; guest.mp.myId = 2;
+  omok.unpack(guest, omok.pack(host));           // 명단·차례를 받아 온다
+  guest.sent = []; guest.send = (m) => guest.sent.push(m);
+  const aims = () => guest.sent.filter((m) => m.k === 'aim');
+  // 검정(방장) 차례 — 손님은 커서를 움직여도 알리지 않는다
+  for (let i = 0; i < 30; i++) w.update(guest, FR);
+  ok('남의 차례에는 안 보낸다', aims().length === 0);
+  ok('그래도 내 커서는 움직인다', !!guest.bag.aim);
+  // 하양(손님) 차례가 되면
+  put(host, 7, 7, 0);
+  omok.unpack(guest, omok.pack(host));
+  w.update(guest, FR);
+  check('내 차례가 되면 곧바로 알린다', aims().length, 1);
+  check('재는 칸을 담아 보낸다', [aims()[0].x, aims()[0].y],
+        [guest.bag.aim.x, guest.bag.aim.y]);
+  // 초당 열 번 — 60번이 아니다
+  guest.sent = [];
+  for (let i = 0; i < 60; i++) w.update(guest, FR);
+  ok('1초에 열 번쯤만 보낸다', aims().length >= 8 && aims().length <= 12);
+}
+
+say('남의 커서는 칸 사이를 미끄러진다 — 사람이 바뀌면 건너뛴다');
+{
+  // **손님 세상으로 본다.** 방장(과 혼자 하는 세상)은 매 프레임 차례 커서를 제 손으로
+  // 다시 정하니, 미끄러짐만 떼어 보려면 받아만 쓰는 쪽이어야 한다.
+  const world = mk(); world.team = 0;
+  world.mp.role = 'guest'; world.mp.myId = 2;
+  const b = world.bag;
+  b.turnAim = { x: 4, y: 4, id: 7 };
+  w.update(world, FR);
+  check('처음엔 그 자리로 곧장', [b.turnGlide.x, b.turnGlide.y], [4, 4]);
+  b.turnAim = { x: 10, y: 4, id: 7 };
+  w.update(world, FR);
+  ok('한 프레임에 다 가지 않는다', b.turnGlide.x > 4 && b.turnGlide.x < 10);
+  for (let i = 0; i < 60; i++) w.update(world, FR);
+  ok('이윽고 닿는다', Math.abs(b.turnGlide.x - 10) < 0.01);
+  // **사람이 바뀌면 미끄러지지 않는다** — 판을 가로질러 스르르 날아가면 유령이다
+  b.turnAim = { x: 1, y: 1, id: 8 };
+  w.update(world, FR);
+  check('새 사람 커서는 건너뛴다', [b.turnGlide.x, b.turnGlide.y], [1, 1]);
+}
+
 say('꾸러미 — 손님이 같은 판을 본다');
 {
   const host = mk();

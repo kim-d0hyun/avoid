@@ -204,15 +204,25 @@ say('세 단계 — 고르기 → 각 재기 → 힘 채우기');
   const deg = b.deg;
   alk.tap(world, 'right');
   ok('⌥→ 로 각이 돈다', b.deg !== deg);
+  // **위아래는 아무것도 안 한다** — 각을 재다 단계가 되감기면 안 된다
+  const degWas = b.deg;
   alk.tap(world, 'duck');
-  check('⌥↓ 로 고르기로 되돌아간다', b.phase, 'pick');
-  alk.action(world); alk.action(world);
+  alk.tap(world, 'jump');
+  check('위아래로는 단계가 안 바뀐다', b.phase, 'aim');
+  check('각도 안 바뀐다', b.deg, degWas);
+  alk.action(world);
   check('한 번 더 누르면 힘 채우기', b.phase, 'charge');
   for (let f = 0; f < 27; f++) w.update(world, FR);     // 0.45초 — 게이지 절반
   ok('잡고 있으면 게이지가 찬다', b.gauge > 0.4 && b.gauge < 0.6);
   const half = b.gauge;
   alk.release(world);
   check('떼면 굴러간다', b.phase, 'roll');
+  // 한 번 고른 돌은 무를 수 없다 — 되돌아가는 길이 아예 없다
+  ok('고르기로 되돌아가는 길이 없다',
+     !['duck', 'jump', 'left', 'right'].some((k) => {
+       alk.tap(world, k);
+       return b.phase === 'pick';
+     }));
   const shot = b.men[b.pick];
   ok('떼는 순간의 값으로 나간다', Math.abs(Math.hypot(shot.vx, shot.vy) - speedOf(half)) < 0.01);
   // 굴러가는 동안은 다시 쏠 수 없다 (화살표도 안 그린다)
@@ -222,19 +232,19 @@ say('세 단계 — 고르기 → 각 재기 → 힘 채우기');
   check('굴러가는 중에는 각도 안 돈다', b.phase, 'roll');
 }
 
-say('10초 — 넘기면 그 차례는 넘어간다');
+say('차례 시계 — 넘기면 그 차례는 넘어간다');
 {
   const world = mk(); const b = world.bag;
   world.team = 0;
-  check('차례마다 10초', Math.round(b.left), TURN_SECS);
-  for (let f = 0; f < 60 * 9; f++) w.update(world, FR);
-  ok('9초째에는 아직 내 차례', b.turn === 0 && b.left > 0);
+  check('차례마다 45초', Math.round(b.left), TURN_SECS);
+  for (let f = 0; f < 60 * (TURN_SECS - 1); f++) w.update(world, FR);
+  ok('마지막 1초까지는 내 차례', b.turn === 0 && b.left > 0);
   let flipped = 0;
   for (let f = 0; f < 60 * 2 && !flipped; f++) { w.update(world, FR); if (b.turn === 1) flipped = f; }
   ok('넘기면 차례가 넘어간다', flipped > 0);
   ok('시계도 다시 찬다', b.left > TURN_SECS - 2);
   ok('아무 데나 쏘지는 않는다', b.men.every((m) => m.vx === 0 && m.vy === 0) || b.phase === 'roll');
-  ok('까닭을 알려 준다', /10초/.test(b.say ?? ''));
+  ok('까닭을 알려 준다', /넘었다/.test(b.say ?? ''));
   // 넘어간 뒤로는 컴퓨터가 곧 쏘므로 마지막 줄이 아니다 — 어딘가에 남아 있으면 된다.
   ok('기록에도 남는다', b.log.some((r) => r.skip));
 }
@@ -309,6 +319,39 @@ say('손님이 보내는 말 — 차례인 사람 것만 받는다');
   ok('명단에 없는 사람 말도 흘린다', b.log.length === 1);
 }
 
+say('남이 겨누는 것도 보인다 — 차례제 게임에서 남의 차례에 화면이 멎으면 안 된다');
+{
+  const host = mk();
+  host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1; host.team = 0;
+  join(host, 2, 1);
+  const b = host.bag;
+  b.turn = 1;                                    // 손님 차례
+  // 손님이 「이 돌을 이 각으로 겨누고 있다」고 알려 온다
+  const want = mine(b, 1)[2];
+  alk.message(host, 2, { k: 'aim', p: want, d: 64, g: 420, f: 'charge' });
+  check('방장이 그걸 받는다', [b.pick, b.deg, Math.round(b.gauge * 100), b.phase],
+        [want, 64, 42, 'charge']);
+  // 그리고 꾸러미에 실어 모두에게 전한다
+  const snap = alk.pack(host);
+  check('꾸러미에 조준이 실린다', [snap.pk, snap.dg, snap.gg], [want, 64, 420]);
+  const other = mk();
+  other.mp.on = true; other.mp.role = 'guest'; other.mp.myId = 3;
+  alk.unpack(other, snap);
+  check('구경하는 사람도 같은 자리를 본다',
+        [other.bag.pick, other.bag.deg, Math.round(other.bag.gauge * 100)], [want, 64, 42]);
+  // 차례가 아닌 사람이 보낸 조준은 흘린다
+  alk.message(host, 9, { k: 'aim', p: 0, d: 0, g: 0, f: 'aim' });
+  check('남의 조준은 안 받는다', b.deg, 64);
+  // **내 차례면 내 것이 맞다** — 방장 값으로 덮으면 고르는 중에 커서가 튄다
+  const me = mk();
+  me.mp.on = true; me.mp.role = 'guest'; me.mp.myId = 2;
+  me.team = 1;
+  alk.unpack(me, snap);                          // 명단을 받아 내 차례가 된다
+  me.bag.phase = 'aim'; me.bag.deg = 123;
+  alk.unpack(me, alk.pack(host));
+  check('내가 겨누는 중에는 안 덮인다', me.bag.deg, 123);
+}
+
 say('꾸러미 — 손님이 같은 판을 본다');
 {
   const host = mk();
@@ -326,9 +369,14 @@ say('꾸러미 — 손님이 같은 판을 본다');
   ok('속도도 같이 온다 (그래서 손님도 이어 굴린다)',
      g.men.some((m) => Math.hypot(m.vx, m.vy) > 0.01));
   check('차례도 온다', g.turn, host.bag.turn);
-  // 한 수마다 싣고, 그 사이에는 0.6초마다 한 번
-  const a = alk.pack(host);
-  ok('바로 다음 꾸러미에는 자리가 없다', a.m === undefined);
+  // **굴러가는 동안은 매 꾸러미에 싣는다** — 그 한 꾸러미가 빠지면 손님은 속도를 못 받고
+  // 열여덟 프레임을 멈춰 있는다. 다음 꾸러미가 빠진 것을 덮어 주는 값이 더 크다.
+  ok('굴러가는 중에는 바로 다음 꾸러미에도 자리가 있다', Array.isArray(alk.pack(host).m));
+  // 멎은 뒤에는 한 수마다, 그 사이에는 0.6초마다 한 번
+  for (let f = 0; f < 240 && host.bag.phase === 'roll'; f++) w.update(host, FR);
+  check('이윽고 멎는다', host.bag.phase !== 'roll', true);
+  alk.pack(host);                                    // 멎고 첫 꾸러미(자리를 싣는다)
+  ok('멎은 뒤에는 바로 다음 꾸러미에 자리가 없다', alk.pack(host).m === undefined);
   host.elapsed += 0.7;
   ok('0.6초 뒤에는 다시 싣는다', Array.isArray(alk.pack(host).m));
   // 늦게 들어온 사람도 받는다

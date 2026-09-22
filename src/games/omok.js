@@ -10,6 +10,16 @@
 //
 // 자리는 **방장이 정한다.** 손님은 「여기 놓고 싶다」만 보내고, 놓을 수 있는지(내 차례인가,
 // 빈 자리인가)는 방장이 다시 본다. 안 그러면 두 사람이 같은 칸에 동시에 놓는다.
+//
+// **커서는 차례인 사람 것만 모두에게 보인다.** 예전에는 커서가 제 화면에만 있었는데,
+// 그러면 남의 차례에 판이 통째로 멎어 있어서 「끊긴 건가」 싶다 — 오목은 달리지도 뛰지도
+// 않으니 커서 말고는 움직이는 것이 없다. 차례인 사람은 어차피 곧 놓으니 잃을 수싸움이
+// 몇 초뿐이고, **차례가 아닌 사람의 커서는 여전히 제 화면에만 있다** — 미리 재 두는 수는
+// 감춰진다. 커서는 세 모양으로 갈린다 (drawAim · drawTurnAim 참조):
+//   내 차례          닫힌 네모 + 맥박 + 놓을 돌 미리보기
+//   남의 차례(그 사람) 닫힌 네모 + 이름표    ← 방장이 모아서 보낸 것
+//   남의 차례(나)     귀퉁이 갈고리만        ← 움직이지만 지금은 못 놓는다
+// 옅기만 달리하면 어두운 벽지에서 둘이 같아 보인다. 그래서 **모양**을 달리한다.
 
 import { INK, RED, PENCIL, PAPER_SOLID, stroke, circle, text, paperScrap } from '../draw/ink.js';
 import { drawStickman } from '../draw/stickman.js';
@@ -33,6 +43,11 @@ const MONO = '"American Typewriter", "Courier New", monospace';
 /// 커서를 **누르고 있을 때** 얼마나 기다렸다가, 얼마 만에 한 칸씩 더 가나.
 /// 누른 그 순간 한 칸은 tap 이 옮긴다 — 한 칸만 옮기려는데 서너 칸 가면 못 쓴다.
 const REPEAT_WAIT = 0.34, REPEAT_EVERY = 0.075;
+/// 차례인 사람이 제 커서를 알려주는 간격, 그리고 그 뒤로 몇 초까지를 살아 있는 것으로 보나.
+const AIM_TELL = 0.1, AIM_STALE = 1.2;
+/// 남의 커서가 칸 사이를 미끄러지는 빠르기. 0.1초에 한 번 오는 자리를 그냥 튀게 그리면
+/// **움직이는 중인지 멎어 있는지** 구분이 안 된다 — 미끄러져야 「지금 고르고 있다」가 보인다.
+const AIM_GLIDE = 14;
 /// 컴퓨터가 생각하는 척하는 시간. 곧바로 두면 사람이 둔 수를 볼 틈이 없다.
 const THINK = 0.65;
 /// 대국이 끝나고 다음 판까지.
@@ -278,6 +293,19 @@ export function whoseTurn(world) {
   return seats[(b.seat[b.turn] ?? 0) % seats.length];
 }
 
+/// 남의 커서가 칸 사이를 미끄러지게 한다. **사람이 바뀌면 미끄러지지 않고 건너뛴다** —
+/// 판을 가로질러 스르르 날아가면 그건 새 사람의 커서가 아니라 유령이다.
+/// 지수 보간이라 프레임률이 흔들려도 같은 빠르기로 간다.
+function glideAim(b, dt) {
+  const t = b.turnAim;
+  if (!t) { b.turnGlide = null; return; }
+  const g = b.turnGlide;
+  if (!g || g.id !== t.id) { b.turnGlide = { x: t.x, y: t.y, id: t.id }; return; }
+  const k = 1 - Math.exp(-AIM_GLIDE * Math.max(0, dt));
+  g.x += (t.x - g.x) * k;
+  g.y += (t.y - g.y) * k;
+}
+
 /// 지금이 내 차례인가.
 export function myTurn(world) {
   const who = whoseTurn(world);
@@ -329,6 +357,12 @@ function freshBag() {
     turn: 0,                              // 검정이 먼저 (오목의 규칙)
     seat: [0, 0],                         // 편마다 누구 차례인가
     aim: { x: (N / 2) | 0, y: (N / 2) | 0 },
+    /// **차례인 사람이 재고 있는 칸.** 모두가 같은 것을 본다 — `aim` 과 절대 섞지 않는다
+    /// (섞으면 꾸러미가 손님의 제 커서를 덮어써서 남이 내 커서를 끌고 다닌다).
+    turnAim: null,                        // { x, y, id } — 방장이 정하고 모두에게 보낸다
+    turnGlide: null,                      // 그려지는 자리. 칸 사이를 미끄러진다
+    aimOf: new Map(),                     // 방장만: id → { x, y, at } 손님이 알려온 커서
+    told: 0,                              // 손님이 제 커서를 알려준 지 얼마
     held: 0, rep: 0,
     last: null, lastBy: null, mark: null, line: null,
     over: false, winner: null, hold: 0,
@@ -444,18 +478,78 @@ function drawStones(ctx, L, b, time, world) {
   }
 }
 
-/// 내 커서. **내 화면에만 보인다** — 남이 어디를 재고 있는지까지 보이면 수싸움이 없어진다.
+/// 네 귀퉁이 갈고리. **닫힌 네모와 달라 보이는 것이 요점**이다 — 색이나 옅기로만 나누면
+/// 어두운 벽지에서는 둘이 같아 보인다. 모양이 다르면 한눈에 갈린다.
+function corners(ctx, px, py, r, o) {
+  const k = r * 0.52;
+  const arms = [
+    [[px - r, py - r + k], [px - r, py - r], [px - r + k, py - r]],
+    [[px + r - k, py - r], [px + r, py - r], [px + r, py - r + k]],
+    [[px + r, py + r - k], [px + r, py + r], [px + r - k, py + r]],
+    [[px - r + k, py + r], [px - r, py + r], [px - r, py + r - k]],
+  ];
+  arms.forEach((arm, i) => stroke(ctx, arm, { ...o, seed: 60 + i, sharp: true }));
+}
+
+/// **차례인 사람이 재고 있는 칸.** 방장이 모아서 모두에게 보낸 것이라 온 화면이 같은 자리를
+/// 가리킨다 — 남의 차례에 판이 멎어 보이지 않게 하는 것이 이것 하나다.
+///
+/// 내 차례일 때는 이걸 그리지 않는다. 그때 차례인 사람은 나이고, 내 커서(`drawAim`)가
+/// 왕복 없이 곧바로 움직이니 그쪽이 더 정확하다. **그래서 이 커서와 「내 차례 커서」는
+/// 절대 같이 나오지 않는다** — 둘을 헷갈릴 일이 없다는 뜻이다.
+function drawTurnAim(ctx, L, world, b, time) {
+  if (b.over || world.state !== 'play') return;
+  const g = b.turnGlide;
+  if (!g) return;
+  const who = whoseTurn(world);
+  if (!who || who.mine) return;                  // 내 차례면 아래 drawAim 이 그린다
+  const side = b.turn;
+  const [px, py] = cellAt(L, g.x, g.y);
+  const r = L.step * 0.5;
+  const tint = TEAM_INK[side];
+  const puls = 0.65 + 0.35 * Math.sin(time * 5);
+  // 닫힌 네모 — 「지금 놓을 수 있는 사람」의 표시다.
+  const box = [[px - r, py - r], [px + r, py - r], [px + r, py + r], [px - r, py + r]];
+  stroke(ctx, [...box, box[0]], { width: 2.2, color: tint, seed: 6, amp: 0.6,
+                                  alpha: puls, sharp: true, halo: true });
+  // **누구 커서인지 적는다.** 한 편에 여럿이 서면 편 색만으로는 누구인지 모른다.
+  text(ctx, who.name ?? '상대', px, py - r - 6,
+       { font: `800 11px ${HAN}`, color: tint, align: 'center', halo: 3, alpha: 0.9 });
+  // 놓일 돌을 아주 옅게 비쳐 둔다 — 어떤 모양이 될지 같이 본다.
+  // **칸은 미끄러지는 자리가 아니라 닿을 자리로 본다** — 미끄러지는 동안 옆 칸을 보면
+  // 돌이 깜빡인다. (꾸러미가 커서를 지운 바로 그 프레임에는 glide 만 남아 있다.)
+  const cell = b.turnAim;
+  if (cell && !b.cells[cell.y * N + cell.x]) {
+    circle(ctx, px, py, L.step * 0.42, {
+      width: 1.3, color: STONE_EDGE[side], fill: STONE_FILL[side],
+      alpha: 0.24, seed: 7, amp: 0.3, halo: false,
+    });
+  }
+}
+
+/// 내 커서. **두 모양으로 그린다.**
+///
+/// - 내 차례 → **닫힌 네모 + 맥박 + 놓을 돌 미리보기.** 지금 누르면 놓인다.
+/// - 내 차례 아님 → **네 귀퉁이 갈고리만.** 움직이기는 하지만 지금 눌러도 안 놓인다.
+///
+/// 옅기만 달리하면 어두운 벽지에서 둘이 같아 보인다 — 그래서 **모양**을 달리한다.
+/// 내 차례가 아닐 때도 또렷이 보여야 한다(이 앱은 남의 바탕화면 위에 그려진다).
 function drawAim(ctx, L, world, b, time) {
   if (b.over || world.state !== 'play' || world.mp.waiting) return;
   const mine = myTurn(world);
   const [px, py] = cellAt(L, b.aim.x, b.aim.y);
   const r = L.step * 0.5;
   const side = world.team ?? 0;
-  const tint = mine ? TEAM_INK[side] : PENCIL;
-  const puls = mine ? 0.7 + 0.3 * Math.sin(time * 5) : 0.3;
-  const box = [[px - r, py - r], [px + r, py - r], [px + r, py + r], [px - r, py + r]];
-  stroke(ctx, [...box, box[0]], { width: 2, color: tint, seed: 6, amp: 0.6,
-                                  alpha: puls, sharp: true, halo: false });
+  const tint = TEAM_INK[side];
+  if (mine) {
+    const box = [[px - r, py - r], [px + r, py - r], [px + r, py + r], [px - r, py + r]];
+    stroke(ctx, [...box, box[0]], { width: 2.4, color: tint, seed: 6, amp: 0.6,
+                                    alpha: 0.75 + 0.25 * Math.sin(time * 5),
+                                    sharp: true, halo: true });
+  } else {
+    // 갈고리만. 맥박도 없다 — 맥박은 「네가 누를 차례」라는 뜻으로 아껴 둔다.
+    corners(ctx, px, py, r, { width: 2, color: tint, alpha: 0.62, amp: 0.5, halo: true });
+  }
   // 내 차례면 **놓을 돌을 옅게 비쳐 둔다.** 다음 수가 어떤 모양이 되는지 눈으로 본다.
   if (mine && !b.cells[b.aim.y * N + b.aim.x] && !forbidden(b.cells, b.aim.x, b.aim.y, side + 1)) {
     circle(ctx, px, py, L.step * 0.42, {
@@ -521,6 +615,8 @@ const KEY_ROWS = [
   ['⌥ Space', '놓는다'],
   ['⌥ M', '편 바꾸기 · 다시 시작'],
   ['검정 금수', '삼삼 · 사사 · 장목'],
+  // 커서가 남에게 보인다는 것은 **말해 줘야 한다.** 모르고 재고 다니면 속은 셈이 된다.
+  ['차례인 사람 커서', '모두에게 보인다'],
 ];
 
 export default {
@@ -635,6 +731,37 @@ export default {
       } else { b.held = 0; b.rep = 0; }
     }
 
+    // **내 차례면 내가 재는 칸을 알려 준다.** 차례인 사람이 어디를 보고 있는지 남들이
+    // 못 보면, 남의 차례에는 판이 멎어 있어서 「끊긴 건가」 싶다. 알까기에서 쓴 수법 그대로
+    // 초당 열 번이면 넉넉하다 — 커서는 0.075초에 한 칸이니 60번 보낼 값이 아니다.
+    // **내 차례가 아닐 때는 안 보낸다** — 그건 내 화면에만 있는 내 커서다(아래 참조).
+    if (world.mp.on && world.mp.role === 'guest' && myTurn(world)) {
+      b.told += dt;
+      if (b.told >= AIM_TELL) {
+        b.told = 0;
+        world.send?.({ t: 'gm', k: 'aim', x: b.aim.x, y: b.aim.y });
+      }
+    } else {
+      b.told = AIM_TELL;                        // 차례가 오면 첫 칸을 곧바로 알린다
+    }
+
+    // **방장이 「차례인 사람의 커서」를 하나로 모은다.** 제 차례면 제 커서를, 손님 차례면
+    // 손님이 알려온 것을. 컴퓨터 차례면 없다.
+    if (world.mp.role !== 'guest') {
+      const who = whoseTurn(world);
+      if (!who || b.over) b.turnAim = null;
+      else if (who.mine) b.turnAim = { x: b.aim.x, y: b.aim.y, id: who.id };
+      else {
+        const told = b.aimOf.get(who.id);
+        // 굳어 버린 커서는 지운다 — 앱이 멈춘 사람의 커서가 남의 자리를 가리키고 있으면
+        // 그건 알려 주는 것이 아니라 거짓말이다.
+        b.turnAim = told && world.elapsed - told.at < AIM_STALE
+          ? { x: told.x, y: told.y, id: who.id } : null;
+      }
+    }
+
+    glideAim(b, dt);
+
     if (world.mp.role === 'guest') return;      // 판은 방장 것이다
 
     if (b.over) {
@@ -665,6 +792,8 @@ export default {
     const L = layout(world);
     drawBoard(ctx, L, b);
     drawStones(ctx, L, b, time, world);
+    // 남의 커서를 먼저, 내 커서를 그 위에 — 겹치면 내가 쥔 것이 위에 있어야 한다.
+    drawTurnAim(ctx, L, world, b, time);
     drawAim(ctx, L, world, b, time);
     drawCrew(ctx, world, b, time, boil);
   },
@@ -716,6 +845,15 @@ export default {
     const b = world.bag;
     if (typeof msg.s === 'number') { takeSide(world, from, msg.s ? 1 : 0); return; }
     if (world.state !== 'play' || b.over) return;
+    // 손님이 「여기를 재고 있다」고 알려온 것. **차례인 사람 것만 받는다** — 아니면
+    // 아무나 남의 차례에 온 화면의 커서를 끌고 다닐 수 있다.
+    if (msg.k === 'aim') {
+      const turnNow = whoseTurn(world);
+      if (!turnNow || turnNow.id !== from) return;
+      b.aimOf.set(from, { x: clamp(msg.x | 0, 0, N - 1), y: clamp(msg.y | 0, 0, N - 1),
+                          at: world.elapsed });
+      return;
+    }
     if (msg.k !== 'put') return;
     const side = b.sides?.get(from) ?? 0;
     // **차례인 사람이 보낸 것만 받는다.** 안 보면 손님이 아무 때나 둘 수 있다.
@@ -743,6 +881,9 @@ export default {
       ls: b.last ?? null,
       lb: b.lastBy === 0 || b.lastBy === 1 ? b.lastBy : -1,
       ln: b.line ?? null,
+      // **차례인 사람의 커서.** 매 꾸러미에 싣는다 — 이건 「움직이는 중」을 보이는 것이라
+      // 늦게 오면 뜻이 없다. 세 숫자뿐이라 실어도 가볍다.
+      ca: b.turnAim ? [b.turnAim.x, b.turnAim.y, b.turnAim.id] : null,
       mv: fresh || again ? b.moves : undefined,
     };
   },
@@ -774,6 +915,11 @@ export default {
     if (b.last && (!was || was[0] !== b.last[0] || was[1] !== b.last[1])) b.mark = 0;
     if (Number.isFinite(data.lb)) b.lastBy = data.lb === 0 || data.lb === 1 ? data.lb : null;
     b.line = Array.isArray(data.ln) ? data.ln : null;
+    // **차례인 사람의 커서는 `turnAim` 으로만 받는다.** `b.aim` 은 건드리지 않는다 —
+    // 거기에 넣으면 남이 내 커서를 끌고 다니고, 내 차례가 왔을 때 엉뚱한 칸에서 시작한다.
+    b.turnAim = Array.isArray(data.ca) && data.ca.length === 3 && data.ca.every(Number.isFinite)
+      ? { x: clamp(data.ca[0], 0, N - 1), y: clamp(data.ca[1], 0, N - 1), id: data.ca[2] }
+      : null;
   },
 };
 

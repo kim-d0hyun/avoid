@@ -54,7 +54,10 @@ const STEP_MAX = R / 3;
 const STEP_CAP = 48;
 
 /// 차례마다 주는 시간. 고르기·각 재기·힘 채우기를 다 합쳐서 잰다.
-export const TURN_SECS = 10;
+///
+/// 처음에 10초로 뒀다가 45초로 늘렸다 — 알까기는 어느 돌로 어디를 칠지 눈으로 재는
+/// 게임이고, 게이지가 톱니라 힘 맞추는 데도 몇 바퀴가 걸린다. 10초는 급하다.
+export const TURN_SECS = 45;
 /// 게이지 한 바퀴. **톱니다** — 가득 찼다가 0으로 뚝 떨어지고 다시 찬다.
 /// 왕복(찼다 줄어드는)으로 두면 「가득」 근처에 머무는 시간이 두 배라 아무나 최대로 쏜다.
 export const GAUGE_CYCLE = 0.9;
@@ -355,8 +358,7 @@ export default {
     ['⌥ ← →', '쏠 돌 고르기 → 각 재기'],
     ['⌥ Space', '고른다 · 잡고 있으면 힘이 찬다 · 떼면 쏜다'],
     ['힘 게이지', '가득 찼다가 0으로 뚝 — 떼는 순간의 값으로 나간다'],
-    ['⌥ ↓', '고르기로 되돌아간다 (각 재는 중에)'],
-    ['한 차례', '10초. 넘기면 그 차례는 넘어간다'],
+    ['한 차례', '45초. 넘기면 그 차례는 넘어간다'],
   ],
   tally: (world) => {
     const b = world.bag;
@@ -399,11 +401,15 @@ export default {
   fresh: freshBag,
 
   /// 방향키를 **누른 순간** 한 칸 / 3도. 꾹 누르고 있는 동안은 update 가 이어서 돈다.
+  ///
+  /// **한 번 고른 돌은 무를 수 없다.** 되돌아가는 길을 두면 각을 재다 손이 미끄러져
+  /// 처음으로 돌아가고, 그 사이 차례 시계는 계속 돈다. 차례가 끝나면 어차피 다시 고른다.
   tap(world, key) {
     const b = world.bag;
     if (b.over || !myTurn(world)) return;
+    // **위아래는 아무것도 안 한다.** ⌥↓ 로 고르기로 되돌아가게 뒀더니, 각을 재다 아래를
+    // 눌러 단계가 되감겼다 — 각을 내리려고 누르는 키다. 쏠 돌은 ⌥Space 로만 고른다.
     const dir = key === 'left' ? -1 : key === 'right' ? 1 : 0;
-    if (key === 'duck' && b.phase === 'aim') { b.phase = 'pick'; return; }
     if (!dir) return;
     if (b.phase === 'pick') {
       const row = mine(b, b.turn);
@@ -444,7 +450,10 @@ export default {
       // 손님은 세 값만 보낸다. 판은 방장이 굴린다 (그리고 모두가 같은 셈을 한다).
       world.send?.({ t: 'gm', k: 'shot', i: b.pick, d: Math.round(b.deg),
                      g: Math.round(gauge * 1000) });
-      b.phase = 'aim';
+      // **되돌아가지 않는다.** 뗀 뒤에 다시 「각 재기」로 돌려 놓으면 화살표가 한 번
+      // 깜빡였다 사라진다 — 쏜 것을 무른 것처럼 보인다. 방장 꾸러미가 한두 프레임 뒤에
+      // 돌을 굴리기 시작하고, 혹시 방장이 안 받아 줬으면 그 꾸러미가 단계를 되돌려 준다.
+      b.phase = 'roll';
       return;
     }
     fire(world, b.pick, b.deg, gauge);
@@ -497,6 +506,17 @@ export default {
       b.gauge = gaugeAt(b.held);
     }
 
+    // **내가 겨누는 것을 남들에게 알려 준다.** 차례제 게임에서 남의 차례에 화면이 멎어
+    // 있으면 「끊긴 건가」 싶다. 초당 열 번이면 충분하다 — 60번 보낼 값이 아니다.
+    if (world.mp.on && world.mp.role === 'guest' && myTurn(world) && b.phase !== 'roll') {
+      b.told = (b.told ?? 0) + dt;
+      if (b.told >= 0.1) {
+        b.told = 0;
+        world.send?.({ t: 'gm', k: 'aim', p: b.pick, d: Math.round(b.deg),
+                       g: Math.round(b.gauge * 1000), f: b.phase });
+      }
+    }
+
     if (world.mp.role === 'guest') return;
 
     // 차례 시계. 고르기·각 재기·힘 채우기를 다 합쳐서 잰다.
@@ -504,7 +524,7 @@ export default {
     if (human) {
       b.left -= dt;
       if (b.left <= 0) {
-        say(b, '10초 넘었다 — 한 번 쉰다');
+        say(b, `${TURN_SECS}초 넘었다 — 한 번 쉰다`);
         b.log.push({ side: b.turn, skip: true });
         handOver(world, b);
         return;
@@ -574,6 +594,16 @@ export default {
     const b = world.bag;
     if (typeof msg.s === 'number') { takeSide(world, from, msg.s ? 1 : 0); return; }
     if (world.state !== 'play' || b.over) return;
+    // 손님이 겨누는 중이라고 알려 온 것. **차례인 사람 것만** 받아서 모두에게 전한다.
+    if (msg.k === 'aim') {
+      const turnNow = whoseTurn(world);
+      if (!turnNow || turnNow.id !== from || b.phase === 'roll') return;
+      b.pick = clamp(msg.p | 0, 0, b.men.length - 1);
+      b.deg = ((+msg.d || 0) % 360 + 360) % 360;
+      b.gauge = clamp((+msg.g || 0) / 1000, 0, 1);
+      if (msg.f === 'pick' || msg.f === 'aim' || msg.f === 'charge') b.phase = msg.f;
+      return;
+    }
     if (msg.k !== 'shot') return;
     // **차례인 사람이 보낸 것만 받는다.**
     const who = whoseTurn(world);
@@ -587,9 +617,17 @@ export default {
     const b = world.bag;
     const fresh = b.fresh;
     b.fresh = false;
-    // 자리는 **한 수마다, 그리고 0.6초마다 한 번 더** 보낸다. 셈은 모두가 같이 하지만
-    // 소수점이 떠내려가는 것과 판 도중에 들어온 사람은 이 한 줄로 맞춘다.
-    const again = !fresh && world.elapsed - (b.sentAt ?? -9) >= 0.6;
+    // **돌이 굴러가는 동안에는 매 프레임 자리를 보낸다.**
+    //
+    // 처음엔 「쏜 순간 한 번 + 0.6초마다」만 보냈다. 물리에 주사위가 없으니 손님도 같은
+    // 셈을 하면 될 줄 알았는데, **그 한 꾸러미가 늦거나 빠지면 손님은 속도를 못 받는다** —
+    // 아무것도 안 움직이다가 0.6초 뒤 순간이동한다. 재 보니 꾸러미 다섯에 하나만 빠져도
+    // **손님 화면은 열여덟 프레임 내내 멈춰 있었다.** 「결과만 보인다」가 이것이다.
+    //
+    // 굴러가는 건 한 수에 1초쯤이고 한 줄이 돌 열 개 × 숫자 여섯이다. 그 1초 동안
+    // 초당 12킬로바이트를 더 쓰고 **빠진 꾸러미를 다음 꾸러미가 덮어 준다.**
+    const rolling = b.phase === 'roll';
+    const again = !fresh && !rolling && world.elapsed - (b.sentAt ?? -9) >= 0.6;
     if (fresh || again) b.sentAt = world.elapsed;
     return {
       tm: [...rosterSides(world).entries()],
@@ -600,9 +638,11 @@ export default {
       wn: b.winner === 0 || b.winner === 1 ? b.winner : -1,
       nt: b.note ?? null,
       lf: Math.round(Math.max(0, b.left) * 10),
+      // 지금 겨누는 자리 — 숫자 셋이면 남의 차례에도 화면이 산다.
+      pk: b.pick, dg: Math.round(b.deg), gg: Math.round(b.gauge * 1000),
       // **자리와 속도가 곧 「쏜 것」이다.** 쏜 순간의 속도가 실려 가니 손님은 그 값에서
       // 이어 굴리면 된다 — 「어느 돌·몇 도·얼마나 세게」를 따로 보낼 까닭이 없다.
-      m: fresh || again
+      m: fresh || again || rolling
         ? b.men.map((m) => [Math.round(m.x * 1e4), Math.round(m.y * 1e4),
                             Math.round(m.vx * 1e3), Math.round(m.vy * 1e3),
                             m.side, m.alive ? 1 : 0])
@@ -628,9 +668,16 @@ export default {
     }
     if (Number.isFinite(data.t)) b.turn = data.t ? 1 : 0;
     if (Array.isArray(data.st) && data.st.every(Number.isFinite)) b.seat = [data.st[0], data.st[1]];
-    if (typeof data.ph === 'string') {
-      // 내 차례에 내가 고르고 있는 중이면 그 단계는 내 것이다 — 방장 값으로 덮으면 커서가 튄다.
-      if (!(myTurn(world) && (b.phase === 'aim' || b.phase === 'charge'))) b.phase = data.ph;
+    // **내 차례면 내 것이 맞다.** 방장 값으로 덮으면 내가 고르는 중에 커서가 튄다 —
+    // 내가 보낸 값이 한 왕복 돌아 오는 것이라 늘 한 박자 늦다.
+    const boss = !myTurn(world);
+    if (typeof data.ph === 'string' && (boss || b.phase === 'pick' || b.phase === 'roll')) {
+      b.phase = data.ph;
+    }
+    if (boss) {
+      if (Number.isFinite(data.pk)) b.pick = clamp(data.pk | 0, 0, b.men.length - 1);
+      if (Number.isFinite(data.dg)) b.deg = ((data.dg % 360) + 360) % 360;
+      if (Number.isFinite(data.gg)) b.gauge = clamp(data.gg / 1000, 0, 1);
     }
     if (Number.isFinite(data.lf)) b.left = data.lf / 10;
     b.over = !!data.o;
@@ -699,42 +746,65 @@ function drawStones(ctx, L, b, time) {
   });
 }
 
-/// 고른 돌과 화살표. **내 화면에만 보인다** — 남이 어디를 겨누는지 보이면 수싸움이 없어진다.
+/// 고른 돌과 화살표.
+///
+/// **남이 겨누는 것도 보여 준다.** 알까기에는 감출 것이 없다 — 돌이 다 보이는 판이고,
+/// 실제로도 상대가 자세를 잡는 것을 보면서 기다린다. 감춰 두면 상대 차례에는 화면이
+/// 멎은 것처럼 보인다(차례제 게임에서 그게 제일 답답하다). 내 것보다 옅게 그린다.
 function drawAim(ctx, L, world, b, time) {
-  if (b.over || world.state !== 'play' || !myTurn(world)) return;
+  if (b.over || world.state !== 'play') return;
   // **굴러가는 동안은 안 그린다.** 쏜 뒤에도 화살표가 남아 있으면 아직 쏠 수 있는 줄 안다.
   if (b.phase === 'roll') return;
+  const who = whoseTurn(world);
+  const mineNow = !!who?.mine;
+  // 사람이 없는 편(컴퓨터)은 겨누는 그림이 없다 — 굴려 보고 바로 쏜다.
+  if (!who) return;
   const m = b.men[b.pick];
   if (!m || !m.alive) return;
   const r = R * L.size;
   const [px, py] = at(L, m.x, m.y);
   const tint = TEAM_INK[b.turn];
-  // 고른 돌에 테
-  const puls = 0.6 + 0.4 * Math.sin(time * 5);
-  circle(ctx, px, py, r * 1.7, { width: 2, color: tint, halo: false, alpha: puls, seed: 6, amp: 0.5 });
+  const dim = mineNow ? 1 : 0.55;
+  // **고른 돌을 또렷하게.** 하양 돌 위에 옅은 테 하나만 두르면 판에 묻혀서 안 보인다 —
+  // 잉크색 꺾쇠를 네 귀퉁이에 찍는다. 종이 위에서 제일 잘 읽히는 표시다.
+  const b0 = r * 1.5, tick = r * 0.62;
+  for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    stroke(ctx, [[px + sx * b0, py + sy * b0 - sy * tick], [px + sx * b0, py + sy * b0],
+                 [px + sx * b0 - sx * tick, py + sy * b0]],
+           { width: 2.4, color: INK, seed: 20 + sx * 3 + sy, amp: 0.4, alpha: 0.85 * dim, haloWidth: 3 });
+  }
+  // 그 위에 편 색 고리 하나 — 누구 차례인지 색으로도 읽히게.
+  const puls = 0.55 + 0.45 * Math.sin(time * 5);
+  circle(ctx, px, py, r * 1.28, { width: 2.2, color: tint, alpha: puls * dim, seed: 6, amp: 0.4 });
+  // 남이 겨누는 중이면 그렇다고 적어 준다.
+  if (!mineNow) {
+    text(ctx, `${who.name ?? '상대'} 겨누는 중`, px, py - r * 2.4,
+         { font: `700 11px ${HAN}`, color: tint, align: 'center', halo: 3, alpha: 0.8 });
+  }
   if (b.phase === 'pick') return;
   // 화살표 — 돌 중심에서 뻗는다. 힘을 채우는 동안은 그 힘만큼 길어진다.
   const reach = r * (3 + 7 * (b.phase === 'charge' ? b.gauge : 0.35));
   const dx = Math.cos(b.deg * RAD), dy = Math.sin(b.deg * RAD);
   const tipX = px + dx * reach, tipY = py + dy * reach;
   stroke(ctx, [[px + dx * r * 1.2, py + dy * r * 1.2], [tipX, tipY]],
-         { width: 2.4, color: tint, seed: 7, amp: 0.4, halo: false, alpha: 0.9 });
+         { width: 2.4, color: tint, seed: 7, amp: 0.4, haloWidth: 3, alpha: 0.9 * dim });
   // 화살촉 — 끝에서 뒤로 두 날개. 방향을 기준으로 ±26도 뒤로 접는다.
   const wing = r * 1.5;
   const barb = (off) => [tipX - Math.cos((b.deg + off) * RAD) * wing,
                          tipY - Math.sin((b.deg + off) * RAD) * wing];
   stroke(ctx, [barb(-26), [tipX, tipY], barb(26)],
-         { width: 2.2, color: tint, seed: 8, amp: 0.4, halo: false, alpha: 0.9 });
+         { width: 2.2, color: tint, seed: 8, amp: 0.4, haloWidth: 3, alpha: 0.9 * dim });
   if (b.phase !== 'charge') return;
   // 힘 막대. **화살표 반대쪽에 둔다** — 같은 쪽에 두면 화살표와 겹쳐서 둘 다 안 읽힌다.
   const bw = r * 5, bh = 6;
   const bx = px - bw / 2, by = py + (dy < 0 ? r * 2.2 : -r * 2.2 - bh);
   const box = [[bx, by], [bx + bw, by], [bx + bw, by + bh], [bx, by + bh]];
   stroke(ctx, [...box, box[0]], { width: 1.4, color: PENCIL, seed: 11, amp: 0.3,
-                                  alpha: 0.6, sharp: true, halo: false });
+                                  alpha: 0.6 * dim, sharp: true, haloWidth: 2 });
   const full = b.gauge > 0.92;
   stroke(ctx, [[bx + 1, by + bh / 2], [bx + 1 + (bw - 2) * b.gauge, by + bh / 2]],
-         { width: bh - 2, color: full ? RED : tint, seed: 12, amp: 0.2, sharp: true, halo: false });
+         { width: bh - 2, color: full ? RED : tint, seed: 12, amp: 0.2, sharp: true,
+           halo: false, alpha: dim });
 }
 
 /// 부딪힌 자리와 떨어진 자리. 무엇이 무엇을 쳤는지 눈으로 따라가게.
@@ -777,8 +847,7 @@ function drawCrew(ctx, world, b, time, boil) {
 const KEY_ROWS = [
   ['⌥ ← →', '돌 고르기 → 각 재기'],
   ['⌥ Space', '고른다 · 잡으면 힘이 찬다 · 떼면 쏜다'],
-  ['⌥ ↓', '고르기로 되돌아간다'],
-  ['한 차례', '10초'],
+  ['한 차례', '45초'],
 ];
 function drawKeys(ctx) {
   const x = 16, y = 14, lh = 15;
