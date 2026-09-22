@@ -752,6 +752,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         let rows = net.rooms.map { room -> String in
             let name = games.first(where: { $0.id == room.game })?.name ?? room.game
             return "{\"code\":\"\(room.code)\",\"game\":\"\(name)\",\"people\":\(room.people),"
+                 + "\"mine\":\(room.mine ? "true" : "false"),"
                  + "\"old\":\(room.old ? "true" : "false")}"
         }
         return "[" + rows.joined(separator: ",") + "]"
@@ -836,7 +837,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                 let rooms = NSMenu()
                 for room in net.rooms {
                     let name = games.first(where: { $0.id == room.game })?.name ?? room.game
-                    let note = [name.isEmpty ? nil : name,
+                    let note = [room.mine ? "내 방" : nil,
+                                name.isEmpty ? nil : name,
                                 room.people > 0 ? "\(room.people)명" : nil,
                                 room.old ? "버전 다름" : nil].compactMap { $0 }.joined(separator: " · ")
                     let item = NSMenuItem(title: note.isEmpty ? room.code : "\(room.code)  \(note)",
@@ -1408,6 +1410,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         pushScreens()
         pushLayout()
         pushNetRole()
+        // **방 목록도 다시 밀어 준다.** 목록은 「바뀔 때만」 보내는데, 앱이 뜨고 페이지가
+        // 준비되기 전에 찾은 방은 그 한 번을 놓친다 — 그러면 방이 열려 있어도 게임 안
+        // 메뉴에는 영영 안 뜬다. 「방을 만들어도 목록에 안 나온다」가 이것이었다.
+        pushRooms()
     }
 
     // MARK: 저장

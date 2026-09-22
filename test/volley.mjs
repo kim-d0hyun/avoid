@@ -52,13 +52,15 @@ say('편 — 네트를 넘어갈 수 없다');
   const run = (n) => { for (let i = 0; i < n; i++) { world.bag.serving = false; w.update(world, 1 / 60); } };
   run(240);                                                // 4초 내내 오른쪽으로
   check('네트 앞에서 멈춘다', world.player.x <= 1512 / 2, true);
-  check('넘어가지 않았다', Math.round(world.player.x), 742);   // 756 - 14
+  // 몸이 그물에 닿지 않는 자리까지만 간다 (NET_GAP 26). 그물 면(14)에 붙여 세웠더니
+  // 팔을 휘두를 때 **서로 네트를 침범한 것처럼** 보였다.
+  check('넘어가지 않았다', Math.round(world.player.x), 730);   // 756 - 26
 
   world.team = 1;
   world.player.x = 1100;
   world.input.right = false; world.input.left = true;
   run(240);
-  check('반대쪽도 마찬가지', Math.round(world.player.x), 770);  // 756 + 14
+  check('반대쪽도 마찬가지', Math.round(world.player.x), 782);  // 756 + 26
 }
 
 say('편 — 판이 끝나도 못 넘는다');
@@ -312,16 +314,17 @@ say('슬라이딩 — 방향키가 방향을 정한다');
   check('공이 왼쪽인데 ⌥→ 를 잡음 → 오른쪽', dive({ right: true }, 250), 1);
 }
 
-say('스파이크 — 공보다 높이 떠서 때려야 꽂힌다');
+say('스파이크 — 공보다 높이 떠서 때려야 꽂힌다 · 네트는 넘긴다');
 {
   // 손 높이를 기준으로 공을 놓고 때려 본다. air 는 발이 땅에서 뜬 높이.
-  const hit = ({ air = 100, under = 0, keys = {} }) => {
+  // **자리도 넣는다** — 꽂는 각은 네트까지 남은 길에 걸린다 (netCap). 기본은 네트 앞(740).
+  const hit = ({ x = 740, air = 100, under = 0, keys = {} }) => {
     const world = mk(); world.state = 'play'; world.team = 0;
     const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
     const p = world.player;
-    p.x = 400; p.air = air; p.vy = 0;
+    p.x = x; p.air = air; p.vy = 0;
     const hand = p.groundY - p.air - BODY_H * 0.86;
-    b.ball.x = 400; b.ball.y = hand + under; b.ball.vx = 0; b.ball.vy = 120;
+    b.ball.x = x; b.ball.y = hand + under; b.ball.vx = 0; b.ball.vy = 120;
     Object.assign(world.input, { left: false, right: false, jump: false, duck: false }, keys);
     const ok = spike(world);
     return { ok, vx: b.ball.vx, vy: b.ball.vy, swing: p.swing ?? 0 };
@@ -331,16 +334,24 @@ say('스파이크 — 공보다 높이 떠서 때려야 꽂힌다');
   check('손 높이의 공은 수평 미사일', Math.abs(flat.vy) < 1, true);
   check('앞으로 나간다', flat.vx > 300, true);
 
-  const deep = hit({ under: BODY_H * 0.5 });
-  check('손보다 한참 밑이면 아래로 꽂힌다', deep.vy > 900, true);
+  const deep = hit({ under: BODY_H * 0.25 });
+  check('손보다 밑이면 아래로 꽂힌다', deep.vy > 300, true);
   check('꽂을수록 가로는 준다', deep.vx < flat.vx, true);
   note(`손 높이 vy=${flat.vy.toFixed(0)} · 손 밑 vy=${deep.vy.toFixed(0)}`);
 
-  const half = hit({ under: BODY_H * 0.25 });
-  check('중간 높이는 중간 각도', half.vy > 100 && half.vy < deep.vy, true);
+  // **너무 밑에서 잡으면 오히려 각을 못 낸다.** 손보다 한참 밑의 공은 그만큼 네트 꼭대기에
+  // 가까워서, 가파르게 꽂으면 그물에 걸린다 — 그래서 가장 잘 꽂히는 건 손끝 바로 밑이다.
+  const low = hit({ under: BODY_H * 0.5 });
+  check('한참 밑에서 잡으면 각이 준다', low.vy > 0 && low.vy < deep.vy, true);
 
-  const low = hit({ air: 20, under: BODY_H * 0.5 });
-  check('낮게 뛰면 덜 세다', low.vy < deep.vy, true);
+  // 같은 공을 **가운데에서** 때리면 갈 길이 멀어 꽂을 수 없다. 예전엔 여기서도 같은 각으로
+  // 꽂아서 제 코트 바닥에 박혔다 — 「중간자리에서 스파이크가 안 된다」가 이거였다.
+  const mid = hit({ x: 500, under: BODY_H * 0.25 });
+  check('가운데에서는 꽂지 않고 넘긴다', mid.vy <= 0, true);
+  note(`네트 앞 vy=${deep.vy.toFixed(0)} · 가운데 vy=${mid.vy.toFixed(0)}`);
+
+  const weak = hit({ air: 20, under: BODY_H * 0.5 });
+  check('낮게 뛰면 못 꽂는다 — 올려 주는 공이 된다', weak.vy < deep.vy, true);
 
   // v3.12 — ⌥↓ 를 페인트에 내주었다. 꽂는 각도는 **공이 손보다 얼마나 아래냐**로만 정해진다.
   // 원래도 그게 진짜 규칙이었고 ⌥↓ 는 그걸 최대로 올려 주는 덤이었다.
@@ -435,11 +446,13 @@ say('슬라이딩 게이지 — 비었다가 꽉 차면 또 된다');
 
 const BALL_R = 20;
 /// 한 번 치는 판을 차린다. air 는 발이 뜬 높이, off 는 손끝에서 공까지의 [가로, 세로].
-function rig({ air = 60, off = [66, -20], keys = {}, vy = 200 } = {}) {
+// x — 코트 어디에서 치나. **꽂는 각은 네트까지 남은 길에 걸리므로**(netCap) 내리꽂기를
+// 보는 시험은 네트 앞(740)에서 높이 떠서 쳐야 한다. 가운데(500)에서는 넘겨 주는 공이 된다.
+function rig({ x = 500, air = 60, off = [66, -20], keys = {}, vy = 200 } = {}) {
   const world = mk(); world.state = 'play'; world.team = 0;
   const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
   const p = world.player;
-  p.x = 500; p.air = air; p.vy = 0; p.facing = 1;
+  p.x = x; p.air = air; p.vy = 0; p.facing = 1;
   const hand = p.groundY - p.air - BODY_H * 0.86;
   b.ball.x = p.x + off[0]; b.ball.y = hand + off[1]; b.ball.vx = 0; b.ball.vy = vy;
   Object.assign(world.input, { left: false, right: false, jump: false, duck: false }, keys);
@@ -637,7 +650,7 @@ say('세게 나가는 느낌 — 탑스핀 · 덜 타는 공기 · 식기');
 
   // **친 사람 몸은 잠깐 공을 안 받는다.** 머리 위 공을 내리꽂으면 공이 제 몸을 지나간다 —
   // 그 프레임에 몸에 맞아 도로 떠오르면 강타가 토스가 된다.
-  const d = rig({ air: 60, off: [6, 30] });
+  const d = rig({ x: 740, air: 100, off: [6, 20] });
   check('내리꽂기가 먹혔다', spike(d.world), true);
   check('아래로 간다', d.b.ball.vy > 900, true);
   for (let i = 0; i < 6; i++) volley.update(d.world, 1 / 60);
@@ -645,7 +658,7 @@ say('세게 나가는 느낌 — 탑스핀 · 덜 타는 공기 · 식기');
   note(`제 몸을 지난 뒤 vy=${d.b.ball.vy.toFixed(0)} (예전에는 여기서 -811 이 됐다)`);
 
   // 바닥에 꽂히면 먼지가 인다.
-  const s = rig({ air: 60, off: [6, 30] });
+  const s = rig({ x: 740, air: 100, off: [6, 20] });
   spike(s.world);
   for (let i = 0; i < 30; i++) volley.update(s.world, 1 / 60);
   check('달아오른 채 꽂히면 먼지와 금이 남는다', s.b.fx.some((f) => f.k === 'slam'), true);
@@ -807,7 +820,7 @@ say('치는 모션은 배구에서만 — 다른 게임 그림은 안 바뀐다'
 say('빗나간 까닭 — 왜 못 쳤는지 알려 준다');
 {
   // ① 늦다 — 히트스톱 중에 누르면 입력이 씹혔다. 이제는 **기억했다가 풀리는 프레임에 친다.**
-  const a = rig({ air: 60, off: [6, 30] });
+  const a = rig({ x: 740, air: 100, off: [6, 20] });
   check('내리꽂았다', spike(a.world), true);
   check('공이 멈춰 있다 (히트스톱)', a.b.stop > 0, true);
   const vy0 = a.b.ball.vy;
@@ -815,7 +828,7 @@ say('빗나간 까닭 — 왜 못 쳤는지 알려 준다');
   check('「늦다」가 뜬다', a.b.fx.some((f) => f.k === 'miss' && f.word === '늦다'), true);
   check('버리지 않고 기억해 둔다', !!a.b.hold, true);
   // 공을 손끝에 다시 두고 히트스톱을 흘려보낸다 — 기억해 둔 입력이 그 프레임에 풀린다.
-  a.b.ball.x = a.p.x + 6; a.b.ball.y = a.hand + 30; a.b.ball.vy = 200;
+  a.b.ball.x = a.p.x + 6; a.b.ball.y = a.hand + 20; a.b.ball.vy = 200;
   for (let i = 0; i < 8; i++) volley.update(a.world, 1 / 60);
   check('풀리는 프레임에 대신 쳐 준다', a.b.ball.vy > 900 && a.b.ball.vy !== vy0, true);
   check('한 번 쓰면 기억은 지운다', a.b.hold, null);
@@ -909,6 +922,77 @@ say('페인트 — ⌥↓ 로 살짝 얹어 블록 너머로');
   // 땅에서 ⌥↓ 는 페인트가 아니다 — 웅크리기(디그)다.
   const ground = rig({ air: 0, off: [6, 10] });
   check('땅에서는 페인트가 안 나간다', tipHit(ground.world), false);
+
+  // **위쪽 키로도 페인트가 된다.** ⌥↓ 하나만 받게 뒀더니 「페인트가 잘 안 된다」는 말이
+  // 나왔다 — 공중에서 위아래 키는 달리 쓸 데가 없으니 둘 다 얹기로 받는다.
+  // 키를 누르는 길(world.press → game.tap)을 그대로 지나가게 본다.
+  const up = rig({ air: 60, off: [6, 10] });
+  tap(up.world, 'jump');
+  check('점프 뒤 ⌥↑ 로도 페인트', Math.round(up.b.ball.vx), Math.round(r.b.ball.vx));
+  check('같이 조금 떠오른다', Math.round(up.b.ball.vy), Math.round(r.b.ball.vy));
+  check('⌥↑ 페인트도 안 달아오른다', up.b.ball.hot, 0);
+
+  // 땅에서 ⌥↑ 는 점프다 — 얹히지 않는다.
+  const jumpOff = rig({ air: 0, off: [6, 10] });
+  const still = jumpOff.b.ball.vy;
+  tap(jumpOff.world, 'jump');
+  check('땅에서 ⌥↑ 는 그냥 점프', jumpOff.b.ball.vy, still);
+
+  // **어느 자리에서 얹으면 넘어가나.** 페인트는 살짝 얹는 것이라 앞자리 전용이다 —
+  // 가운데에서 얹으면 제 코트에 떨어진다. 이게 페인트와 강타를 가르는 값이다.
+  const land = (x, air) => {
+    const t = rig({ x, air, off: [10, 10] });
+    if (!tipHit(t.world)) return null;
+    t.b.stop = 0; t.b.stopHold = 0; t.b.ball.gT = 0;
+    let cross = false;
+    for (let i = 0; i < 600; i++) {
+      const was = t.b.ball.x;
+      volley.update(t.world, 1 / 120);
+      if ((was - 756) * (t.b.ball.x - 756) < 0) cross = true;
+      if (t.b.ball.y > t.world.groundY - 40 && t.b.ball.vy > 0) return cross ? Math.round(t.b.ball.x) : -1;
+    }
+    return 0;
+  };
+  check('네트 앞(720)에서 얹으면 넘어간다', land(720, 65) > 756, true);
+  check('중간 앞(620)에서도 넘어간다', land(620, 65) > 756, true);
+  check('가운데(500)에서 얹으면 제 코트에 떨어진다', land(500, 65), -1);
+  note(`페인트 착지 — 720→${land(720, 65)} · 620→${land(620, 65)}`);
+}
+
+// **자리마다 스파이크가 네트를 넘는다.**
+//
+// netCap 은 update() 의 공 셈을 흉내서 미리 날려 보고 각을 정한다. 흉낸 셈이 실제와 어긋나면
+// 공이 다시 네트에 걸리는데, 그건 코드를 봐서는 안 보인다. 그래서 **진짜로 날려서** 본다.
+// (이 시험이 없던 동안 가운데 자리 스파이크는 열 번에 열 번 제 코트에 꽂혔다.)
+say('스파이크 — 어느 자리에서 때려도 네트를 넘어간다');
+{
+  const shot = (x, air, under, keys = {}) => {
+    const r = rig({ x, air, off: [6, under], keys });
+    if (!spike(r.world)) return '못침';
+    r.b.stop = 0; r.b.stopHold = 0; r.b.ball.gT = 0;
+    for (let i = 0; i < 600; i++) {
+      const was = r.b.ball.x;
+      volley.update(r.world, 1 / 120);
+      // 네트를 지나갔다
+      if ((was - 756) * (r.b.ball.x - 756) < 0) return Math.round(r.b.ball.x);
+      // 지나가기 전에 땅에 닿았다 — 제 코트에 꽂혔다
+      if (r.b.ball.y > r.world.groundY - 40 && r.b.ball.vy > 0) return '자책';
+    }
+    return '안넘음';
+  };
+  let worst = null;
+  for (const x of [140, 260, 380, 500, 620, 700, 740]) {
+    for (const under of [0, 10, 20]) {
+      for (const keys of [{}, { right: true }]) {
+        const got = shot(x, 65, under, keys);
+        if (typeof got !== 'number') worst = `x ${x} · 손밑 ${under} · ${keys.right ? '⌥→' : '그냥'} → ${got}`;
+      }
+    }
+  }
+  check('일곱 자리 × 세 높이 × 두 방향 — 다 넘어간다', worst, null);
+  note(`가운데(500)에서 손밑 20 을 때리면 vy=${(() => {
+    const r = rig({ x: 500, air: 65, off: [6, 20] }); spike(r.world); return r.b.ball.vy.toFixed(0);
+  })()} — 예전에는 +790 으로 제 코트에 꽂혔다`);
 }
 
 say('디그 — 웅크려 받으면 높고 곧게 뜬다');

@@ -138,6 +138,8 @@ struct FoundRoom {
     let game: String
     let people: Int
     let version: String
+    /// **내가 연 방인가.** 목록에 「내 방」으로 적어 준다.
+    var mine: Bool = false
     /// 내 판과 다른 판이면 들어가도 같이 못 한다. 목록에 그렇게 적어 준다.
     var old: Bool { !version.isEmpty && version != appVersion }
 }
@@ -244,12 +246,8 @@ final class Net {
             }
             let sorted = found.sorted { $0.code < $1.code }
             DispatchQueue.main.async {
-                let same = sorted.count == self.rooms.count
-                    && zip(sorted, self.rooms).allSatisfy { $0.code == $1.code && $0.people == $1.people && $0.game == $1.game }
-                if !same {
-                    self.rooms = sorted
-                    self.delegate?.netRoomsChanged()
-                }
+                self.seen = sorted
+                self.rebuild(sorted)
                 // 이름표가 비어 온 방은 따로 물어본다.
                 for room in sorted where room.version.isEmpty {
                     self.peek(room.code)
@@ -259,9 +257,44 @@ final class Net {
                 self.peeks = self.peeks.filter { alive.contains($0.key) }
             }
         }
+        // **넘어지면 다시 일으킨다.** 켤 때 와이파이가 아직 안 붙어 있거나 권한 창이 떠
+        // 있으면 브라우저가 한 번 실패하는데, 그대로 두면 **그 뒤로 영영 아무 방도 못 찾는다.**
+        // 목록이 비어 있는 것과 목록을 못 보는 것은 화면에서 똑같이 보여서, 고장인 줄도 모른다.
+        browser.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .failed, .cancelled:
+                guard let self, self.lobby === browser else { return }
+                debugLog("방 목록 브라우저가 멈췄다 — 3초 뒤 다시")
+                self.lobby = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.watchRooms() }
+            default: break
+            }
+        }
         browser.start(queue: .main)
         lobby = browser
     }
+
+    /// 찾은 방들에 **내 방을 얹어** 목록을 세운다.
+    ///
+    /// `NWBrowser` 는 **같은 프로세스가 광고하는 서비스를 안 알려 준다** — 그래서 내가 연
+    /// 방은 남의 목록에는 뜨는데 내 목록에는 안 떴다. 「방을 만들어도 목록에 안 나온다」가
+    /// 이것이다. 내 방은 내가 아는 값(코드·게임·사람 수)으로 직접 얹는다.
+    private func rebuild(_ found: [FoundRoom]) {
+        var rows = found.filter { $0.code != code }
+        if role == "host", let code {
+            rows.insert(FoundRoom(code: code, game: roomGame, people: peers.count + 1,
+                                  version: appVersion, mine: true), at: 0)
+        }
+        let same = rows.count == rooms.count && zip(rows, rooms).allSatisfy {
+            $0.code == $1.code && $0.people == $1.people && $0.game == $1.game && $0.mine == $1.mine
+        }
+        guard !same else { return }
+        rooms = rows
+        delegate?.netRoomsChanged()
+    }
+
+    /// 브라우저가 알려 준 것만 따로 들고 있는다 (내 방을 얹기 전의 날것).
+    private var seen: [FoundRoom] = []
 
     /// 이름표가 비어 온 방 하나를 따로 풀어서 채운다. 한 방에 한 번만 건다.
     private func peek(_ room: String) {
@@ -270,20 +303,20 @@ final class Net {
         peeks[room] = peek
         peek.read(timeout: 4) { [weak self] fields in
             guard let self, !fields.isEmpty else { return }
-            guard let at = self.rooms.firstIndex(where: { $0.code == room }) else { return }
+            guard let at = self.seen.firstIndex(where: { $0.code == room }) else { return }
             let filled = FoundRoom(code: room,
-                                   game: fields["g"] ?? self.rooms[at].game,
-                                   people: Int(fields["n"] ?? "") ?? self.rooms[at].people,
-                                   version: fields["v"] ?? self.rooms[at].version)
-            guard filled.game != self.rooms[at].game || filled.people != self.rooms[at].people
-                    || filled.version != self.rooms[at].version else { return }
-            self.rooms[at] = filled
-            self.delegate?.netRoomsChanged()
+                                   game: fields["g"] ?? self.seen[at].game,
+                                   people: Int(fields["n"] ?? "") ?? self.seen[at].people,
+                                   version: fields["v"] ?? self.seen[at].version)
+            self.seen[at] = filled
+            self.rebuild(self.seen)
         }
     }
 
     /// 사람이 드나들거나 게임이 바뀌면 이름표를 다시 붙인다 — 목록의 「2명」이 따라 움직인다.
     private func republish() {
+        // 내 방이 목록 맨 위에 있으니, 사람이 드나들면 그 숫자도 같이 고쳐야 한다.
+        rebuild(seen)
         guard role == "host", let code, let listener else { return }
         listener.service = Net.service(room: code, port: listener.port?.rawValue,
                                        game: roomGame, people: peers.count + 1)
@@ -343,6 +376,7 @@ final class Net {
         role = "host"
         code = room
         myId = 0
+        rebuild(seen)                            // 내 방을 목록 맨 위에 얹는다
         delegate?.netRoleChanged(role: role, code: room, myId: 0, note: nil)
         return room
     }
@@ -707,6 +741,9 @@ final class Net {
         role = "off"
         code = nil
         myId = 0
+        // 방을 떠났으니 목록에서 내 방을 뺀다. **여기서 바로** 뺀다 — 나중에 떼면
+        // host() 가 leave() 를 먼저 부르는 탓에 방금 연 방이 다시 지워진다.
+        rebuild(seen)
     }
 
     var peerCount: Int { uplink != nil ? 1 : peers.values.filter(\.ready).count }

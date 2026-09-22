@@ -627,7 +627,8 @@ export function menuItems(world) {
       const rows = (world.rooms ?? []).map((room) => ({
         id: `join:${room.code}`,
         label: room.code,
-        note: [room.game, room.people > 0 ? `${room.people}명` : null, room.old ? '버전 다름' : null]
+        note: [room.mine ? '내 방' : null, room.game,
+               room.people > 0 ? `${room.people}명` : null, room.old ? '버전 다름' : null]
           .filter(Boolean).join(' · '),
       }));
       if (rows.length) return rows;

@@ -99,10 +99,19 @@ const SERVE_BAR = 46;             // 머리 위 힘 막대 길이
 /// 자기 코트 폭의 이만큼까지만 앞으로 나갈 수 있다 (0 이 맨 뒤, 1 이 네트).
 const SERVE_ZONE = 0.5;
 const EMPTY_WAIT = 1.1;         // 빈 코트가 올리기까지 (사람이 있으면 안 쓴다)
-/// 손님이 **옛 속도로 앞질러 그리는** 한도. 네 프레임.
-const AGE_CAP = 0.066;
+/// 손님이 **옛 속도로 앞질러 그리는** 한도.
+///
+/// 0.066(네 프레임)으로 줄였다가 되돌렸다. 「강타가 나면 손님 공이 684픽셀 튄다」고 재서
+/// 줄인 것인데, **그 측정이 틀렸다** — 튀던 두 프레임은 (a) 첫 꾸러미가 오는 순간과
+/// (b) 서브 리셋(공이 올리는 사람 손으로 돌아가는 것)이었다. 둘 다 불연속 사건이라
+/// 매끄럽게 이을 것이 아니다. 리셋 앞뒤를 빼고 다시 재니 랠리 중 한 프레임 최대 이동이
+/// 방장 29px · 손님 21px 였다 — **공은 처음부터 매끄러웠다.**
+///
+/// 0.18 은 꾸러미가 늦을 때 공이 **가던 길로 계속 가게** 해 준다. 짧게 잘라 두면 그때
+/// 공이 멎어 버린다 — 근거 없이 건드릴 값이 아니다.
+const AGE_CAP = 0.18;
 /// 이 넘게 어긋나면 녹이지 않고 그 자리에 놓는다.
-const SNAP_AT = 220;
+const SNAP_AT = 200;
 
 // ── 스파이크의 손맛 ────────────────────────────────────────────────────────
 //
@@ -204,7 +213,15 @@ const DIG_SIDE = 0.34;        // 가로로 덜 튄다 — 세워 올린다
 // **서 있는 자리가 곧 편이다.** 따로 주고받는 값이 없다 — 자리는 어차피 60Hz 로 오간다.
 // 판이 도는 동안은 네트를 못 넘으니 편이 안 바뀌고, 판과 판 사이에는 걸어서 넘어가면
 // 편이 바뀐다. 「편 바꾸기」 메뉴를 따로 둘 필요가 없고, 누가 어느 편인지 보고 있으면 안다.
-const NET_GAP = 14;   // 네트에 몸이 닿는 자리까지는 간다
+/// 공이 튀는 그물 **면**. 가운데 선에서 튀면 그물을 파고든 뒤 튀어 보인다.
+const NET_FACE = 14;
+/// 꽂는 공이 그물 위를 이만큼 띄워 지나가게 잡는다 (netCap).
+const NET_CLEAR = 8;
+/// 사람이 네트에서 이만큼 떨어져 선다.
+///
+/// 그물 면(14)과 같이 뒀더니 몸이 그물에 닿아서 **서로 네트를 침범한 것처럼** 보였다 —
+/// 어깨에서 손끝까지가 22px 이라 팔을 휘두르면 그물을 지나간다. 그 팔이 안 닿는 자리에 세운다.
+const NET_GAP = ARM_LEN + 4;
 
 export const sideOfX = (world, x) => (x < world.w / 2 ? 0 : 1);
 const teamName = (side) => (side === 0 ? '빨강' : '파랑');
@@ -516,6 +533,8 @@ function applyHit(world, at, want, body = null, who = -1) {
     const far = Math.hypot(gx, gy);
     const keep = ARM_LEN * 1.3 + BALL_R * 0.8;
     if (far > keep) { hx = s.x + gx / far * keep; hy = s.y + gy / far * keep; }
+    // 손끝 자리가 정해진 뒤에 각을 다듬는다 — 공은 여기서 출발한다.
+    vy = netCap(world, hx, hy, vx, vy, !lob, ace);
   }
   const info = { kind, ace, face, hold, stop, x: hx, y: hy, smash };
 
@@ -543,6 +562,62 @@ function applyHit(world, at, want, body = null, who = -1) {
   }
   spawnHit(world, info);
   return info;
+}
+
+/// 이 속도로 때리면 **그물 위를 지나가나.** 진짜 같은 걸음걸이로 미리 날려 본다.
+///
+/// 손으로 풀 수도 있었지만(포물선) 공기 저항이 제곱이라 안 맞는다 — 올라가는 공은 저항이
+/// 위로 향한 vy 까지 깎아서 계산보다 **13px 덜 올라갔고, 그만큼이 네트에 걸렸다.**
+/// 그래서 셈을 흉내지 말고 그냥 날려 본다. 한 번 칠 때 240걸음이니 값이 싸다.
+///
+/// **아래 셈은 update() 의 공 셈과 같아야 한다.** 어긋나면 test/volley.mjs 의
+/// 「자리마다 스파이크가 네트를 넘는다」가 실제로 날려 보고 잡아낸다.
+function flies(world, x, y, vx, vy, hot, ace) {
+  const netX = world.w / 2;
+  const toward = Math.sign(netX - x);
+  const face = BALL_R + NET_FACE;
+  const dt = 1 / 120;
+  let hotLeft = hot ? HOT_TIME : 0;
+  for (let i = 0; i < 240; i++) {
+    vy += (GRAVITY + (hotLeft > 0 ? TOPSPIN : 0)) * dt;
+    const speed = Math.hypot(vx, vy);
+    if (speed > 0) {
+      const air = hotLeft > 0 ? (ace ? 0 : HOT_DRAG) : 1;
+      const lose = Math.min(0.5, DRAG * speed * dt * air);
+      vx -= vx * lose; vy -= vy * lose;
+    }
+    hotLeft = Math.max(0, hotLeft - dt);
+    x += vx * dt; y += vy * dt;
+    // 그물 면 안이다 — **지나가는 동안 내내** 꼭대기보다 위여야 한다 (NET_CLEAR 만큼 여유).
+    // 면에 들어서는 첫 걸음만 봤더니 68px 폭을 지나는 대여섯 걸음 사이에 더 떨어져 걸렸다.
+    if (Math.abs(x - netX) < face) {
+      if (y > world.groundY - NET_H - NET_CLEAR) return false;
+    } else if (Math.sign(netX - x) !== toward) return true;   // 다 지나갔다
+    if (y > world.groundY || y < 0) return false;
+  }
+  return false;
+}
+
+/// 네트를 넘길 수 있는 만큼만 꽂는다 — **꽂는 각도의 마지막 손질.**
+///
+/// 각도를 「공이 손보다 얼마나 아래냐」로만 정했더니 자리를 아예 안 봤다. 재 보니
+/// **가운데(x 500)에서 제대로 뛰어 때린 공이 열 번에 열 번 네트에 맞았다** — 세게 칠수록
+/// 빨리 죽는 게임이었다. 갈 길이 322px 남았는데 네트 코앞과 같은 각으로 꽂으니 당연하다.
+///
+/// 그래서 **그물 위를 지나갈 수 있는 가장 가파른 각**까지만 꽂는다. 네트 코앞이면 갈 길이
+/// 없어 제한이 거의 없고(꽂기가 그대로 산다), 뒤로 갈수록 저절로 평평해지고, 아주 뒤에서는
+/// 살짝 들어 올린다 — 수평으로 쏘면 가는 동안 떨어지니까. 높이 뜬 공은 여전히 세게 꽂힌다.
+/// 「공보다 높이 떠서 때려야 꽂힌다」가 이걸로 **진짜**가 된다.
+function netCap(world, x, y, vx, vy, hot, ace) {
+  if (flies(world, x, y, vx, vy, hot, ace)) return vy;
+  // vy 를 위로 올릴수록 잘 넘는다 — 넘는 가장 가파른 값을 반으로 좁혀 찾는다.
+  let steep = vy;            // 안 넘는 쪽
+  let soft = -MAX_UP;        // 넘는 쪽 (여기서도 못 넘으면 어차피 그게 최선이다)
+  for (let i = 0; i < 9; i++) {
+    const mid = (steep + soft) / 2;
+    if (flies(world, x, y, vx, mid, hot, ace)) soft = mid; else steep = mid;
+  }
+  return soft;
 }
 
 /// 친 사람에게 동작을 건다. 강타는 내리치는 팔(p.swing), 토스는 밀어 올리는 두 팔(p.toss).
@@ -675,7 +750,7 @@ function doBlock(world, p, mine, who) {
 /// 서브를 올리는 동안에는 서브 두 줄만 — 그때 쓸 수 없는 기술을 적어 두면 읽을 까닭이 없다.
 export const KEY_ROWS = [
   ['⌥ ← →', '달리기'],
-  ['⌥ ↑', '점프'],
+  ['⌥ ↑', '점프 · 공중이면 페인트'],
   ['⌥ Space', '때리기 · 공중이면 강타'],
   ['⌥ Space + ← →', '그쪽으로 세게'],
   ['⌥ Space + ↑', '높이 넘겨 주기'],
@@ -1142,7 +1217,7 @@ export default {
          ['⌥ ← →', '달리기 (네트는 못 넘는다)'], ['⌥ ↑', '점프'],
          ['⌥ Space', '때리기 — 뛰어서 누르면 강타'],
          ['⌥ Space + ← →', '그 방향으로 세게'], ['⌥ Space + ↑', '높이 넘겨 주기'],
-         ['⌥ ↓ (공중)', '페인트 — 살짝 얹어 블록 너머로'],
+         ['⌥ ↓ ↑ (공중)', '페인트 — 살짝 얹어 블록 너머로. 네트 앞에서만 넘어간다'],
          ['⌥ ↓ (땅)', '디그 — 웅크려 받으면 높고 곧게 뜬다'],
          ['⌥ Space (네트 앞 공중)', '블로킹 — 손을 넘겨 벽을 세운다'],
          ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 쪽으로, 머리 위 막대가 차면']],
@@ -1194,7 +1269,9 @@ export default {
     hitServe(world, power, dir);
   },
   /// 방향키를 누른 순간 — 공중의 ⌥↓ 는 페인트다. 나머지는 흘린다.
-  tap: (world, key) => { if (key === 'duck') tipHit(world); },
+  /// **페인트는 위아래 아무 키로나 된다.** ⌥↓ 하나만 받게 뒀더니 「잘 안 된다」는 말이
+  /// 나왔다 — 공중에서 위아래는 달리 쓸 데가 없으니 둘 다 페인트로 받는다.
+  tap: (world, key) => { if (key === 'duck' || key === 'jump') tipHit(world); },
 
   /// 사람 그리는 법. 졸라맨 그대로인데 **치는 모션 스위치만 켠다.** 졸라맨은 다른 게임도
   /// 쓰니 p.swing·p.toss·p.cock 을 아무나 읽게 두면, 휘두르던 사람이 판을 갈아 끼운 뒤
@@ -1289,12 +1366,6 @@ export default {
       // 그 NaN 이 다음 꾸러미의 오차 계산에 다시 들어가 영영 안 돌아온다.
       if (b.myCharge >= 0) b.myCharge += dt;
       if (b.baseX === undefined) return;
-      // **앞질러 그리는 것은 짧게.** 0.18초까지 이어 그렸더니, 강타(약 3800px/s)가 났을 때
-      // 손님은 **옛 속도로 684픽셀을 날아간 뒤** 새 꾸러미를 받고 그만큼 순간이동했다 —
-      // 한 랠리에 두 번씩. 「참가자가 렉 걸린다」가 이것이다.
-      //
-      // 꾸러미는 초당 예순 번 온다. 네 프레임(0.066초)까지만 이어 그리고 그 뒤로는 멈춰
-      // 서서 기다린다 — **잠깐 멎는 것이 엉뚱한 데로 날아갔다 되돌아오는 것보다 낫다.**
       b.age = Math.min(b.age + dt, AGE_CAP);
       b.errorX *= Math.exp(-dt / 0.06);
       b.errorY *= Math.exp(-dt / 0.06);
@@ -1420,9 +1491,8 @@ export default {
     // 네트. 꼭대기는 넘어가고, 몸통에 맞으면 되돌아온다.
     const netX = world.w / 2;
     const netTop = world.groundY - NET_H;
-    // 공은 그물 **면**에서 튄다 — 사람이 닿아 멈추는 자리(NET_GAP)와 같은 폭. 가운데 선에서 튀면 그물을 11px 파고든 뒤 튀어 보였다.
-    if (Math.abs(ball.x - netX) < BALL_R + NET_GAP && ball.y > netTop) {
-      ball.x = netX + Math.sign(ball.x - netX || 1) * (BALL_R + NET_GAP);
+    if (Math.abs(ball.x - netX) < BALL_R + NET_FACE && ball.y > netTop) {
+      ball.x = netX + Math.sign(ball.x - netX || 1) * (BALL_R + NET_FACE);
       ball.vx = -ball.vx * 0.55;
       cool(ball);
     }
@@ -1789,7 +1859,7 @@ export default {
     b.errorX = first ? 0 : showX - x;
     b.errorY = first ? 0 : showY - y;
     // 오차가 너무 크면 녹이지 않고 그 자리에 놓는다 — 화면을 가로질러 스르르 미끄러지는
-    // 공은 더 이상하다. 앞질러 그리는 창을 좁혀 놨으니 여기 걸리는 일 자체가 드물다.
+    // 공은 더 이상하다 (서브 리셋·첫 꾸러미가 여기로 온다).
     if (Math.abs(b.errorX) > SNAP_AT || Math.abs(b.errorY) > SNAP_AT) { b.errorX = 0; b.errorY = 0; }
     if (first) { b.ball.x = x; b.ball.y = y; b.tail = []; }
     if (Array.isArray(data.s) && data.s.length === 2 && data.s.every(Number.isFinite)) b.score = data.s;
