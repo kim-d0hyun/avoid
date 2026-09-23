@@ -358,6 +358,22 @@ say('스파이크 — 공보다 높이 떠서 때려야 꽂힌다 · 네트는 �
   const above = hit({ under: -20 });
   check('손 위의 공은 안 꽂힌다 — 수평으로 간다', above.vy, 0);
 
+  // **⌥Space + ↓ 는 내리꽂기다.** 공이 손 밑에 있기만 하면 꽂을 수 있는 만큼 최대로 꽂는다 —
+  // 네트 앞에서 쓰라고 있는 키다. (v3.12 에 ⌥↓ 를 페인트에 내줬다가, 페인트를 ⌥↑ 로 옮기고
+  // 도로 가져왔다 — 꽂으려고 ↓ 를 누르는 순간 페인트가 먼저 나가면 두 기술을 같이 못 쓴다.)
+  const drive = hit({ under: 6, keys: { duck: true } });
+  const plain = hit({ under: 6 });
+  check('⌥Space + ↓ 면 더 가파르게 꽂힌다', drive.vy > plain.vy + 100, true);
+  note(`그냥 vy=${plain.vy.toFixed(0)} · ⌥↓ vy=${drive.vy.toFixed(0)}`);
+  ok('그래도 네트는 넘긴다 (netCap 이 다시 깎는다)', drive.vy < 1200);
+  // 공이 손 위면 ⌥↓ 를 눌러도 안 꽂힌다 — 밑에서 올려치는 공을 아래로 보낼 수는 없다.
+  const above2 = hit({ under: -20, keys: { duck: true } });
+  check('손 위의 공은 ⌥↓ 로도 안 꽂힌다', above2.vy, 0);
+  // 가운데에서는 ⌥↓ 를 눌러도 네트를 넘겨야 하니 꽂히지 않는다
+  const midDrive = hit({ x: 500, under: 6, keys: { duck: true } });
+  ok('가운데에서 ⌥↓ 는 꽂는 대신 넘긴다', midDrive.vy <= 0);
+  note(`가운데 ⌥↓ vy=${midDrive.vy.toFixed(0)}`);
+
   const lob = hit({ under: BODY_H * 0.5, keys: { jump: true } });
   check('⌥↑ 는 밑에서 때려도 올려 준다', lob.vy < 0, true);
 
@@ -902,10 +918,10 @@ say('블로킹 — 네트 앞에서 손을 넘겨 벽을 세운다');
   check('벽도 안 선다', mid.p.block ?? 0, 0);
 }
 
-say('페인트 — ⌥↓ 로 살짝 얹어 블록 너머로');
+say('페인트 — 공중에서 ⌥↑ 로 살짝 얹어 블록 너머로');
 {
   const r = rig({ air: 60, off: [6, 10] });
-  check('공중에서 ⌥↓ 면 페인트', tipHit(r.world), true);
+  check('공중이면 얹기가 된다', tipHit(r.world), true);
   const sp = Math.hypot(r.b.ball.vx, r.b.ball.vy);
   check('상대 코트 쪽으로 간다', r.b.ball.vx > 0, true);
   check('강타보다 훨씬 느리다', sp < 700, true);
@@ -922,6 +938,13 @@ say('페인트 — ⌥↓ 로 살짝 얹어 블록 너머로');
   // 땅에서 ⌥↓ 는 페인트가 아니다 — 웅크리기(디그)다.
   const ground = rig({ air: 0, off: [6, 10] });
   check('땅에서는 페인트가 안 나간다', tipHit(ground.world), false);
+
+  // **공중의 ⌥↓ 는 이제 페인트가 아니다.** ↓ 는 내리꽂기를 고르는 키라(⌥Space + ↓),
+  // 누르는 순간 페인트가 나가면 꽂을 수가 없다. 위는 얹기, 아래는 꽂기.
+  const downTap = rig({ air: 60, off: [6, 10] });
+  const still2 = [downTap.b.ball.vx, downTap.b.ball.vy];
+  tap(downTap.world, 'duck');
+  check('공중에서 ⌥↓ 만 누르면 공은 그대로', [downTap.b.ball.vx, downTap.b.ball.vy], still2);
 
   // **위쪽 키로도 페인트가 된다.** ⌥↓ 하나만 받게 뒀더니 「페인트가 잘 안 된다」는 말이
   // 나왔다 — 공중에서 위아래 키는 달리 쓸 데가 없으니 둘 다 얹기로 받는다.
