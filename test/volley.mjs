@@ -719,7 +719,7 @@ say('꾸러미 — 남의 화면에서도 같은 순간에 같은 모션');
   check('친 사람 번호가 실린다', pkt.f[3], 1);
   check('종류는 강타(1) 나 정타(2)', pkt.f[4] >= 1, true);
   check('멈춤 시간이 실린다', pkt.f[6] > 0, true);
-  check('공에 달아오름 칸이 붙는다', pkt.b.length, 7);
+  check('공에 달아오름 칸과 감아 친 공 칸이 붙는다', pkt.b.length, 8);
   check('달아올랐다', pkt.b[6] >= 1, true);
   // **멈춰 있는 동안은 속도도 0으로 보낸다** — 안 그러면 손님 화면에서만 공이 계속 간다.
   check('히트스톱 중에는 속도를 0으로 보낸다', [pkt.b[2], pkt.b[3]], [0, 0]);
@@ -965,13 +965,11 @@ say('페인트 — 공중에서 ⌥↑ 로 살짝 얹어 블록 너머로');
   // **위쪽 키로도 페인트가 된다.** ⌥↓ 하나만 받게 뒀더니 「페인트가 잘 안 된다」는 말이
   // 나왔다 — 공중에서 위아래 키는 달리 쓸 데가 없으니 둘 다 얹기로 받는다.
   // 키를 누르는 길(world.press → game.tap)을 그대로 지나가게 본다.
-  // **⌥↑ 는 네 프레임 기다렸다 얹는다** — 그 사이 ⌥Space 가 오면 넘겨 주기(⌥Space + ↑)다.
+  // **⌥↑ 는 누른 그 순간 얹는다.** 네 프레임 기다리게 했더니(v3.25.0) ⌥Space 보다 늦게 나가서
+  // 그 사이 공이 손 밑으로 빠졌다.
   const up = rig({ air: 60, off: [6, 10], vy: 0 });
-  const upVy = up.b.ball.vy;
   tap(up.world, 'jump');
-  check('누른 그 프레임에는 아직 안 얹는다', up.b.ball.vy, upVy);
-  for (let i = 0; i < 5; i++) { up.p.air = 60; volley.update(up.world, 1 / 60); }
-  check('점프 뒤 ⌥↑ 로도 페인트', up.b.ball.vx > 0 && up.b.ball.vx < 300, true);
+  check('점프 뒤 ⌥↑ 로도 페인트 — 누른 그 프레임에', up.b.ball.vx > 0 && up.b.ball.vx < 300, true);
   check('같이 떠오른다', Math.round(up.b.ball.vy) < -300, true);
   check('⌥↑ 페인트도 안 달아오른다', up.b.ball.hot, 0);
 
@@ -1644,12 +1642,18 @@ say('페인트 — 떠오른 블로커 손 위로 넘어간다');
 say('⌥↑ 와 ⌥Space + ↑ — 두 기술이 한 공을 두 번 치지 않는다');
 {
   // ↑ 를 먼저 누르고 ⌥Space 를 누르면: 예전엔 페인트가 나간 뒤 같은 프레임에 또 쳤다.
-  const r = rig({ air: 60, off: [6, 10], vy: 0, keys: { jump: true } });
+  const r = rig({ air: 60, off: [6, 10], vy: 0 });
   tap(r.world, 'jump'); r.world.input.jump = true;
+  const tipped = [r.b.ball.vx, r.b.ball.vy];
   volley.action(r.world);
-  ok('넘겨 주기가 나갔다 (팔을 휘두른다)', r.p.swing > 0 && !(r.p.toss > 0));
-  for (let i = 0; i < 6; i++) { r.p.air = 60; volley.update(r.world, 1 / 60); }
-  ok('기다리던 페인트는 버려졌다 (얹는 팔이 안 나온다)', !(r.p.toss > 0));
+  check('페인트가 나갔고, 뒤따른 ⌥Space 는 같은 공을 또 치지 않는다', [r.b.ball.vx, r.b.ball.vy], tipped);
+  ok('얹는 팔만 나왔다', r.p.toss > 0 && !(r.p.swing > 0));
+  // ⌥Space 를 잡은 채 누른 ↑ 는 페인트가 아니다
+  const held = rig({ air: 60, off: [6, 10], vy: 0 });
+  held.b.spaceDown = true;
+  const before = [held.b.ball.vx, held.b.ball.vy];
+  tap(held.world, 'jump');
+  check('⌥Space 를 잡은 채 ↑ 는 안 얹는다', [held.b.ball.vx, held.b.ball.vy], before);
   // 같은 사람이 곧바로 두 번은 못 친다
   const d = rig({ air: 60, off: [6, 10] });
   check('얹었다', tipHit(d.world), true);
@@ -1685,6 +1689,49 @@ say('천장은 없다 — 가장 세게 올린 공도 화면 안에서 돌아온
   check('어디에도 부딪혀 꺾이지 않는다', flipped, false);
   ok('화면 위로 안 나간다', top - BALL_R > 0);
   note(`바닥 위 최고 ${(world.groundY - top).toFixed(0)}px (판 ${world.h})`);
+}
+
+say('⌥↓ 와 ⌥→ — ↓ 는 짧게 뚝, → 는 빠르고 깊게');
+{
+  // 예전 ⌥↓ 는 네트 앞이 아니면 그냥 친 공과 똑같았고, 네트 앞에서도 ⌥→ 와 각이 같았다.
+  // 실제 점프 높이(58)에서 손끝 바로 밑의 공을, 양쪽 편에서 쳐 본다.
+  const land = (side, x, keys) => {
+    const world = mk(); world.state = 'play'; world.team = side;
+    const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
+    const p = world.player; p.x = side === 0 ? x : 1512 - x; p.air = 58; p.vy = 0;
+    const hand = p.groundY - p.air - BODY_H * 0.86;
+    b.ball.x = p.x + (side === 0 ? 10 : -10); b.ball.y = hand + 8; b.ball.vx = 0; b.ball.vy = 300;
+    const k = { ...keys };
+    if (side === 1 && k.right) { delete k.right; k.left = true; }
+    Object.assign(world.input, { left: false, right: false, jump: false, duck: false }, k);
+    if (!spike(world)) return null;
+    b.stop = 0; b.ball.gT = 0; p.x = side === 0 ? 100 : 1412; p.air = 0;
+    Object.assign(world.input, { left: false, right: false, duck: false });
+    let last = b.ball.x;
+    for (let i = 0; i < 400; i++) {
+      last = b.ball.x;
+      volley.update(world, 1 / 120);
+      if (b.serving) break;
+      if (b.ball.y > world.groundY - 22) { last = b.ball.x; break; }
+    }
+    return Math.round(Math.abs(last - 756));           // 네트에서 얼마나 너머에 떨어졌나
+  };
+  let bad = null;
+  const rows = [];
+  for (const side of [0, 1]) for (const x of [400, 560, 660, 730]) {
+    const plain = land(side, x, {}), side_ = land(side, x, { right: true }), dip = land(side, x, { duck: true });
+    rows.push(`${x}: ↓ ${dip} · 그냥 ${plain} · → ${side_}`);
+    if (!(dip < plain && plain < side_)) bad = `편 ${side} x ${x} — ↓ ${dip} · 그냥 ${plain} · → ${side_}`;
+  }
+  check('어느 자리에서든 ↓ 가 제일 짧고 → 가 제일 깊다', bad, null);
+  note(`네트 너머 떨어진 자리 (편 0) — ${rows.slice(0, 4).join(' | ')}`);
+
+  // 손님도 같은 무게로 이어 그린다 — 여덟째 칸
+  const g = mk(); g.state = 'play'; g.mp.on = true; g.mp.role = 'guest'; g.mp.myId = 2;
+  volley.unpack(g, { b: [700, 600, 900, 300, 0, 0, 1, 1], w: 0 });
+  check('손님 공도 감겼다', g.bag.ball.dip, true);
+  volley.unpack(g, { b: [700, 600, 900, 300, 0, 0, 1], w: 0 });
+  check('옛 꾸러미(일곱 칸)는 안 감긴 공', g.bag.ball.dip, false);
 }
 
 done('배구');
