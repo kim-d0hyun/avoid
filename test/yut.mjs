@@ -10,7 +10,7 @@ const yut = games.find((g) => g.id === 'yut');
 const m = await import(R0 + 'games/yut.js');
 const { HOME, OUT, CENTER, nextOf, walk, spotOf, isCorner, toss, flatUp, NAMES, STEPS, again,
         throwTo, isNak, MAT_NEAR, MAT_FAR, SAFE_LOW, SAFE_HIGH, GAUGE_CYCLE, gaugeAt,
-        preview, move, movable, doneOf, pileOf, riders, throwYut, playMove, whoseTurn, myTurn, seatsOf,
+        preview, move, movable, movableWith, backOf, MARKED, doneOf, pileOf, riders, throwYut, playMove, whoseTurn, myTurn, seatsOf,
         aiPick, aiGauge, CREW } = m;
 
 import { check, ok, say, note, done } from './check.mjs';
@@ -113,14 +113,70 @@ say('윷 던지기 — 실제 윷과 같은 확률이 나오나');
   const pct = (k) => ((tally[k] ?? 0) / n) * 100;
   note(`도 ${pct('도').toFixed(1)}% · 개 ${pct('개').toFixed(1)}% · 걸 ${pct('걸').toFixed(1)}%`
      + ` · 윷 ${pct('윷').toFixed(1)}% · 모 ${pct('모').toFixed(1)}% (실제 35·35·15·2.6·13)`);
-  // **등이 둥글어 엎어지는 쪽이 잦다** — 그래서 도와 모가 많고 윷이 드물다
-  ok('도가 30~40%', pct('도') > 30 && pct('도') < 40);
+  // **등이 둥글어 엎어지는 쪽이 잦다** — 그래서 도와 모가 많고 윷이 드물다.
+  // 도 가운데 표 있는 짝이 젖혀진 것이 **빽도**라, 둘을 합쳐야 예전의 「도」다.
+  note(`그중 빽도 ${pct('빽도').toFixed(1)}% (도의 넷에 하나쯤)`);
+  ok('도+빽도가 30~40%', pct('도') + pct('빽도') > 30 && pct('도') + pct('빽도') < 40);
+  ok('빽도가 도의 20~30%', pct('빽도') / (pct('도') + pct('빽도')) > 0.2
+                          && pct('빽도') / (pct('도') + pct('빽도')) < 0.3);
   ok('개가 30~40%', pct('개') > 30 && pct('개') < 40);
   ok('걸이 10~20%', pct('걸') > 10 && pct('걸') < 20);
   ok('윷이 제일 드물다', pct('윷') < pct('모') && pct('윷') < 5);
   ok('모가 8~18%', pct('모') > 8 && pct('모') < 18);
   ok('윷·모는 한 번 더', again(4) && again(0) && !again(1) && !again(2) && !again(3));
   check('걸음 수', [STEPS[1], STEPS[2], STEPS[3], STEPS[4], STEPS[0]], [1, 2, 3, 4, 5]);
+}
+
+// **빽도** — 표 있는 짝 하나만 젖혀지면 한 칸 뒤로. 실제 윷놀이에서 판을 뒤집는 수다.
+say('빽도 — 한 칸 뒤로. 1번에서는 출발 귀퉁이로');
+{
+  check('빽도는 한 칸 뒤', walk(3, -1), 2);
+  check('1번에서 빽도면 출발 귀퉁이(20)', walk(1, -1), 20);
+  check('집에 있는 말은 뒤로 못 간다', walk(HOME, -1), null);
+  check('지름길 첫 밭에서 뒤로 가면 첫 모', walk(21, -1), 5);
+  check('방에서 뒤로 가면 지름길', walk(CENTER, -1), 22);
+  check('방을 지난 밭에서 뒤로 가면 방', walk(23, -1), CENTER);
+  check('두 번째 지름길도 마찬가지', walk(26, -1), 10);
+
+  // 뒤로 가서 **잡는다** — 빽도의 맛이 이것이다
+  {
+    const men = [{ side: 0, face: 0, at: 4, done: false, on: -1 },
+                 { side: 1, face: 0, at: 3, done: false, on: -1 }];
+    const res = move(men, 0, -1);
+    check('뒤로 가서 적 말을 잡는다', [res.to, res.ate], [3, true]);
+    check('잡힌 말은 집으로', men[1].at, HOME);
+  }
+
+  // 빽도가 나오면 **집에 있는 말은 못 고른다** (길 위에 있는 말만)
+  {
+    const men = [{ side: 0, face: 0, at: HOME, done: false, on: -1 },
+                 { side: 0, face: 1, at: 7, done: false, on: -1 },
+                 { side: 1, face: 0, at: 12, done: false, on: -1 }];
+    check('빽도면 길 위의 말만 고른다', movableWith(men, 0, -1), [1]);
+    check('도면 둘 다 고른다', movableWith(men, 0, 1), [0, 1]);
+  }
+
+  // 던지기에서 나오나 — 표 있는 짝(0번)만 젖혀진 자리를 찾아 본다
+  {
+    let back = 0, plainDo = 0;
+    for (let i = 0; i < 20000; i++) {
+      const r = toss(SAFE_LOW + ((i * 37) % 100) / 100 * (SAFE_HIGH - SAFE_LOW), i * 7919 + 5);
+      if (r.nak) continue;
+      if (r.back) { back++; ok2(r, back); } else if (r.name === '도') plainDo++;
+    }
+    function ok2(r, k) {
+      if (k > 3) return;
+      check(`빽도 ${k} — 걸음은 -1`, r.steps, -1);
+      check(`빽도 ${k} — 이름은 빽도`, r.name, '빽도');
+      check(`빽도 ${k} — 젖혀진 짝은 하나`, r.flats, 1);
+      check(`빽도 ${k} — 그 하나가 표 있는 짝`, r.sticks[MARKED].flat, true);
+    }
+    ok('빽도와 그냥 도가 둘 다 나온다', back > 100 && plainDo > 100);
+    note(`빽도 ${back}번 · 그냥 도 ${plainDo}번`);
+  }
+
+  // 빽도는 **한 번 더**가 아니다 (도와 같은 한 짝)
+  ok('빽도는 한 번 더가 아니다', !again(1));
 }
 
 say('낙 — 못 닿거나 넘어가면 그 차례를 잃는다');
@@ -340,6 +396,80 @@ say('한 판 — 컴퓨터끼리 두면 끝까지 간다');
       x.done || x.on !== -1 || x.at === HOME || (x.at >= 1 && x.at <= 29)));
   }
   note(`네 판 다 끝났나 ${ends === 4} · 던진 횟수 ${lens.join(' ')}`);
+}
+
+// **판을 수십 번 돌려 규칙이 깨지는 데가 있나 본다.**
+//
+// 한 판만 봐서는 안 걸리는 것들이 있다 — 업고 업힌 채로 잡히고, 업은 말이 나고, 낙이 겹치고,
+// 한 편이 말을 다 내보내는 그 수까지 가야 나온다. 그래서 **사람처럼 던지는 판을 여럿 돌리고
+// 한 수마다 판이 성한지 본다.** (이 점검으로 「업힌 말의 밭이 옛 밭에 남는」 것을 잡았다.)
+say('전수 점검 — 예순 판을 돌려 규칙이 깨지는 데를 찾는다');
+{
+  const mid = (SAFE_LOW + SAFE_HIGH) / 2, half = (SAFE_HIGH - SAFE_LOW) / 2;
+  let hangs = 0, wrongTurn = 0, throwsAll = 0, pickless = 0;
+  const broke = new Map();
+  const flag = (why) => broke.set(why, (broke.get(why) ?? 0) + 1);
+  const audit = (men) => {
+    for (const side of [0, 1]) {
+      if (men.filter((m) => m.side === side).length !== CREW) flag('말이 넷이 아니다');
+    }
+    men.forEach((m, i) => {
+      if (m.done && (m.at !== OUT || m.on !== -1)) flag('난 말이 판에 남아 있다');
+      if (m.at === HOME && m.on !== -1) flag('집에 있는데 업혀 있다');
+      if (m.on === -1) return;
+      const c = men[m.on];
+      if (!c) flag('업은 말이 없다');
+      else if (c.done) flag('난 말에 업혀 있다');
+      else if (c.side !== m.side) flag('적 말에 업혀 있다');
+      else if (c.on !== -1) flag('업은 말이 또 업혀 있다');
+      // **업힌 말은 업은 말과 같은 밭에 있어야 한다.** 판에는 안 보이지만(업힌 말은 안 그린다)
+      // 여기가 어긋나면 「저 밭에 있다」고 거짓을 적어 둔 말이 된다.
+      else if (c.at !== m.at) flag('업힌 말이 딴 밭에 있다');
+    });
+    const field = new Map();
+    men.forEach((m) => {
+      if (m.done || m.at === HOME || m.on !== -1) return;
+      const row = field.get(m.at) ?? []; row.push(m.side); field.set(m.at, row);
+    });
+    for (const row of field.values()) {
+      if (row.length > 1) flag('한 밭에 안 업힌 말이 둘');
+    }
+  };
+
+  for (let g = 0; g < 60; g++) {
+    const world = mk();
+    const b = world.bag;
+    b.seed = (g * 2654435761) >>> 0;
+    let guard = 0;
+    while (!b.over && guard++ < 3000) {
+      const before = b.turn;
+      // 사람처럼 안전한 구간을 노린다. 가끔은 아무렇게나 던져 낙도 섞는다.
+      const gauge = g % 7 === 0 && guard % 9 === 0 ? 0.02
+        : Math.max(0, Math.min(1, mid + ((guard * 37 % 100) / 50 - 1) * half * 1.05));
+      if (!throwYut(world, gauge)) { flag('못 던졌다'); break; }
+      throwsAll++;
+      for (let f = 0; f < 200 && b.phase === 'fly'; f++) w.update(world, FR);
+      audit(b.men);
+      if (b.phase === 'pick') {
+        const row = movable(b.men, b.turn);
+        if (!row.length) { pickless++; continue; }
+        const before2 = b.men.map((m) => ({ ...m }));
+        const roll = b.roll;
+        if (!playMove(world, aiPick(b.men, b.turn, roll.steps))) flag('말을 못 옮겼다');
+        audit(b.men);
+        // 차례는 **윷·모·잡기일 때만** 그대로다
+        const ate = before2.some((m, i) => m.at !== HOME && b.men[i].at === HOME && m.side !== b.turn);
+        const keep = ate || again(roll.flats);
+        if (!b.over && ((keep && b.turn !== before) || (!keep && b.turn === before))) wrongTurn++;
+      }
+    }
+    if (!b.over) hangs++;
+    else if (doneOf(b.men, b.winner) !== CREW) flag('이겼는데 말이 넷이 안 났다');
+  }
+  check('예순 판이 다 끝난다 (멎는 판이 없다)', hangs, 0);
+  check('차례가 규칙과 어긋난 적이 없다', wrongTurn, 0);
+  check('규칙이 깨진 데가 없다', [...broke.keys()], []);
+  note(`던짐 ${throwsAll}번 · 고를 말이 없어 넘긴 차례 ${pickless}번`);
 }
 
 done('윷놀이');

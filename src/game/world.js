@@ -68,6 +68,13 @@ const KNOCK_TAU = 0.17;     // 밀려남이 잦아드는 시간
 const SLIDE_SPEED = 880;
 const SLIDE_TIME = 0.42;
 const SLIDE_COOL = 0.55;
+/// 미끄러지는 동안 잦아드는 끝 속도 (처음의 몫). **0.25 였을 때는 달리기보다 느렸다** —
+/// 평균 452px/s 로 달리기(620)에 못 미쳐, 0.3초만 지나면 뛰어간 사람이 더 멀리 갔다.
+/// 0.6 이면 평균 704, 끝까지 가도 달리던 사람보다 앞선다 (0.42초에 296px 대 258px).
+const SLIDE_END = 0.6;
+/// 끝나고 일어나는 동안은 못 움직인다. 이게 없어서 끝나자마자 다시 뛰었다 —
+/// 몸을 던진 값이 없으니 슬라이딩이 그냥 빠른 걸음이 된다.
+const SLIDE_STUN = 0.2;
 export { SLIDE_TIME, SLIDE_COOL };
 
 /// 이긴 사람이 만세를 부르는 시간. 이 동안은 다음 판을 못 시작한다 —
@@ -282,7 +289,7 @@ function movePlayer(world, dt) {
   if (p.slide > 0) {
     // 미끄러지는 동안은 방향키도 점프도 안 듣는다. 던진 몸은 되돌릴 수 없다.
     p.slide -= dt;
-    p.vx = p.slideDir * SLIDE_SPEED * Math.max(0.25, p.slide / SLIDE_TIME);
+    p.vx = p.slideDir * SLIDE_SPEED * (SLIDE_END + (1 - SLIDE_END) * Math.max(0, p.slide / SLIDE_TIME));
     p.x += p.vx * dt;
     const lo = HALF_W + 9;
     const hi = world.w - HALF_W - 9;
@@ -306,7 +313,9 @@ function movePlayer(world, dt) {
     : p.squeeze + (bump.deepest - p.squeeze) * Math.min(1, dt * 9);
   if (p.squeeze < 0.01) p.squeeze = 0;
 
-  const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  // 슬라이딩 끝에 일어나는 중이다 — 방향키를 안 듣는다 (SLIDE_STUN).
+  const getting = p.slideCool > SLIDE_COOL - SLIDE_STUN;
+  const dir = getting ? 0 : (input.right ? 1 : 0) - (input.left ? 1 : 0);
   // 게임마다 발이 다르다. 똥피하기는 피하는 게임이라 조금 느려야 손에 잡히고,
   // 배구는 넓은 코트를 지켜야 해서 그대로 둔다.
   const pace = gameOf(world).pace ?? 1;
@@ -344,7 +353,7 @@ function movePlayer(world, dt) {
   // 게임이 더 좁은 울타리를 칠 수 있다. 배구는 네트 너머로 못 넘어간다.
   gameOf(world).confine?.(world, p);
 
-  if (input.jump && grounded && p.crouch < 0.3 && p.heldBy < 0) {
+  if (input.jump && grounded && !getting && p.crouch < 0.3 && p.heldBy < 0) {
     p.vy = JUMP_V * (gameOf(world).hop ?? 1);
     p.air = 0.01;
   }

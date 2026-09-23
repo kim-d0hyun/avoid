@@ -33,10 +33,14 @@ function make(stageName = '표지판', { mp = false, host = true, debug = true, 
   world.bump = false;                         // 기존 시험은 충돌 끈 채로 본다 (충돌은 아래 따로)
   return world;
 }
-const tick = (world, n = 1, input = {}) => {
+const tick = (world, n = 1, input = {}, each = null) => {
   Object.assign(world.input, { left: false, right: false, jump: false, duck: false }, input);
-  for (let i = 0; i < n; i++) w.update(world, 1 / 60);
+  for (let i = 0; i < n; i++) { each?.(1 / 60); w.update(world, 1 / 60); }
 };
+/// **걷는 친구는 프레임마다 소식을 보낸다.** 꾸러미를 안 보내 두면 그 사람은 예측으로만
+/// 움직이는 유령이 된다 — 예측은 잠깐 밀어 주다 스르르 서므로(net.js LEAD_TAU), 1초를
+/// 걷게 하려면 실제 게임처럼 자리를 계속 알려 줘야 한다.
+const walking = (o) => (dt) => { o.baseX += o.vx * dt; o.age = 0; };
 const feetRow = (world) => Math.floor((world.groundY - world.player.air - 1) / T);
 const col = (world) => Math.floor(world.player.x / T);
 const setPos = (world, tx, ty) => { const p = world.player; p.x = (tx + 0.5) * T; p.air = world.groundY - (ty + 1) * T; p.vx = 0; p.vy = 0; p.grounded = true; p.onLadder = false; };
@@ -818,7 +822,7 @@ say('기차놀이 — 무거운 상자는 등 뒤에 붙어 같은 쪽으로 걷
   ok('혼자서는 무거운 상자가 안 밀린다', Math.abs(bx.x - x0) < 1);
   // ② 등 뒤에 한 명이 붙어 같은 쪽으로 걸으면 둘 — 밀린다
   const o = other(world, 2, 0, fyRow); o.x = o.baseX = back; o.vx = 120;
-  place(front); tick(world, 60, { right: true });
+  place(front); tick(world, 60, { right: true }, walking(o));
   ok('등 뒤에서 같이 밀면 밀린다', bx.x - x0 > 30);
   note(`상자 ${((bx.x - x0) / T).toFixed(2)}칸 이동`);
   // ③ 뒤 사람이 서 있기만 하면(걷지 않으면) 사슬이 아니다
@@ -831,7 +835,9 @@ say('기차놀이 — 무거운 상자는 등 뒤에 붙어 같은 쪽으로 걷
   const w4 = make('옥상', { mp: true, host: true }); w4.bump = true; const b4 = w4.bag.boxes.find((x) => x.weight === 2);
   const o4 = other(w4, 2, 0, fyRow); o4.x = o4.baseX = b4.x - (T / 2 + HALF_PX + 0.5) - (2 * HALF_PX + 40); o4.vx = 120;
   w4.player.x = b4.x - (T / 2 + HALF_PX + 0.5); w4.player.air = w4.groundY - (fyRow + 1) * T; w4.player.grounded = true;
-  const x4 = b4.x; tick(w4, 60, { right: true });
+  // 짧게 본다 — 1초를 걷게 두면 40px 떨어져 있던 사람이 **걸어와서 붙는다**(그건 맞는 일이다).
+  // 여기서 보려는 것은 **떨어져 있는 동안에는 안 센다**는 것뿐이다.
+  const x4 = b4.x; tick(w4, 12, { right: true }, walking(o4));
   ok('떨어져 걷는 사람은 사슬이 아니다', Math.abs(b4.x - x4) < 1);
 }
 

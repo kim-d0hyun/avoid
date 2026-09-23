@@ -56,6 +56,8 @@ const SMASH_FLAT = 1300 * SLOW;
 /// 내리꽂는 세로 속도. **손보다 아래에 있는 공을 때렸을 때** 여기까지 간다.
 const SMASH_DIVE = 2350 * SLOW;     // ⌥↓ 를 누르고 때리면 아래로 이 배수
 const SMASH_UP = 1.6;       // ⌥↑ 를 누르고 때리면 위로 (넘겨 주기)
+const LOB_UP = 720;         // 넘겨 주기는 적어도 이만큼 위로 — 바닥 위 400 넘게 뜬다
+const LOB_SIDE = 0.6;       // 넘겨 주기는 가로를 덜어 낸다
 const SPIKE_REACH = 88;     // 손이 닿는 거리
 const MAX_SPEED = 2600 * SLOW;
 const WALL_KEEP = 0.98;     // 옆벽·천장은 거의 손실 없이 반사한다
@@ -64,7 +66,13 @@ const WALL_KEEP = 0.98;     // 옆벽·천장은 거의 손실 없이 반사한�
 // 처음엔 화면 끝에 뒀는데, 공이 거기까지 갈 일이 거의 없으니 천장이 없는 것과 같았다.
 // 높이 뜬 공은 내려올 때까지 아무도 할 일이 없어서 랠리가 거기서 한 번씩 끊긴다.
 // 낮춰 두면 세게 올린 공이 천장을 치고 빨리 돌아온다 — 화면도 덜 가린다.
-const CEIL = 300;
+//
+// **바닥에서 잰다.** 화면 위에서 300 으로 뒀더니 944 짜리 판에서 천장이 바닥 위 618 이었고,
+// 위로 올리는 공은 MAX_UP 이 상한이라 잘해야 519 까지 떴다 — **천장에 한 번도 안 닿았다.**
+// 서서 받은 공이 MAX_UP 으로 뜨면 닿는 높이(공기 저항까지 쳐서 바닥 위 519)보다 한 뼘 낮게 둔다 —
+// 거기 딱 두면 꼭대기에서 스치기만 해서 튀는 게 안 보인다. 몸에 맞고 뜬 보통 공(865)은 안 닿는다.
+const CEIL_UP = 470;
+const ceilY = (world) => world.groundY - CEIL_UP;
 // 위로 이보다 빠르게는 안 보낸다. 중력 950 에서 950 이면 475픽셀쯤 오른다 —
 // 사람 머리 높이에서 때리면 딱 천장에 닿는다.
 const MAX_UP = 950;
@@ -99,6 +107,10 @@ const SERVE_SLOW = 700 * SLOW;    // 톡 쳐도 이만큼은 간다 — **넘기
 ///   |------|----------------------|----------------------------|
 ///   | 0%   | 926 · 1.82초         | 그대로 (살살은 안 건드렸다)   |
 ///   | 100% | 1173 · 1.35초 · 최고 378 | **1275 · 0.80초 · 최고 292** |
+///
+/// (**이 표는 공을 바닥 위 269 에 두고 잰 것이다** — 실제로는 손 높이 110 에서 나간다. 거기서 다시
+/// 재면 x200 에서 0% 가 895 · 1.63초 · 최고 389, 100% 가 999 · 0.57초 · 최고 135. 그 높이에서는
+/// 뒤쪽 서브가 네트에 걸려서 hitServe 가 넘을 만큼 각을 든다.)
 ///
 /// 네트를 0.43초에 넘는다(예전 0.77초). 공 자체는 1452 로 강타(1201)보다 빠르다 —
 /// 실제 배구의 점프 서브가 스파이크보다 빠른 것과 같다. 대신 갈 길이 멀어서 받는 쪽에는
@@ -229,8 +241,18 @@ const BLOCK_COOL = 0.4;       // 다시 막기까지
 // 블록을 넘기는 유일한 수단. 때리는 대신 손끝으로 톡 건드려 블로커 머리 너머에 떨군다.
 // **⌥↓ 를 강타에서 떼어 여기 준다** — ⌥↓+⌥Space 의 「내리꽂기」는 공이 손 밑이면 어차피
 // 저절로 나오던 것이라(under) 잃는 것이 없고, 공중의 ⌥↓ 는 원래 아무 일도 안 하던 키다.
-const TIP_SIDE = 640 * SLOW;  // 살짝 넘기는 가로 속도. 강타(858)의 절반
-const TIP_UP = 330 * SLOW;    // 조금 떠올랐다 떨어진다
+/// **블로커 손 위로 넘긴다.** 330×SLOW(218)로 조금만 띄웠더니 공이 손 높이(바닥 위 130~145)에서
+/// 거의 안 올랐다 — 떠오른 블로커의 벽 윗면(발 61 + 몸 80 + 손 30 = 171)보다 낮아서
+/// **블록을 넘기는 유일한 수단이 블록에 다 막혔다.** 이제 높이 띄우고, 가로는 네트 바로 너머
+/// (TIP_LAND)에 떨어지게 겨눈다 — 블로커 등 뒤로 톡 떨어지는 공이다.
+const TIP_UP = 1000 * SLOW;
+const TIP_LAND = 140;          // 네트에서 이만큼 너머에 떨군다
+/// 가로 상한. **앞자리 전용**이 여기서 나온다 — 가운데(500)에서 얹으면 이 세기로는 네트에
+/// 못 닿아 제 코트에 떨어진다. 네트에서 150 안쪽이면 넘어가고, 80 안쪽이면 떠오른 블로커도 넘는다
+/// (30 안쪽은 넘어온 블로커 손 안이라 못 넘는다 — 벽이 네트 너머 43px 까지 온다).
+const TIP_SIDE = 170;
+/// 공중 ⌥↑ 뒤에 ⌥Space 가 오나 기다리는 시간 (넘겨 주기와 가르기). 네 프레임.
+const TIP_WAIT = 4 / 60;
 
 // ── 디그 ───────────────────────────────────────────────────────────────────
 //
@@ -343,18 +365,43 @@ export function myServe(world) {
 /// 서브를 때린다. power 0~1, dir 은 누른 방향(−1·0·1).
 export function hitServe(world, power, dir) {
   const b = world.bag;
-  if (!b.serving) return false;
+  // 점수 난 뒤 쉬는 동안(RESET_WAIT)은 못 넣는다. 공이 아직 손으로 내려오는 중이라
+  // 높은 데서, 선 자리가 아닌 데서 나가고 — 받는 쪽은 준비도 안 됐다.
+  if (!b.serving || b.wait > 0) return false;
   b.serving = false;
   b.charge = -1;
   const k = clamp01(power);
   const across = b.serveBy === 0 ? 1 : -1;
   const ball = b.ball;
+  // 서브 전에 공에 남은 것을 지운다 — 기다리는 동안 들어온 타격이 달아오름을 남겨 두면
+  // 살살 넣은 서브가 탑스핀을 물려받는다.
+  cool(ball);
   ball.vx = across * (SERVE_SLOW + (SERVE_FAST - SERVE_SLOW) * k) + dir * across * SERVE_AIM;
   ball.vy = -(SERVE_LIFT - SERVE_FLAT * k);
   ball.spinV = across * (2 + k * 4);
   // 강서브는 달아오른 채 앞으로 돌며 간다 — 중력의 1.45배로 떨어져 코트 안에 꽂힌다.
   // (달아오름은 꾸러미의 일곱째 칸으로 가고, 손님은 그걸 보고 같은 회전을 그린다.)
-  if (k > SERVE_SPIN) { ball.hot = HOT_TIME; ball.ace = false; ball.topspin = true; }
+  const spin = k > SERVE_SPIN;
+  if (spin) { ball.hot = HOT_TIME; ball.ace = false; ball.topspin = true; }
+  // **어느 세기로 넣어도 네트는 넘는다.** 표의 값은 공을 지면 위 269px 에 두고 잰 것이었는데
+  // 실제로 공은 손 높이(110px, 네트보다 15px 위)에서 나간다. 거기서는 서브 구역 뒤쪽(x≤140)의
+  // 강서브·⌥← 서브가 네트에 걸렸다 — 서브 구역의 6할이다. 넘을 때까지만 **각을 든다**
+  // (스파이크의 netCap 과 같은 날려 보기를 쓴다). 세기와 깊이는 그대로다.
+  const clears = (vx, vy) => flies(world, ball.x, ball.y, vx, vy, spin, false);
+  // **가장 덜 바꾸는 쪽부터** 찾는다 — 각을 조금씩 들어 보고, 끝까지 들어도 안 되면 세기를 조금 더한다.
+  // 반으로 좁히지 않는다: 너무 들면 천장을 치고 일찍 떨어져서, 「더 들면 넘는다」가 끝까지 참이 아니다.
+  // (맨 뒤에서 살살 짧게(⌥←) 넣은 297px/s 가 그 경우다 — 각만으로는 못 넘는다.)
+  if (!clears(ball.vx, ball.vy)) {
+    const vy0 = ball.vy;
+    let found = false;
+    // 세기를 더해도 SERVE_FAST 까지만 (깊은 강서브는 이미 그보다 빨라 각만 든다).
+    const most = Math.max(1, SERVE_FAST / Math.abs(ball.vx));
+    for (let fast = 1; fast <= most && !found; fast += 0.08) {
+      for (let vy = vy0; vy >= -MAX_UP; vy -= 25) {
+        if (clears(ball.vx * fast, vy)) { ball.vx *= fast; ball.vy = vy; found = true; break; }
+      }
+    }
+  }
   b.tail = [];
   // **서브는 바로 넘겨야 한다.** 넘어가기 전까지 올린 편은 공을 못 건드린다 —
   // 올려 놓고 자기 편끼리 주고받다 넘기는 건 서브가 아니다.
@@ -427,6 +474,13 @@ function inReach(ball, at) {
   return dx * dx + dy * dy <= SPIKE_REACH * SPIKE_REACH;
 }
 
+/// 공이 내 코트 쪽인가 — **네트 너머의 공은 못 친다** (넘어가서 손을 대는 건 블로킹뿐).
+/// 네트 면에 걸친 공(공 반지름만큼)까지는 친다 — 실제 규칙도 그렇다.
+function onMySide(world, ball, side) {
+  const netX = world.w / 2;
+  return side === 1 ? ball.x > netX - BALL_R : ball.x < netX + BALL_R;
+}
+
 /// 손끝 자리 (정타를 재는 기준). 발에서 BODY_H×0.86.
 const handY = (at) => at.groundY - at.air - BODY_H * 0.86;
 
@@ -488,9 +542,11 @@ function applyHit(world, at, want, body = null, who = -1) {
   // 네트에 붙어 서면 **상대 코트 60px 안쪽 공까지 그냥 쳤다** — 땅에 서서도 됐다.
   // 배구에서 그건 반칙이고, 넘어가서 손을 대는 건 **블로킹뿐**이다 (canBlock 이 따로 있다).
   // 네트 면에 걸친 공(공 반지름만큼)까지는 친다 — 실제 규칙도 그렇다.
-  const netX = world.w / 2;
-  const onMySide = at.side === 1 ? ball.x > netX - BALL_R : ball.x < netX + BALL_R;
-  if (!onMySide) return null;
+  if (!onMySide(world, ball, at.side)) return null;
+  // **같은 사람이 곧바로 두 번 못 친다.** 공중 ⌥↑(페인트)로 얹은 공을 같은 프레임의 ⌥Space 가
+  // 또 쳐서 넘겨 주기가 됐다 — 한 사람이 두 번 친 것이다. 친 사람 몸을 건너뛰는 몫(SELF_SKIP)을
+  // 손에도 쓴다.
+  if (body && ball.skip === body && ball.skipT > 0) return null;
 
   const away = at.side === 1 ? -1 : 1;             // 상대 코트 쪽
   const held = want.held | 0;
@@ -500,11 +556,16 @@ function applyHit(world, at, want, body = null, who = -1) {
   let ace = false;
   let lob = false;
   let smash = 0;
+  let flat = 0;              // 꽂지 않고 수평으로 쳤을 때의 세기 (netCap 이 각을 눕힐 때 쓴다)
   if (want.tip && at.air > 12) {
     // **페인트.** 때리는 대신 손끝으로 톡 건드려 블로커 머리 너머에 떨군다.
     // 느리게, 짧게, 조금 떠올랐다 떨어진다 — 블록을 넘기는 유일한 수단이다.
-    vx = away * TIP_SIDE + held * 120;
     vy = -TIP_UP;
+    // 바닥에 닿을 때까지의 시간으로 가로를 겨눈다 (느린 공이라 공기 저항은 거의 없다).
+    const h0 = Math.max(0, world.groundY - BALL_R - ball.y);
+    const fall = (TIP_UP + Math.sqrt(TIP_UP * TIP_UP + 2 * GRAVITY * h0)) / GRAVITY;
+    const goal = (world.w / 2 + away * TIP_LAND - ball.x) * away;
+    vx = away * clamp2(goal / fall, 60, TIP_SIDE) + held * 60;
     kind = 3;
   } else if (at.air <= 12) {
     // 토스. 위로 올려 주고 옆으로는 살짝만.
@@ -541,9 +602,16 @@ function applyHit(world, at, want, body = null, who = -1) {
     const cap = ace ? ACE_CAP : MAX_SPEED;
     const side = held !== 0 ? held : away;
     // 가파르게 꽂을수록 가로로는 덜 간다. 힘의 총량은 그대로 두고 방향만 아래로 돌린다.
+    flat = Math.min(cap, (held !== 0 ? SMASH_SIDE : SMASH_FLAT) * lift * power);
     vx = clamp(side * (held !== 0 ? SMASH_SIDE : SMASH_FLAT) * lift * (1 - 0.32 * dive) * power, cap);
     if (dive > 0.02) vy = clamp(SMASH_DIVE * dive * lift * power, cap);
-    else if (want.up) vy = -Math.min(MAX_UP, Math.abs(ball.vy) * SMASH_UP);
+    else if (want.up) {
+      // **넘겨 주기는 높이 뜬다.** 들어온 세로 속도에만 걸어 두었더니, 천천히 떨어지던 공을
+      // 넘기면 13px 만 뜨고 강타 세기로 평평하게 날아갔다 — 이름과 반대다. 적어도 LOB_UP 만큼
+      // 띄우고, 가로는 덜어 낸다(받는 쪽이 올려 칠 공이다).
+      vy = -Math.min(MAX_UP, Math.max(LOB_UP, Math.abs(ball.vy) * SMASH_UP));
+      vx *= LOB_SIDE;
+    }
     else vy = 0;                                   // 수평 미사일
     // 번쩍임 세기. 가파르게 꽂을수록 크게 터진다.
     smash = Math.max(0.4, dive);
@@ -571,7 +639,7 @@ function applyHit(world, at, want, body = null, who = -1) {
     const keep = ARM_LEN * 1.3 + BALL_R * 0.8;
     if (far > keep) { hx = s.x + gx / far * keep; hy = s.y + gy / far * keep; }
     // 손끝 자리가 정해진 뒤에 각을 다듬는다 — 공은 여기서 출발한다.
-    vy = netCap(world, hx, hy, vx, vy, !lob, ace);
+    [vx, vy] = netCap(world, hx, hy, vx, vy, !lob, ace, flat);
   }
   const info = { kind, ace, face, hold, stop, x: hx, y: hy, smash };
 
@@ -615,7 +683,8 @@ function flies(world, x, y, vx, vy, hot, ace) {
   const face = BALL_R + NET_FACE;
   const dt = 1 / 120;
   let hotLeft = hot ? HOT_TIME : 0;
-  for (let i = 0; i < 240; i++) {
+  // 3초까지 날려 본다. 살살 넣은 서브는 네트까지 2초 가까이 걸린다.
+  for (let i = 0; i < 360; i++) {
     vy += (GRAVITY + (hotLeft > 0 ? TOPSPIN : 0)) * dt;
     const speed = Math.hypot(vx, vy);
     if (speed > 0) {
@@ -625,6 +694,9 @@ function flies(world, x, y, vx, vy, hot, ace) {
     }
     hotLeft = Math.max(0, hotLeft - dt);
     x += vx * dt; y += vy * dt;
+    // 천장 — update() 처럼 되접고 식힌다. 이게 없으면 높이 든 서브가 천장을 치고
+    // 일찍 떨어져 네트에 걸리는 것을 못 본다.
+    if (y < ceilY(world) && vy < 0) { y = 2 * ceilY(world) - y; vy = -vy * WALL_KEEP; hotLeft = 0; }
     // 그물 면 안이다 — **지나가는 동안 내내** 꼭대기보다 위여야 한다 (NET_CLEAR 만큼 여유).
     // 면에 들어서는 첫 걸음만 봤더니 68px 폭을 지나는 대여섯 걸음 사이에 더 떨어져 걸렸다.
     if (Math.abs(x - netX) < face) {
@@ -645,16 +717,41 @@ function flies(world, x, y, vx, vy, hot, ace) {
 /// 없어 제한이 거의 없고(꽂기가 그대로 산다), 뒤로 갈수록 저절로 평평해지고, 아주 뒤에서는
 /// 살짝 들어 올린다 — 수평으로 쏘면 가는 동안 떨어지니까. 높이 뜬 공은 여전히 세게 꽂힌다.
 /// 「공보다 높이 떠서 때려야 꽂힌다」가 이걸로 **진짜**가 된다.
-function netCap(world, x, y, vx, vy, hot, ace) {
-  if (flies(world, x, y, vx, vy, hot, ace)) return vy;
-  // vy 를 위로 올릴수록 잘 넘는다 — 넘는 가장 가파른 값을 반으로 좁혀 찾는다.
-  let steep = vy;            // 안 넘는 쪽
-  let soft = -MAX_UP;        // 넘는 쪽 (여기서도 못 넘으면 어차피 그게 최선이다)
-  for (let i = 0; i < 9; i++) {
+function netCap(world, x, y, vx, vy, hot, ace, flat = 0) {
+  if (flies(world, x, y, vx, vy, hot, ace)) return [vx, vy];
+  // **각을 눕혀도 세기는 남긴다.** 예전엔 vx 를 둔 채 vy 만 깎았다. 그런데 꽂는 공은 가로를
+  // 덜어 둔 공(1 - 0.32·dive)이라, 각을 도로 눕히고 나면 **가로도 세로도 약한 공**이 남았다 —
+  // 네트 앞에서 ⌥↓ 를 누르고 친 공(792)이 그냥 친 공(1111)보다 느렸다.
+  // 이제 각을 돌리고, 세기는 **꽂는 각이 살아남은 만큼** 꽂는 세기로 간다. 다 눕혀졌으면
+  // (가운데) 그냥 친 공과 같은 세기 — 가운데에서 ⌥↓ 가 벌이 되지도, 덤이 되지도 않는다.
+  const full = Math.hypot(vx, vy);
+  const base = Math.min(full, flat || full);
+  const dir = Math.sign(vx) || 1;
+  const want = Math.atan2(vy, Math.abs(vx));
+  const at = (a) => {
+    const kept = want > 0 ? Math.max(0, Math.min(1, a / want)) : 0;
+    const speed = base + (full - base) * kept;
+    return [dir * speed * Math.cos(a), speed * Math.sin(a)];
+  };
+  // 각을 위로 들수록 잘 넘는다 — 넘는 가장 가파른 각을 반으로 좁혀 찾는다.
+  let steep = want;                                          // 안 넘는 쪽
+  let soft = -Math.asin(Math.min(1, MAX_UP / full));         // 넘는 쪽 (여기서도 못 넘으면 어차피 그게 최선이다)
+  for (let i = 0; i < 12; i++) {
     const mid = (steep + soft) / 2;
-    if (flies(world, x, y, vx, mid, hot, ace)) soft = mid; else steep = mid;
+    if (flies(world, x, y, ...at(mid), hot, ace)) soft = mid; else steep = mid;
   }
-  return soft;
+  const turned = at(soft);
+  if (flies(world, x, y, ...turned, hot, ace)) return turned;
+  // **돌리기만으로는 못 넘는다** — 뒤쪽에서 덜 뜬 채 평평하게 친 공이다. 세기를 그대로 두고
+  // 돌리면 위로 향한 만큼 가로를 잃어서, 위로 MAX_UP 까지 들어도 네트 앞에 떨어졌다.
+  // 그때는 예전처럼 **가로는 두고 위로만 더한다.**
+  let low = vy;
+  let high = -MAX_UP;
+  for (let i = 0; i < 9; i++) {
+    const mid = (low + high) / 2;
+    if (flies(world, x, y, vx, mid, hot, ace)) high = mid; else low = mid;
+  }
+  return [vx, high];
 }
 
 /// 친 사람에게 동작을 건다. 강타는 내리치는 팔(p.swing), 토스는 밀어 올리는 두 팔(p.toss).
@@ -744,6 +841,15 @@ function attempt(world, want, first) {
     }
     if (!want.tip && canBlock(world, p)) return doBlock(world, p, true, world.mp.myId);
     missWord(world, p, '멀다');
+    return false;
+  }
+
+  // ②-2 손은 닿는데 공이 네트 너머다 — 칠 수는 없고 **막을 수는 있다.** 상대 공격수 손 앞
+  //    (네트 너머 30~50px)이 블로킹을 제일 많이 누르는 자리인데, 손이 닿는다고 치기로만 보냈다가
+  //    치기가 「네트 너머」로 거절해서 **벽도 안 서고 까닭도 안 떴다.**
+  if (!onMySide(world, b.ball, at.side)) {
+    if (!want.tip && canBlock(world, p)) return doBlock(world, p, true, world.mp.myId);
+    missWord(world, p, '네트 너머');
     return false;
   }
 
@@ -946,6 +1052,45 @@ function spawnSlam(world, x, ace) {
 
 /// 기억해 둔 입력을 푼다. 히트스톱이 풀린 **그 프레임에** 대신 쳐 준다 —
 /// 누른 사람은 「눌렀다」고 알고 있는데 아무 일도 안 일어나는 게 제일 억울하다.
+/// 공이 돌고 있나 — 서브를 기다리거나 점수 뒤 쉬는 동안은 아무도 공을 못 건드린다.
+/// 방장 자신은 spike()·action() 에서 걸리는데, 손님이 보낸 타격은 이 검사 없이 들어와서
+/// 서브를 들고 있는 공을 쳤다(달아오름·멈춤이 남아 뒤이은 서브가 물려받았다).
+function inRally(world) {
+  const b = world.bag;
+  return world.state === 'play' && !b.serving && !(b.wait > 0);
+}
+
+/// 손님이 때렸다. **공은 내 것이니 내가 대신 쳐 준다.** (방장만)
+///
+/// 자리는 손님이 보내온 값을 믿되, 내가 알고 있는 자리와 너무 다르면 무시한다 —
+/// 남의 화면 값을 그대로 믿으면 코트 밖에서도 공을 칠 수 있게 된다.
+function guestHit(world, from, at, want) {
+  const other = world.mp.others.get(from);
+  if (!other || other.dead) return null;
+  if (!inRally(world)) return null;
+  if (Math.abs(other.x - at.x) > 120) { world.debug && world.log?.(`손님타격 무시(자리차이) ${from}`); return null; }
+  // **서브는 바로 넘겨야 한다 — 손님에게도.** 잠금 검사가 attempt() 한 곳에만 있어서
+  // 이 길로 들어온 타격은 그냥 통과했다.
+  const gside = at.side === 1 ? 1 : 0;
+  const b = world.bag;
+  if ((b.mustCross === 0 || b.mustCross === 1) && gside === b.mustCross) {
+    world.debug && world.log?.(`손님타격 무시(서브잠금) ${from}`);
+    return null;
+  }
+  // **히트스톱에 걸렸다 — 버리지 않는다.** 방장 자신은 attempt ① 이 기억해 두는데 손님
+  // 타격은 그 길을 안 지나서, 멈춘 0.08초 안에 온 손님 타격은 끝내 안 쳐졌다(손님 화면에는
+  // 친 것처럼 보였다). 한 사람에 하나씩 들고 있다가 풀리는 프레임에 친다.
+  if (b.stop > STOP_EPS) {
+    (b.guestHold ??= new Map()).set(from, { at, want, t: BUFFER });
+    return null;
+  }
+  const ok = applyHit(world, { x: other.x, air: other.air, groundY: world.groundY, side: gside },
+                      want, other, from);
+  if (ok) startSwing(other, ok);
+  world.debug && world.log?.(`손님타격 ${from} ${ok ? '먹힘' : '안닿음'}`);
+  return ok;
+}
+
 function releaseHold(world, dt) {
   const b = world.bag;
   if (!b.hold) return;
@@ -1138,7 +1283,8 @@ function drawSweetHalo(ctx, world, upright, bx, by) {
   if ((p.air ?? 0) <= 6) return;                 // 땅에서는 어차피 토스라 뜻이 없다
   const at = { x: p.x, air: p.air, groundY: p.groundY };
   if (!inSweet({ x: bx, y: by }, at)) return;
-  const ready = (p.air ?? 0) >= APEX_AIR;
+  // ⌥↑ 를 잡고 있으면 치는 것은 넘겨 주기라 정타가 안 난다 — 정타 빛도 안 켠다.
+  const ready = (p.air ?? 0) >= APEX_AIR && !world.input.jump;
   const tint = ready ? TEAM_INK[world.team ?? 0] : PENCIL;
   upright(bx, by, () => {
     circle(ctx, bx, by, BALL_R + 7, { width: ready ? 3 : 1.8, color: tint, seed: 211, amp: 0.7,
@@ -1284,9 +1430,21 @@ export default {
   /// ⌥Space 를 이 게임이 가져간다. 서브를 올릴 차례면 **누르고 있는 동안 힘이 찬다.**
   action(world) {
     const b = world.bag;
+    b.spaceDown = true;
+    // 공중 ⌥↑ 를 누르고 곧바로 ⌥Space 를 눌렀다 — 페인트가 아니라 **넘겨 주기(⌥Space + ↑)**다.
+    b.tipWait = 0;
     if (b.serving) {
-      if (!myServe(world)) return;
-      if (world.mp.role === 'guest') { b.myCharge = 0; return; }
+      // 쉬는 동안(RESET_WAIT)은 잡기 시작하지도 않는다 — hitServe 도 막지만, 여기서 차오르면
+      // 막대가 찬 채로 못 넣는 까닭을 모른다.
+      if (!myServe(world) || b.wait > 0) return;
+      if (world.mp.role === 'guest') {
+        b.myCharge = 0;
+        // **방장도 같이 센다.** 손님 혼자 세면 너무 오래 잡아도 실패가 없었다(3초 잡아도
+        // 세기 100 서브) — 실패는 방장만 보는 b.charge 에 걸려 있었다. 방장이 세면 실패도,
+        // 남들 화면의 힘 막대(sv)도 저절로 따라온다.
+        world.send?.({ t: 'gm', k: 'hold' });
+        return;
+      }
       b.charge = 0;
       return;
     }
@@ -1295,7 +1453,10 @@ export default {
   /// ⌥Space 를 뗐다. 차 있던 힘으로 서브를 때린다.
   release(world) {
     const b = world.bag;
-    if (!b.serving) return;
+    b.spaceDown = false;
+    // 내가 올릴 차례일 때만. 방장의 b.charge 는 손님이 잡은 것을 세기도 한다 —
+    // 방장이 딴 데서 ⌥Space 를 떼도 손님 서브가 나가면 안 된다.
+    if (!b.serving || !myServe(world)) return;
     const held = world.mp.role === 'guest' ? b.myCharge : b.charge;
     if (!(held >= 0)) return;
     const power = clamp01((held - SERVE_HOLD) / (SERVE_FULL - SERVE_HOLD));
@@ -1312,7 +1473,15 @@ export default {
   /// 한동안 ⌥↓ 로도 됐는데 도로 뺐다. ↓ 는 이제 **내리꽂기**를 고르는 키(⌥Space + ↓)라,
   /// 꽂으려고 ↓ 를 누르는 순간 페인트가 먼저 나가 버린다 — 두 기술이 같은 키를 못 쓴다.
   /// 위는 얹기(페인트·넘겨 주기), 아래는 꽂기. 손가락이 외우기에도 이쪽이 맞다.
-  tap: (world, key) => { if (key === 'jump') tipHit(world); },
+  ///
+  /// **⌥↑ 는 넘겨 주기(⌥Space + ↑)에도 쓴다.** 누르자마자 페인트를 내면, ↑ 를 먼저 누르고
+  /// ⌥Space 를 누른 사람은 페인트가 나간 뒤 같은 공을 또 쳤다. 그래서 페인트는 TIP_WAIT 만큼
+  /// 기다렸다 낸다 — 그 사이 ⌥Space 가 오면 넘겨 주기다. ⌥Space 를 잡은 채 누른 ↑ 는 페인트가 아니다.
+  tap: (world, key) => {
+    const b = world.bag;
+    if (key !== 'jump' || b.spaceDown || (world.player.air ?? 0) <= 12) return;
+    b.tipWait = TIP_WAIT;
+  },
 
   /// 사람 그리는 법. 졸라맨 그대로인데 **치는 모션 스위치만 켠다.** 졸라맨은 다른 게임도
   /// 쓰니 p.swing·p.toss·p.cock 을 아무나 읽게 두면, 휘두르던 사람이 판을 갈아 끼운 뒤
@@ -1363,6 +1532,8 @@ export default {
     fx: [], events: [], stop: 0, stopHold: 0, mineAt: 9,
     // 기억해 둔 입력 · 발밑 고리 남은 시간 · 서브를 올리는 쪽.
     hold: null, ringFade: 0, serveBy: 0, mustCross: null,
+    // ⌥Space 를 잡고 있나 · 기다리는 페인트 · 히트스톱에 씹힌 손님 타격(방장만).
+    spaceDown: false, tipWait: 0, guestHold: new Map(),
     // 서브 — 들고 있나 · 얼마나 찼나 · 손님이 제 화면에서 세는 몫.
     serving: false, charge: -1, myCharge: -1,
     score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false, emptyFor: 0,
@@ -1400,13 +1571,23 @@ export default {
     visuals(world, b, dt);
     arms(world, b, dt);
     if (world.state !== 'play') return;
+    // 기다리던 페인트 (tap). ⌥Space 가 안 왔으면 이제 얹는다.
+    if (b.tipWait > 0) {
+      b.tipWait -= dt;
+      if (b.tipWait <= 0) { b.tipWait = 0; tipHit(world); }
+    }
 
     // 손님은 방장이 뿌린 공을 따라 그리기만 한다. 판정도 방장이 한다.
     if (world.mp.role === 'guest') {
       // **첫 꾸러미가 오기 전에는 계산하지 않는다.** 안 그러면 없는 값으로 셈해서 NaN 이 되고,
       // 그 NaN 이 다음 꾸러미의 오차 계산에 다시 들어가 영영 안 돌아온다.
       if (b.myCharge >= 0) b.myCharge += dt;
+      // 너무 오래 잡았다. 실패는 방장이 제 셈으로 낸다(hold) — 여기서는 떼도 안 나가게만 한다.
+      if (b.myCharge > SERVE_BURST) b.myCharge = -1;
       if (b.baseX === undefined) return;
+      // 방장이 알려 온 히트스톱(unpack)을 제 화면에서도 센다 — 그래야 그 사이 누른 것을
+      // 버리지 않고 기억했다가(attempt ①) 풀리는 프레임에 보낸다.
+      if (b.stop > 0) b.stop = Math.max(0, b.stop - dt);
       b.age = Math.min(b.age + dt, AGE_CAP);
       b.errorX *= Math.exp(-dt / 0.06);
       b.errorY *= Math.exp(-dt / 0.06);
@@ -1483,6 +1664,12 @@ export default {
     }
     // 히트스톱에 씹혔던 입력을 여기서 푼다 — 누른 사람은 「눌렀다」고 알고 있다.
     releaseHold(world, dt);
+    // 손님 것도. 손님 타격은 방장에게 와서야 판정되니, 방장의 히트스톱에 걸리면 여기서 푼다.
+    for (const [from, h] of b.guestHold ?? []) {
+      b.guestHold.delete(from);
+      h.t -= dt;
+      if (h.t > 0) guestHit(world, from, h.at, h.want);
+    }
     // 친 사람 몸은 잠깐 공을 안 받는다 (SELF_SKIP).
     ball.skipT = Math.max(0, (ball.skipT ?? 0) - dt);
     if (ball.skipT <= 0) ball.skip = null;
@@ -1528,7 +1715,7 @@ export default {
     const bounced =
       reflect(BALL_R, world.w - BALL_R, () => ball.x, (v) => { ball.x = v; },
               () => ball.vx, (v) => { ball.vx = v; })
-      | reflect(CEIL, Infinity, () => ball.y, (v) => { ball.y = v; },
+      | reflect(ceilY(world), Infinity, () => ball.y, (v) => { ball.y = v; },
                 () => ball.vy, (v) => { ball.vy = v; });
     // 벽에 한 번 닿으면 그냥 공이다. 벽을 맞고도 달아오른 채로 다니면 아무도 못 받는다.
     if (bounced) { ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y; cool(ball); }
@@ -1749,40 +1936,27 @@ export default {
   message(world, from, msg) {
     if (world.mp.role !== 'host') return;
     if (msg.k === 'hit' && msg.at && msg.want) {
-      // 손님이 때렸다. **공은 내 것이니 내가 대신 쳐 준다.**
-      // 자리는 손님이 보내온 값을 믿되, 내가 알고 있는 자리와 너무 다르면 무시한다 —
-      // 남의 화면 값을 그대로 믿으면 코트 밖에서도 공을 칠 수 있게 된다.
-      const other = world.mp.others.get(from);
-      if (!other || other.dead) return;
-      if (Math.abs(other.x - msg.at.x) > 120) { world.debug && world.log?.(`손님타격 무시(자리차이) ${from}`); return; }
-      // **서브는 바로 넘겨야 한다 — 손님에게도.** 잠금 검사가 attempt() 한 곳에만 있어서
-      // 이 길로 들어온 타격은 그냥 통과했다.
-      const gside = msg.at.side === 1 ? 1 : 0;
-      const gb = world.bag;
-      if ((gb.mustCross === 0 || gb.mustCross === 1) && gside === gb.mustCross) {
-        world.debug && world.log?.(`손님타격 무시(서브잠금) ${from}`);
-        return;
-      }
-      const ok = applyHit(world, { x: other.x, air: other.air, groundY: world.groundY,
-                                   side: msg.at.side === 1 ? 1 : 0 }, msg.want, other, from);
-      if (ok) startSwing(other, ok);
-      world.debug && world.log?.(`손님타격 ${from} ${ok ? '먹힘' : '안닿음'}`);
+      guestHit(world, from, msg.at, msg.want);
       return;
     }
     // 손님이 벽을 세웠다. 자리는 방장이 아는 것을 쓰고, 조건도 방장이 다시 본다 —
     // 남의 화면 값을 그대로 믿으면 코트 한가운데서도 벽이 선다.
     // 손님이 서브를 때렸다. **그 사람이 올릴 차례일 때만** 듣는다.
-    if (msg.k === 'serve') {
+    if (msg.k === 'serve' || msg.k === 'hold') {
       const other = world.mp.others.get(from);
       if (!other || other.dead || other.waiting) return;
       const b = world.bag;
-      if (!b.serving || sideOfX(world, other.x) !== b.serveBy) return;
+      if (!b.serving || b.wait > 0 || sideOfX(world, other.x) !== b.serveBy) return;
       if (serverOf(world, b.serveBy) !== other) return;
+      // 잡기 시작했다 — 방장이 센다. 실패(SERVE_BURST)도 여기서 난다.
+      if (msg.k === 'hold') { b.charge = 0; return; }
+      // 옛 손님은 hold 를 안 보낸다. 그때는 b.charge 가 −1 인 채로 온다 — 보내온 세기를 쓴다.
       hitServe(world, clamp01((+msg.p || 0) / 100), Math.sign(+msg.d || 0));
       return;
     }
     if (msg.k === 'block') {
       const other = world.mp.others.get(from);
+      if (!inRally(world)) return;
       if (other && !other.dead && canBlock(world, other)) doBlock(world, other, false, from);
       return;
     }
@@ -1846,6 +2020,9 @@ export default {
         hold: kind === 2 ? ACE_HOLD : kind === 3 ? 0 : HIT_HOLD, stop: old ? 0 : data.f[6],
         x: hx, y: hy, smash: hard,
       };
+      // 방장의 히트스톱을 손님도 안다. 모르면 그 사이 누른 타격을 곧장 보내고, 방장은
+      // 멈춘 채라 못 친다 — 손님 화면에만 팔과 「쾅」이 뜬다. 알면 기억했다가 풀리면 보낸다.
+      if (info.stop > 0) b.stop = Math.max(b.stop ?? 0, info.stop);
       // **내가 친 것이면 이미 내 화면에서 보여 줬다**(spike). 두 번 터뜨리지 않는다.
       if (!(who >= 0 && who === world.mp.myId && (b.mineAt ?? 9) < 0.5)) {
         const hitter = who >= 0

@@ -67,6 +67,7 @@ export function nextOf(at, viaShort = false) {
 /// 지름길로 새 버렸다**(5번을 밟고 지나가는 것까지 「모에 섰다」로 봤다).
 /// 그래서 **첫 걸음에서만** 꺾는지를 본다 — 앞 차례에 그 모에 정확히 섰다는 뜻이다.
 export function walk(at, n) {
+  if (n < 0) return backOf(at);                  // 빽도 — 한 칸 뒤로 (집에 있으면 null)
   let cur = at;
   for (let step = 0; step < n; step++) {
     if (cur === HOME) { cur = 1; continue; }     // 첫 걸음은 1번 밭
@@ -76,6 +77,29 @@ export function walk(at, n) {
     if (step === n - 1) return cur;
   }
   return cur;
+}
+
+/// **빽도 — 한 칸 뒤로.** 가던 길을 그대로 거꾸로 간다.
+///
+/// 1번 밭에서 뒤로 가면 **출발 귀퉁이(20번)**다 — 한 바퀴를 돌아 나기 직전이 된다.
+/// 이게 빽도가 판을 뒤집는 수인 까닭이고, 실제 윷놀이에서도 그렇게 논다.
+/// 집에 있는 말은 뒤로 못 간다(아직 길 위에 없다) — null 을 돌려주면 못 고르는 말이 된다.
+/// 방에서는 첫 지름길 쪽(22)으로 되돌아간다 — 어느 길로 들어왔는지는 안 적어 두니,
+/// 늘 같은 쪽으로 정해 둔다. 어차피 거기서 다시 앞으로 가면 방을 지나 같은 길로 나간다.
+export function backOf(at) {
+  if (at === HOME || at === OUT) return null;
+  if (at === 1) return RING;                     // 출발 귀퉁이 — 나기 직전
+  if (at >= 2 && at <= RING) return at - 1;
+  if (at === 21) return 5;
+  if (at === 22) return 21;
+  if (at === CENTER) return 22;
+  if (at === 23) return CENTER;
+  if (at === 24) return 23;
+  if (at === 26) return 10;
+  if (at === 27) return 26;
+  if (at === 28) return CENTER;
+  if (at === 29) return 28;
+  return null;
 }
 
 /// 밭이 판 어디에 있나 (0~1 네모). 바깥은 네모로 돌고 지름길은 대각선이다.
@@ -141,6 +165,9 @@ export function flatUp(turns) {
 /// 던진 결과를 이름으로. 젖혀진 짝 수 → 도·개·걸·윷, 하나도 없으면 모.
 export const NAMES = ['모', '도', '개', '걸', '윷'];
 export const STEPS = [5, 1, 2, 3, 4];
+/// **표가 있는 짝.** 이 짝 하나만 젖혀지면 도가 아니라 **빽도**다 (한 칸 뒤로).
+/// 네 짝 중 하나이니 도의 넷에 하나 — 열 번에 한 번쯤 나온다.
+export const MARKED = 0;
 /// 한 번 더 던지는가 (윷·모).
 export const again = (flats) => flats === 4 || flats === 0;
 
@@ -165,7 +192,11 @@ export function toss(gauge, seed) {
   }
   const nak = sticks.some((s) => isNak(s.dist));
   const flats = sticks.filter((s) => s.flat).length;
-  return { sticks, nak, flats, steps: nak ? 0 : STEPS[flats], name: nak ? '낙' : NAMES[flats] };
+  // 표 있는 짝 **하나만** 젖혀졌으면 빽도. 도와 같은 세기인데 방향이 반대다.
+  const back = !nak && flats === 1 && sticks[MARKED].flat;
+  return { sticks, nak, flats, back,
+           steps: nak ? 0 : back ? -1 : STEPS[flats],
+           name: nak ? '낙' : back ? '빽도' : NAMES[flats] };
 }
 
 // ── 말 ────────────────────────────────────────────────────────────────────
@@ -197,6 +228,9 @@ export function preview(men, i, n) {
   const me = men[i];
   if (!me || me.done || me.on !== -1) return null;
   const to = walk(me.at, n);
+  // **갈 데가 없으면 못 고르는 말이다.** 빽도인데 아직 집에 있는 말이 그렇다 —
+  // 이걸 안 걸러 두면 `to` 가 null 인 채로 말을 옮겨 판 밖으로 사라진다.
+  if (to === null || to === undefined) return null;
   const eat = [], ride = [];
   if (to !== OUT) {
     men.forEach((m, j) => {
@@ -230,6 +264,11 @@ export function move(men, i, n) {
       men[j].on = i;
       men[j].at = to;
     }
+    // **업고 있던 말들의 밭도 같이 옮긴다.** 새로 업는 말만 옮기고 원래 업고 있던 말은
+    // 두었더니, 업힌 말의 `at` 이 옛 밭에 남았다 — 판에는 안 보이지만(업힌 말은 안 그린다)
+    // 그 말은 「저 밭에 있다」고 적혀 있는 말이 된다. 잡기·나기는 `on` 으로 따라가서 탈이
+    // 안 났을 뿐, 언제든 이 거짓말을 읽는 코드가 생기면 그때 터진다.
+    for (const k of riders(men, i)) men[k].at = to;
   }
   return { ...plan, ate: eat.length > 0 };
 }
@@ -237,6 +276,11 @@ export function move(men, i, n) {
 export const homeLeft = (men, side) =>
   men.filter((m) => m.side === side && !m.done && m.on === -1 && m.at === HOME).length;
 export const doneOf = (men, side) => men.filter((m) => m.side === side && m.done).length;
+/// **이 세기로 갈 수 있는 말들.** 빽도가 생기면서 「움직일 수 있는 말」과 「이번에 갈 수
+/// 있는 말」이 갈렸다 — 집에 있는 말은 뒤로 못 간다. 고르는 줄도 컴퓨터도 이걸 쓴다.
+export const movableWith = (men, side, steps) =>
+  movable(men, side).filter((i) => preview(men, i, steps));
+
 /// 지금 움직일 수 있는 말들 (아직 안 난 말 · 업혀 있지 않은 말).
 export const movable = (men, side) =>
   men.map((m, i) => ({ m, i })).filter(({ m }) => m.side === side && !m.done && m.on === -1).map(({ i }) => i);
@@ -360,10 +404,11 @@ function landed(world, b) {
     handOver(world, b);
     return;
   }
-  const row = movable(b.men, b.turn);
+  const row = movableWith(b.men, b.turn, r.steps);
   if (!row.length) {
-    // 움직일 말이 없다 (다 났거나 다 업혀 있다). 한 번 더 던질 차례면 이어서 던진다.
-    say(b, `${r.name} — 움직일 말이 없다`);
+    // 갈 말이 없다 (다 났거나 다 업혀 있거나, **빽도인데 다 집에 있거나**).
+    // 한 번 더 던질 차례면 이어서 던진다.
+    say(b, `${r.name} — 갈 말이 없다`);
     handOver(world, b, again(r.flats));
     return;
   }
@@ -375,7 +420,7 @@ function landed(world, b) {
 export function playMove(world, i) {
   const b = world.bag;
   if (b.over || b.phase !== 'pick' || !b.roll) return false;
-  const row = movable(b.men, b.turn);
+  const row = movableWith(b.men, b.turn, b.roll.steps);
   if (!row.includes(i)) return false;
   const res = move(b.men, i, b.roll.steps);
   if (!res) return false;
@@ -397,7 +442,7 @@ export const aiGauge = () => {
 
 /// 어느 말을 옮길까. 잡는 수가 제일 값지고, 다음이 나는 수, 그다음이 많이 간 말이다.
 export function aiPick(men, side, steps) {
-  const row = movable(men, side);
+  const row = movableWith(men, side, steps);
   let best = row[0], top = -1e9;
   for (const i of row) {
     const plan = preview(men, i, steps);
@@ -420,6 +465,7 @@ export default {
     ['⌥ ← →', '옮길 말 고르기'],
     ['⌥ Space', '그 말을 옮긴다'],
     ['윷 · 모 · 잡기', '한 번 더 던진다'],
+    ['빽도', '표 있는 짝 하나만 젖혀지면 — 한 칸 뒤로'],
     ['낙', '판을 벗어나거나 못 닿으면 그 차례를 잃는다'],
   ],
   tally: (world) => {
@@ -468,7 +514,7 @@ export default {
     if (b.over || !myTurn(world) || b.phase !== 'pick') return;
     const dir = key === 'left' ? -1 : key === 'right' ? 1 : 0;
     if (!dir) return;
-    const row = movable(b.men, b.turn);
+    const row = movableWith(b.men, b.turn, b.roll?.steps ?? 1);
     if (!row.length) return;
     const at = Math.max(0, row.indexOf(b.pick));
     b.pick = row[(at + dir + row.length) % row.length];
@@ -618,7 +664,7 @@ export default {
     if (msg.k === 'aim') {
       if (b.phase === 'charge') b.gauge = Math.max(0, Math.min(1, (+msg.g || 0) / 1000));
       if (b.phase === 'pick') {
-        const row = movable(b.men, b.turn);
+        const row = movableWith(b.men, b.turn, b.roll?.steps ?? 1);
         const want = msg.p | 0;
         if (row.includes(want)) b.pick = want;
       }
@@ -876,7 +922,7 @@ function drawSticks(ctx, L, b, time) {
   if (!showRoll) {
     // 아직 손에 있다 — 던지는 사람 손 앞에 네 짝을 모아 둔다
     for (let i = 0; i < 4; i++) {
-      drawStick(ctx, from, L.matY + (i - 1.5) * r * 0.9, r, Math.PI / 2 + i * 0.05, true, 0.85);
+      drawStick(ctx, from, L.matY + (i - 1.5) * r * 0.9, r, Math.PI / 2 + i * 0.05, true, 0.85, i === MARKED);
     }
     if (b.phase === 'charge' && b.held >= 0) drawGauge(ctx, L, b);
     return;
@@ -889,11 +935,13 @@ function drawSticks(ctx, L, b, time) {
     const arc = Math.sin(t * Math.PI) * L.matW * 0.42;
     const py = L.matY + s.lane * L.matW - arc;
     const spin = t < 1 ? s.turns * t * Math.PI * 2 : s.turns * Math.PI * 2;
-    drawStick(ctx, px, py, r, spin, t >= 1 ? s.flat : (Math.floor(s.turns * t * 2) % 2 === 0), 1);
+    drawStick(ctx, px, py, r, spin, t >= 1 ? s.flat : (Math.floor(s.turns * t * 2) % 2 === 0), 1, i === MARKED);
   });
 }
 
-function drawStick(ctx, px, py, r, angle, flat, alpha) {
+/// marked — **표가 있는 짝.** 이 짝 하나만 젖혀지면 빽도다. 표가 안 보이면 빽도가
+/// 어디서 나왔는지 알 수 없어서 「가끔 뒤로 간다」가 된다.
+function drawStick(ctx, px, py, r, angle, flat, alpha, marked = false) {
   const ca = Math.cos(angle), sa = Math.sin(angle);
   const len = r * 2.1, wide = r * 0.42;
   const pt = (dx, dy) => [px + dx * ca - dy * sa, py + dx * sa + dy * ca];
@@ -904,6 +952,14 @@ function drawStick(ctx, px, py, r, angle, flat, alpha) {
   if (flat) {
     stroke(ctx, [pt(-len * 0.5, 0), pt(len * 0.5, 0)],
            { width: 1.4, color: '#6b4a24', seed: Math.round(px), amp: 0.3, halo: false, alpha: alpha * 0.8 });
+  }
+  // 표 — 배에만 그린다(엎어지면 안 보인다). 금과 겹치지 않게 한쪽 끝에 점 둘.
+  if (marked && flat) {
+    for (const d of [-0.62, -0.38]) {
+      const [cx, cy] = pt(len * d, 0);
+      circle(ctx, cx, cy, wide * 0.42, { width: 1.2, color: '#6b4a24', fill: '#6b4a24',
+                                         seed: Math.round(cx + cy), amp: 0.2, alpha, halo: false });
+    }
   }
 }
 
@@ -958,6 +1014,7 @@ const KEY_ROWS = [
   ['⌥ Space', '잡으면 힘이 찬다 · 떼면 던진다'],
   ['⌥ ← →', '옮길 말 고르기'],
   ['윷 · 모 · 잡기', '한 번 더'],
+  ['빽도', '표 있는 짝만 젖혀지면 한 칸 뒤로'],
   ['낙', '못 닿거나 넘어가면 한 번 쉰다'],
 ];
 function drawKeys(ctx) {

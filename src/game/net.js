@@ -20,8 +20,25 @@ const SEND_HZ = 60;
 /// 죽으면 **연결은 열려 있는 채로 아무것도 안 온다.** 그러면 손님은 허공에 대고 60Hz 로
 /// 계속 보내면서 화면은 멈춰 있게 된다 — 실제로 그랬다. 그래서 「얼마나 안 들렸나」를 센다.
 const LOST_AFTER = 4;
-/// 예측을 이만큼 넘어가서까지 밀지는 않는다. 꾸러미가 끊기면 그 자리에 세운다.
-const MAX_LEAD = 0.18;
+/// 남의 걸음을 **얼마나 미끄러뜨려 이어 그리나**.
+///
+/// 예전에는 「0.18초까지 옛 속도로 밀고 그 다음엔 딱 멈춤」이었다. 재 보니 두 가지가 나빴다 —
+/// 끊기면 사람이 **뚝 멎고**(0.4초 끊길 때 387프레임), 멎기 전까지는 옛 속도로 **54px 까지
+/// 밀고 나갔다**(그 자리에 정말 있는 것처럼 굴어서, 넷이서의 「같이 미는 사슬」 판정까지 흔든다).
+///
+/// 이제 **미끄러지듯 멎는다** — 밀어 주는 시간이 지수로 잦아들어 총 이동이 vx × LEAD_TAU 에서
+/// 멈춘다. 걷는 사람(300px/s) 기준 36px 까지만 가고, 멈출 때도 딱 서지 않고 스르르 선다.
+///
+///   | 0.4초 딸꾹 | 멎은 프레임 | 어긋남 p95 | 밀고 나가는 거리 |
+///   |-----------|-----------|-----------|----------------|
+///   | 예전 0.18  | 387       | 72px      | 54px           |
+///   | 지금       | **254**   | 84px      | **36px**       |
+///
+/// **남는 멎음은 어쩔 수 없다.** 끊기기 직전 꾸러미에 vx 가 0이었으면(그 순간 서 있었으면)
+/// 손님은 그 사람이 걷기 시작한 걸 알 방법이 없다 — 예측이 아니라 **없는 소식**의 문제다.
+const LEAD_TAU = 0.12;
+/// 점프는 포물선이라 끝까지 이어 그려도 맞는다 (공과 같다). 땅에 닿으면 어차피 멎는다.
+const MAX_AIR_LEAD = 0.35;
 /// 지연을 메우려고 미리 내다보는 한도. 망이 요동쳐도 여기서 끊어 헛것이 안 보이게 한다.
 const MAX_AHEAD = 0.08;
 /// 틀린 만큼을 되돌리는 데 걸리는 시간. 짧으면 튀고, 길면 늦게 보인다.
@@ -126,21 +143,24 @@ export function interpolate(world, dt) {
     // 「오른쪽 사람을 붙잡은 채 왼쪽으로 끌고 가는」 그림이 된다.
     const partner = pick(world, me, other.grabbing >= 0 ? other.grabbing : other.heldBy);
     other.grabAim = partner ? (Math.sign(partner.x - other.x) || other.grabAim) : 0;
-    other.age = Math.min(other.age + dt, MAX_LEAD);
+    other.age += dt;
+    // 밀어 주는 시간 — 지수로 잦아든다. 0.12초쯤 미끄러지고 스르르 선다.
+    const lead = LEAD_TAU * (1 - Math.exp(-other.age / LEAD_TAU));
     other.errorX *= Math.exp(-dt / FIX_TAU);
 
     const before = other.x;
     // 예측은 벽을 모른다. 판 밖으로 그리면 남이 화면 밖으로 사라진 것처럼 보인다.
-    const raw = other.baseX + other.vx * other.age + other.errorX;
+    const raw = other.baseX + other.vx * lead + other.errorX;
     other.x = Math.max(12, Math.min(world.w - 12, raw));
 
     // 점프는 포물선이라 속도만으로는 안 맞는다. 중력까지 넣어 이어 그린다.
     // 단, **세로 속도가 0이면 서 있는 것**이다 — 선반·상자·남의 머리 위에 선 사람(넷이서)을
     // 꾸러미 사이마다 중력으로 내려앉히면 발판 위에서 덜덜 떨린다.
     const g = other.vy === 0 ? 0 : GRAVITY;
-    const flight = other.baseAir + other.vy * other.age - 0.5 * g * other.age * other.age;
+    const air = Math.min(other.age, MAX_AIR_LEAD);
+    const flight = other.baseAir + other.vy * air - 0.5 * g * air * air;
     other.air = Math.max(0, flight);
-    other.vyDraw = other.air > 0 ? other.vy - g * other.age : 0;
+    other.vyDraw = other.air > 0 ? other.vy - g * Math.min(other.age, MAX_AIR_LEAD) : 0;
 
     other.crouch += (other.tcrouch - other.crouch) * Math.min(1, dt * 18);
     // 다리를 굴리려면 속도가 있어야 한다. 실제로 움직인 만큼을 쓴다.
@@ -154,8 +174,13 @@ export function interpolate(world, dt) {
 
 /// 자리만 보내면 받는 쪽이 이어 그릴 수가 없다. **속도까지 같이 보낸다.**
 ///
-/// 칸: x, vx, air, vy, crouch, facing, 상태, 잡은사람, 뿌리친횟수, 피한수
+/// 칸: x, vx, air, vy, crouch, facing, 상태, 잡은사람, 뿌리친횟수, 피한수, 판번호, 슬라이딩
 /// 상태는 0 살아있음 · 1 죽음 · 2 다음판대기.
+///
+/// **슬라이딩은 끝 칸에 덧붙인다** (남은 시간 × 방향, 안 미끄러지면 0). 이 칸이 없어서 방장은
+/// 손님을 늘 서 있는 몸으로 봤다 — 배구에서 손님이 몸을 던져도 넓어진 몸으로 공을 못 받았고,
+/// 남의 미끄러지는 자세는 누구 화면에도 안 그려졌다. 옛 버전은 이 칸을 안 읽고 지나간다.
+const slideOf = (p) => (p.slide > 0 ? Math.round(p.slide * 100) / 100 * (p.slideDir < 0 ? -1 : 1) : 0);
 export function myPacket(world) {
   const p = world.player;
   const r1 = (v) => Math.round(v * 10) / 10;
@@ -163,7 +188,8 @@ export function myPacket(world) {
   return ['p', r1(p.x), r1(p.vx), r1(p.air), r1(p.vy),
           Math.round(p.crouch * 100) / 100, p.facing, state,
           p.grabbing, p.escapes, world.dodged,
-          gameOf(world).rewindable ? [world.gameId, world.mp.stageEpoch] : null];
+          gameOf(world).rewindable ? [world.gameId, world.mp.stageEpoch] : null,
+          slideOf(p)];
 }
 
 export function pump(world, dt, shell) {
@@ -211,7 +237,8 @@ export function pump(world, dt, shell) {
   }
 
   // 방장: 모두의 자리 + 이번에 새로 뿌린 똥.
-  const players = [[mp.myId, ...myPacket(world).slice(1, 11)]];
+  // 열한째 칸은 들은 지 얼마나 됐나(내 것은 0), 열두째 칸은 슬라이딩.
+  const players = [[mp.myId, ...myPacket(world).slice(1, 11), 0, slideOf(world.player)]];
   for (const other of mp.others.values()) {
     // 손님에게서 **받은 그대로** 넘긴다. 여기서 보간한 값을 실으면 방장을 거칠 때마다
     // 한 번 더 늦어져서, 손님끼리는 서로 두 배로 늦게 보인다.
@@ -224,7 +251,7 @@ export function pump(world, dt, shell) {
     players.push([other.id, other.baseX, other.vx, other.baseAir, other.vy,
                   other.tcrouch, other.facing, other.state,
                   other.grabbing, other.escapes, other.dodged,
-                  Math.round(other.age * 1000) / 1000]);
+                  Math.round(other.age * 1000) / 1000, slideOf(other)]);
   }
   const snapshot = {
     sq: mp.snapshotSeq = (mp.snapshotSeq ?? 0) + 1,
@@ -402,7 +429,7 @@ export function handleMessage(world, shell, from, message, api) {
         if (row[0] === mp.myId) continue; // 내 몸은 내가 안다
         const other = mp.others.get(row[0]) ?? blankOther(row[0], mp.names.get(row[0]) ?? '');
         // 여기까지 오는 데 걸린 시간 = 방장이 들고 있던 시간 + 방장에서 나까지의 편도.
-        applyPacket(other, ['p', ...row.slice(1, 11)], (row[11] ?? 0) + mp.rtt / 2);
+        applyPacket(other, ['p', ...row.slice(1, 11), null, row[12]], (row[11] ?? 0) + mp.rtt / 2);
         mp.others.set(row[0], other);
       }
       // **스냅샷에 없는 사람은 나간 사람이다.** 방장은 나간 사람을 자기 장부에서 지우지만
@@ -499,6 +526,10 @@ function applyPacket(other, packet, stale = 0) {
   other.grabbing = packet[8] ?? -1;
   other.escapes = packet[9] ?? 0;
   other.dodged = packet[10] ?? 0;
+  // 슬라이딩 — 남은 시간 × 방향. 옛 꾸러미(칸 없음)는 안 미끄러지는 것으로 본다.
+  const slide = Number.isFinite(packet[12]) ? packet[12] : 0;
+  other.slide = Math.abs(slide);
+  if (slide) other.slideDir = slide < 0 ? -1 : 1;
   // 0 부터 세지 않는다. 이미 늦게 도착한 소식이므로 그만큼 앞선 자리에서 시작한다.
   other.age = Math.min(stale, MAX_AHEAD);
   // 오차는 「그리던 자리」와 **새로 계산한 지금 자리**의 차이다. baseX 와 재면

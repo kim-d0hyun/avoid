@@ -8,6 +8,7 @@ const w = await import(R + 'game/world.js');
 const { games } = await import(R + 'games/index.js');
 const volley = games.find((g) => g.id === 'volley');
 const { spike, tipHit, slideGauge, matchOver, deuce, myServe, hitServe, KEY_ROWS, SERVE_ROWS } = await import(R + 'games/volley.js');
+const net = await import(R + 'game/net.js');
 const { BODY_H, SWING_TIME, SWING_WHIP, TOSS_TIME, swingPhase, handPoint, drawStickman }
   = await import(R + 'draw/stickman.js');
 
@@ -347,7 +348,9 @@ say('스파이크 — 공보다 높이 떠서 때려야 꽂힌다 · 네트는 �
   // 같은 공을 **가운데에서** 때리면 갈 길이 멀어 꽂을 수 없다. 예전엔 여기서도 같은 각으로
   // 꽂아서 제 코트 바닥에 박혔다 — 「중간자리에서 스파이크가 안 된다」가 이거였다.
   const mid = hit({ x: 500, under: BODY_H * 0.25 });
-  check('가운데에서는 꽂지 않고 넘긴다', mid.vy <= 0, true);
+  // 부호로는 못 본다 — 세게 나간 공은 살짝 아래로 가도 넘는다. 넘는지는 아래 「어느 자리에서
+  // 때려도 네트를 넘어간다」가 진짜로 날려서 본다. 여기서는 각이 눕혀졌는지만 본다.
+  check('가운데에서는 꽂지 않고 넘긴다', mid.vy < deep.vy / 4, true);
   note(`네트 앞 vy=${deep.vy.toFixed(0)} · 가운데 vy=${mid.vy.toFixed(0)}`);
 
   const weak = hit({ air: 20, under: BODY_H * 0.5 });
@@ -365,13 +368,24 @@ say('스파이크 — 공보다 높이 떠서 때려야 꽂힌다 · 네트는 �
   const plain = hit({ under: 6 });
   check('⌥Space + ↓ 면 더 가파르게 꽂힌다', drive.vy > plain.vy + 100, true);
   note(`그냥 vy=${plain.vy.toFixed(0)} · ⌥↓ vy=${drive.vy.toFixed(0)}`);
-  ok('그래도 네트는 넘긴다 (netCap 이 다시 깎는다)', drive.vy < 1200);
+  // **⌥↓ 가 그냥 친 공보다 약했다** (v3.24.0). 꽂는다고 가로를 덜어 둔 뒤 netCap 이 세로만
+  // 도로 깎아서, 실제 점프 높이(58)로 네트 앞에서 치면 그냥 친 공이 1148 · ⌥↓ 가 792 였다.
+  const real = (keys) => { const r = hit({ air: 58, under: 6, keys }); return Math.hypot(r.vx, r.vy); };
+  const hard = real({ duck: true });
+  const soft = real({});
+  ok('네트 앞 ⌥↓ 는 그냥 친 공보다 확실히 세다', hard > soft * 1.25);
+  note(`네트 앞 세기 — 그냥 ${soft.toFixed(0)} · ⌥↓ ${hard.toFixed(0)}`);
   // 공이 손 위면 ⌥↓ 를 눌러도 안 꽂힌다 — 밑에서 올려치는 공을 아래로 보낼 수는 없다.
   const above2 = hit({ under: -20, keys: { duck: true } });
   check('손 위의 공은 ⌥↓ 로도 안 꽂힌다', above2.vy, 0);
   // 가운데에서는 ⌥↓ 를 눌러도 네트를 넘겨야 하니 꽂히지 않는다
   const midDrive = hit({ x: 500, under: 6, keys: { duck: true } });
-  ok('가운데에서 ⌥↓ 는 꽂는 대신 넘긴다', midDrive.vy <= 0);
+  const midPlain = hit({ x: 500, under: 6 });
+  ok('가운데에서 ⌥↓ 는 꽂는 대신 넘긴다', midDrive.vy < drive.vy / 4);
+  // 가운데에서는 각이 다 눕혀진다 — 그러면 세기도 그냥 친 공과 같아야 한다 (벌도 덤도 아니다).
+  const sp = (r) => Math.hypot(r.vx, r.vy);
+  ok('가운데 ⌥↓ 는 그냥 친 공만큼은 나간다', sp(midDrive) >= sp(midPlain) * 0.97);
+  ok('가운데 ⌥↓ 가 덤이 되지도 않는다', sp(midDrive) <= sp(midPlain) * 1.15);
   note(`가운데 ⌥↓ vy=${midDrive.vy.toFixed(0)}`);
 
   const lob = hit({ under: BODY_H * 0.5, keys: { jump: true } });
@@ -844,6 +858,8 @@ say('빗나간 까닭 — 왜 못 쳤는지 알려 준다');
   check('「늦다」가 뜬다', a.b.fx.some((f) => f.k === 'miss' && f.word === '늦다'), true);
   check('버리지 않고 기억해 둔다', !!a.b.hold, true);
   // 공을 손끝에 다시 두고 히트스톱을 흘려보낸다 — 기억해 둔 입력이 그 프레임에 풀린다.
+  // (첫 타격은 **남이 친 것**으로 둔다. 같은 사람이 곧바로 두 번은 못 친다 — SELF_SKIP.)
+  a.b.ball.skip = null; a.b.ball.skipT = 0;
   a.b.ball.x = a.p.x + 6; a.b.ball.y = a.hand + 20; a.b.ball.vy = 200;
   for (let i = 0; i < 8; i++) volley.update(a.world, 1 / 60);
   check('풀리는 프레임에 대신 쳐 준다', a.b.ball.vy > 900 && a.b.ball.vy !== vy0, true);
@@ -949,10 +965,14 @@ say('페인트 — 공중에서 ⌥↑ 로 살짝 얹어 블록 너머로');
   // **위쪽 키로도 페인트가 된다.** ⌥↓ 하나만 받게 뒀더니 「페인트가 잘 안 된다」는 말이
   // 나왔다 — 공중에서 위아래 키는 달리 쓸 데가 없으니 둘 다 얹기로 받는다.
   // 키를 누르는 길(world.press → game.tap)을 그대로 지나가게 본다.
-  const up = rig({ air: 60, off: [6, 10] });
+  // **⌥↑ 는 네 프레임 기다렸다 얹는다** — 그 사이 ⌥Space 가 오면 넘겨 주기(⌥Space + ↑)다.
+  const up = rig({ air: 60, off: [6, 10], vy: 0 });
+  const upVy = up.b.ball.vy;
   tap(up.world, 'jump');
-  check('점프 뒤 ⌥↑ 로도 페인트', Math.round(up.b.ball.vx), Math.round(r.b.ball.vx));
-  check('같이 조금 떠오른다', Math.round(up.b.ball.vy), Math.round(r.b.ball.vy));
+  check('누른 그 프레임에는 아직 안 얹는다', up.b.ball.vy, upVy);
+  for (let i = 0; i < 5; i++) { up.p.air = 60; volley.update(up.world, 1 / 60); }
+  check('점프 뒤 ⌥↑ 로도 페인트', up.b.ball.vx > 0 && up.b.ball.vx < 300, true);
+  check('같이 떠오른다', Math.round(up.b.ball.vy) < -300, true);
   check('⌥↑ 페인트도 안 달아오른다', up.b.ball.hot, 0);
 
   // 땅에서 ⌥↑ 는 점프다 — 얹히지 않는다.
@@ -1006,13 +1026,27 @@ say('스파이크 — 어느 자리에서 때려도 네트를 넘어간다');
   let worst = null;
   for (const x of [140, 260, 380, 500, 620, 700, 740]) {
     for (const under of [0, 10, 20]) {
-      for (const keys of [{}, { right: true }]) {
+      for (const keys of [{}, { right: true }, { duck: true }, { duck: true, right: true }]) {
         const got = shot(x, 65, under, keys);
-        if (typeof got !== 'number') worst = `x ${x} · 손밑 ${under} · ${keys.right ? '⌥→' : '그냥'} → ${got}`;
+        if (typeof got !== 'number') worst = `x ${x} · 손밑 ${under} · ${JSON.stringify(keys)} → ${got}`;
       }
     }
   }
-  check('일곱 자리 × 세 높이 × 두 방향 — 다 넘어간다', worst, null);
+  check('일곱 자리 × 세 높이 × 네 가지 키(⌥↓ 포함) — 다 넘어간다', worst, null);
+  // **꼭대기가 아닌 높이에서도.** 위 시험은 air 65(실제로는 못 닿는 높이)로만 쟀다 — 각을 돌리며
+  // 세기를 두는 netCap 이 뒤쪽에서 덜 뜬 채 친 평평한 공을 네트 앞에 떨어뜨리는 걸 못 봤다.
+  worst = null;
+  for (const x of [100, 200, 300, 400, 500, 650]) {
+    for (const air of [15, 25, 40, 52, 61]) {
+      for (const under of [-10, 0, 10]) {
+        for (const keys of [{}, { right: true }, { duck: true }]) {
+          const got = shot(x, air, under, keys);
+          if (typeof got !== 'number' && got !== '못침') worst = `x ${x} · 뜬 높이 ${air} · 손밑 ${under} · ${JSON.stringify(keys)} → ${got}`;
+        }
+      }
+    }
+  }
+  check('여섯 자리 × 다섯 뜬 높이 × 세 높이 × 세 키 — 다 넘어간다', worst, null);
   note(`가운데(500)에서 손밑 20 을 때리면 vy=${(() => {
     const r = rig({ x: 500, air: 65, off: [6, 20] }); spike(r.world); return r.b.ball.vy.toFixed(0);
   })()} — 예전에는 +790 으로 제 코트에 꽂혔다`);
@@ -1145,7 +1179,9 @@ say('서브 — 꽉 채우면 빠르게 꽂히고, 살살 넣으면 높이 뜬�
     const world = mk(); world.state = 'play'; world.team = 0;
     const b = world.bag; b.started = true; b.wait = 0; b.idle = 0;
     world.player.x = 200; b.serveBy = 0; b.serving = true; b.charge = -1;
-    for (let f = 0; f < 10; f++) volley.update(world, 1 / 60);   // 공이 손 위로 따라온다
+    // 공이 손 위로 **다 내려올 때까지** 둔다. 10프레임만 두었더니 공이 아직 바닥 위 269px 에
+    // 떠 있었다 — 실제 서브는 손 높이(110)에서 나가는데, 표도 시험도 그 높이에서 쟀다.
+    for (let f = 0; f < 40; f++) volley.update(world, 1 / 60);
     hitServe(world, k, dir);
     const spin = !!b.ball.topspin;
     let top = b.ball.y;
@@ -1390,6 +1426,267 @@ say('서브 — 올리는 사람 위로 공이 따라온다 (자리가 곧 조�
   const far = o.bag.ball.x;
   for (let i = 0; i < 30; i++) volley.update(o, 1 / 60);
   check('남이 올릴 때는 안 따라온다', Math.abs(o.bag.ball.x - far) < 1, true);
+}
+
+// ══════════════ v3.25 — 주석대로 안 돌던 열둘 ══════════════
+//
+// 주석·커밋·기술표가 약속한 것을 **실제 점프 높이(61.5)·실제 손 높이·양쪽 코트**로 재서
+// 어긋난 것을 고쳤다. 전부 시험이 대신 재던 값(가짜 높이, 부호)이 약속과 달라서 숨어 있었다.
+
+say('서브 — 실제 손 높이에서, 서브 구역 어디서 어떤 세기·방향으로 넣어도 네트를 넘는다');
+{
+  // 예전 시험은 공이 손에 내려오기 전(바닥 위 269)에 쏘았다. 실제는 110 이라 뒤쪽(x≤140)의
+  // 강서브·⌥← 서브가 네트에 걸렸다 — 서브 구역의 6할.
+  const cross = (side, x, k, dir) => {
+    const world = mk(); world.state = 'play'; world.team = side;
+    const b = world.bag; b.started = true; b.wait = 0; b.idle = 0;
+    world.player.x = side === 0 ? x : 1512 - x;
+    b.serveBy = side; b.serving = true; b.charge = -1;
+    for (let f = 0; f < 40; f++) volley.update(world, 1 / 60);
+    if (!hitServe(world, k, dir)) return '못넣음';
+    world.player.x = side === 0 ? 30 : 1482;
+    for (let f = 0; f < 60 * 4; f++) {
+      const was = b.ball.x;
+      volley.update(world, 1 / 60);
+      if ((was - 756) * (b.ball.x - 756) < 0) return true;
+      if (b.serving) return '안넘음';
+    }
+    return '안옴';
+  };
+  let bad = null, n = 0;
+  for (const side of [0, 1]) for (const x of [28, 60, 100, 140, 200, 260, 320, 378])
+    for (const k of [0, 0.3, 0.6, 0.86, 1]) for (const dir of [-1, 0, 1]) {
+      n++;
+      const got = cross(side, x, k, dir);
+      if (got !== true) bad = `편 ${side} · x ${x} · 세기 ${k} · 방향 ${dir} → ${got}`;
+    }
+  check(`${n}가지 다 넘어간다`, bad, null);
+}
+
+say('서브 — 쉬는 동안(점수 직후)은 못 넣는다');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.idle = 0;
+  world.player.x = 300; b.serveBy = 0; b.serving = true; b.charge = -1; b.wait = 0.9;
+  volley.action(world);
+  check('잡기 시작하지도 않는다', b.charge, -1);
+  check('hitServe 도 거절한다', hitServe(world, 0.5, 0), false);
+  check('공은 아직 손에', b.serving, true);
+  b.wait = 0;
+  volley.action(world);
+  check('쉬는 게 끝나면 잡는다', b.charge, 0);
+}
+
+/// 방장 하나와 손님(2번, 파랑) 하나. 손님은 방장 장부의 others 로만 있다.
+function hostWithGuest(gx = 1300, air = 0) {
+  const world = mk(); world.state = 'play'; world.team = 0;
+  world.mp.on = true; world.mp.role = 'host'; world.mp.myId = 1;
+  world.player.x = 300;
+  const g = { id: 2, name: '손님', x: gx, baseX: gx, air, groundY: world.groundY, vx: 0, vy: 0,
+              crouch: 0, facing: -1, dead: false, waiting: false, grabbing: -1, heldBy: -1, slide: 0 };
+  world.mp.others.set(2, g);
+  const b = world.bag; b.started = true; b.wait = 0; b.idle = 0; b.serving = false;
+  return { world, b, g };
+}
+
+say('서브 — 손님도 너무 오래 잡으면 손에서 빠진다');
+{
+  // 실패 검사가 방장의 b.charge 에만 걸려 있어서, 손님은 3초를 잡아도 세기 100 서브가 나갔다.
+  const { world, b } = hostWithGuest(1300);
+  b.serveBy = 1; b.serving = true; b.charge = -1; b.ball.x = 1300; b.score = [0, 0];
+  volley.message(world, 2, { t: 'gm', k: 'hold' });
+  check('방장이 손님 것을 센다', b.charge, 0);
+  for (let i = 0; i < 70 && b.charge >= 0; i++) volley.update(world, 1 / 60);
+  check('1.06초를 넘기자 실패 — 상대(빨강) 점수', b.score, [1, 0]);
+
+  // 손님 제 화면에서도 넘기면 떼어도 안 나간다.
+  const gw = mk(); gw.state = 'play'; gw.team = 1;
+  gw.mp.on = true; gw.mp.role = 'guest'; gw.mp.myId = 2;
+  gw.player.x = 1300;
+  const gb = gw.bag; gb.started = true; gb.wait = 0; gb.serving = true; gb.serveBy = 1; gb.ball.x = 1300;
+  const sent = []; gw.send = (m) => sent.push(m);
+  volley.action(gw);
+  check('누르면 방장에게 「잡았다」를 알린다', sent.some((m) => m.k === 'hold'), true);
+  for (let i = 0; i < 70; i++) volley.update(gw, 1 / 60);
+  volley.release(gw);
+  check('너무 오래 잡은 뒤 떼도 서브를 안 보낸다', sent.some((m) => m.k === 'serve'), false);
+}
+
+say('손님 타격 — 서브를 기다리는 동안은 안 먹힌다 · 서브는 남은 달아오름을 지운다');
+{
+  const { world, b } = hostWithGuest(1100, 60);
+  b.serving = true; b.serveBy = 0;
+  b.ball.x = 1094; b.ball.y = world.groundY - 60 - BODY_H * 0.86; b.ball.vx = 0; b.ball.vy = 0;
+  volley.message(world, 2, { t: 'gm', k: 'hit', at: { x: 1100, air: 60, side: 1 },
+                             want: { held: 0, down: false, up: false, tip: false } });
+  check('공은 그대로', [b.ball.vx, b.ball.vy, b.stop], [0, 0, 0]);
+  check('달아오르지도 않았다', b.ball.hot, 0);
+  // 무엇이 남아 있었든 서브는 식은 공으로 시작한다.
+  b.ball.hot = 0.7; b.ball.topspin = true; b.wait = 0;
+  hitServe(world, 0.1, 0);
+  check('살살 넣은 서브는 탑스핀이 없다', b.ball.topspin, false);
+}
+
+say('손님 타격 — 히트스톱에 걸려도 버리지 않고 풀리면 친다');
+{
+  const { world, b, g } = hostWithGuest(1100, 60);
+  b.ball.x = 1094; b.ball.y = world.groundY - 60 - BODY_H * 0.86 + 6; b.ball.vx = 0; b.ball.vy = 0;
+  b.stop = 0.05;
+  volley.message(world, 2, { t: 'gm', k: 'hit', at: { x: 1100, air: 60, side: 1 },
+                             want: { held: 0, down: false, up: false, tip: false } });
+  check('멈춘 동안은 안 친다', b.ball.vx, 0);
+  check('들고 있다', b.guestHold.has(2), true);
+  for (let i = 0; i < 6; i++) { g.air = 60; volley.update(world, 1 / 60); }
+  ok('풀리자 쳤다 (빨강 쪽으로)', b.ball.vx < -300);
+  check('다 썼다', b.guestHold.size, 0);
+
+  // 손님 화면도 방장의 멈춤을 안다 — 그 사이 누른 것은 「늦다」로 기억했다가 풀리면 보낸다.
+  const gw = mk(); gw.state = 'play'; gw.team = 1;
+  gw.mp.on = true; gw.mp.role = 'guest'; gw.mp.myId = 2;
+  gw.player.x = 1100; gw.player.air = 60;
+  const sent = []; gw.send = (m) => sent.push(m);
+  volley.unpack(gw, { f: [900, 700, 1, 1, 1, 1, 0.067], b: [1094, 800, 0, 0, 0, 0, 0], w: 0 });
+  ok('손님도 히트스톱을 센다', gw.bag.stop > 0.06);
+  check('그 사이 누르면 못 친다', spike(gw), false);
+  check('기억해 둔다', !!gw.bag.hold, true);
+  check('보내지도 않았다 (방장은 멈춘 채라 못 친다)', sent.length, 0);
+}
+
+say('슬라이딩 — 손님이 몸을 던져도 방장 판정에서 넓은 몸이다');
+{
+  // 꾸러미에 slide 칸이 없어서 방장은 손님을 늘 서 있는 몸(폭 11)으로 봤다.
+  const gw = mk(); gw.state = 'play'; gw.team = 1; gw.player.x = 1100;
+  w.startSlide(gw, 1);
+  const packet = net.myPacket(gw);
+  ok('꾸러미에 슬라이딩이 실린다 (남은 시간 × 방향)', packet[12] > 0);
+  const { world, b } = hostWithGuest(1100, 0);
+  net.handleMessage(world, { net: { send() {} }, log() {} }, 2, packet, {});
+  const g = world.mp.others.get(2);
+  ok('방장 쪽 손님 몸도 미끄러진다', g.slide > 0);
+  g.x = 1100; g.air = 0; g.groundY = world.groundY;
+  const drop = (slide) => {
+    g.slide = slide;
+    b.serving = false; b.wait = 0; b.stop = 0;
+    b.ball.x = 1100 + 55; b.ball.y = world.groundY - 40; b.ball.vx = 0; b.ball.vy = 300;
+    volley.update(world, 1 / 60);
+    return b.ball.vy < 0;
+  };
+  check('미끄러지는 몸은 옆 55px 공을 받는다', drop(0.3), true);
+  check('서 있는 몸은 못 받는다 (넓은 몸이 슬라이딩의 값이다)', drop(0), false);
+}
+
+say('슬라이딩 — 달리기보다 멀리 가고, 끝나면 잠깐 못 움직인다');
+{
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
+  const p = world.player; p.x = 200; p.air = 0;
+  const step = () => { b.serving = false; b.wait = 0; w.update(world, 1 / 60); };
+  w.startSlide(world, 1);
+  const x0 = p.x;
+  let t = 0;
+  while (p.slide > 0 && t < 1) { step(); t += 1 / 60; }
+  const slid = p.x - x0;
+  // 전속으로 달리던 사람이 같은 시간 동안 가는 거리
+  const r = mk(); r.state = 'play'; r.team = 0;
+  r.player.x = 200; r.player.vx = 620; r.input.right = true;
+  for (let i = 0; i < Math.round(t * 60); i++) { r.bag.serving = false; r.bag.wait = 0; w.update(r, 1 / 60); }
+  const ran = r.player.x - 200;
+  ok('끝까지 가도 전속 달리기보다 멀리 간다', slid > ran);
+  note(`${t.toFixed(2)}초 — 슬라이딩 ${slid.toFixed(0)}px · 달리기 ${ran.toFixed(0)}px`);
+  world.input.right = true;
+  const x1 = p.x;
+  for (let i = 0; i < 9; i++) step();
+  ok('끝나고 0.15초는 거의 못 움직인다', Math.abs(p.x - x1) < 12);
+  for (let i = 0; i < 30; i++) step();
+  ok('그 뒤에는 다시 달린다', p.x - x1 > 80);
+}
+
+say('블로킹 — 손은 닿는데 공이 네트 너머면 벽을 세운다');
+{
+  // 손이 닿으면 치기로만 보냈다가, 치기가 「네트 너머」로 거절해서 벽도 까닭도 없었다.
+  const r = rig({ x: 730, air: 50 });
+  r.b.ball.x = 756 + 40; r.b.ball.y = r.hand + 10;
+  check('눌렀다', spike(r.world), true);
+  ok('벽이 섰다', r.p.block > 0);
+  // 벽 쿨타임이면 막지는 못하되 까닭은 뜬다
+  const c = rig({ x: 730, air: 50 });
+  c.p.blockCool = 0.3;
+  c.b.ball.x = 756 + 40; c.b.ball.y = c.hand + 10;
+  check('쿨타임이면 못 막는다', spike(c.world), false);
+  ok('까닭이 뜬다', c.b.fx.some((f) => f.k === 'miss'));
+}
+
+say('페인트 — 떠오른 블로커 손 위로 넘어간다');
+{
+  // 예전 페인트는 손 높이에서 25px 만 떠올라, 떠오른 블로커(벽 윗면 171)에 다 막혔다.
+  const tip = (d, blockerAir) => {
+    const r = rig({ x: 730 - d, air: 61.5, off: [10, 10], vy: 150 });
+    if (blockerAir !== null) {
+      r.world.mp.others.set(9, { id: 9, x: 782, air: blockerAir, groundY: r.world.groundY, vx: 0, vy: 0,
+                                 crouch: 0, dead: false, waiting: false, block: 0.3, blockCool: 0.7, facing: -1 });
+    }
+    if (!tipHit(r.world)) return '못얹음';
+    const s0 = r.b.score[0];
+    for (let i = 0; i < 400; i++) {
+      const o = r.world.mp.others.get(9); if (o) { o.block = 0.3; o.air = blockerAir; }
+      r.p.x = 200; r.p.air = 0;
+      volley.update(r.world, 1 / 120);
+      if (r.b.fx.some((f) => f.word === '막았다!')) return '막힘';
+      if (r.b.serving) return r.b.score[0] > s0 ? '넘김' : '제코트';
+    }
+    return '?';
+  };
+  for (const air of [40, 61.5]) check(`네트에서 80 — 블로커가 ${air} 떠 있어도 넘긴다`, tip(80, air), '넘김');
+  check('네트에서 80 — 블로커가 없어도 넘긴다', tip(80, null), '넘김');
+  check('가운데(250)에서는 제 코트에 떨어진다', tip(250, null), '제코트');
+}
+
+say('⌥↑ 와 ⌥Space + ↑ — 두 기술이 한 공을 두 번 치지 않는다');
+{
+  // ↑ 를 먼저 누르고 ⌥Space 를 누르면: 예전엔 페인트가 나간 뒤 같은 프레임에 또 쳤다.
+  const r = rig({ air: 60, off: [6, 10], vy: 0, keys: { jump: true } });
+  tap(r.world, 'jump'); r.world.input.jump = true;
+  volley.action(r.world);
+  ok('넘겨 주기가 나갔다 (팔을 휘두른다)', r.p.swing > 0 && !(r.p.toss > 0));
+  for (let i = 0; i < 6; i++) { r.p.air = 60; volley.update(r.world, 1 / 60); }
+  ok('기다리던 페인트는 버려졌다 (얹는 팔이 안 나온다)', !(r.p.toss > 0));
+  // 같은 사람이 곧바로 두 번은 못 친다
+  const d = rig({ air: 60, off: [6, 10] });
+  check('얹었다', tipHit(d.world), true);
+  check('곧바로 또 치면 안 먹힌다', spike(d.world), false);
+}
+
+say('넘겨 주기 — 천천히 떨어지던 공도 높이 뜬다');
+{
+  // 들어온 세로 속도에만 걸어 두어서, 느린 공은 13px 뜨고 강타 세기로 평평하게 날아갔다.
+  const lob = rig({ x: 500, air: 60, off: [6, -10], vy: 100, keys: { jump: true } });
+  spike(lob.world);
+  const plain = rig({ x: 500, air: 60, off: [6, -10], vy: 100 });
+  spike(plain.world);
+  ok('위로 LOB_UP 넘게', lob.b.ball.vy <= -700);
+  ok('가로는 그냥 친 공보다 덜 간다', Math.abs(lob.b.ball.vx) < Math.abs(plain.b.ball.vx) * 0.7);
+  note(`넘겨 주기 vx ${lob.b.ball.vx.toFixed(0)} vy ${lob.b.ball.vy.toFixed(0)} · 그냥 vx ${plain.b.ball.vx.toFixed(0)}`);
+}
+
+say('천장 — 세게 올린 공은 천장을 치고 돌아온다 (판 크기와 상관없이 바닥에서 잰다)');
+{
+  for (const h of [944, 1117]) {
+    const world = w.createWorld({ ms: 0, dodged: 0 }, 'volley');
+    world.onRecord = () => {}; world.onGameOver = () => {}; world.onMenu = () => {};
+    w.resize(world, 1512, h); world.state = 'play'; w.spread(world); world.team = 0;
+    const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
+    world.player.x = 100;
+    b.ball.x = 400; b.ball.y = world.groundY - BODY_H; b.ball.vx = 0; b.ball.vy = -950;
+    let top = b.ball.y, hit = false, prev = b.ball.vy;
+    for (let i = 0; i < 90; i++) {
+      volley.update(world, 1 / 60);
+      top = Math.min(top, b.ball.y);
+      if (prev < -100 && b.ball.vy > 0) hit = true;
+      prev = b.ball.vy;
+    }
+    check(`판 높이 ${h} — 머리 높이에서 MAX_UP 으로 뜬 공이 천장을 친다`, hit, true);
+    note(`판 높이 ${h} — 바닥 위 최고 ${(world.groundY - top).toFixed(0)}px`);
+  }
 }
 
 done('배구');
