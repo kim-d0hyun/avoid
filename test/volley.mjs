@@ -1668,25 +1668,23 @@ say('넘겨 주기 — 천천히 떨어지던 공도 높이 뜬다');
   note(`넘겨 주기 vx ${lob.b.ball.vx.toFixed(0)} vy ${lob.b.ball.vy.toFixed(0)} · 그냥 vx ${plain.b.ball.vx.toFixed(0)}`);
 }
 
-say('천장 — 세게 올린 공은 천장을 치고 돌아온다 (판 크기와 상관없이 바닥에서 잰다)');
+say('천장은 없다 — 가장 세게 올린 공도 화면 안에서 돌아온다');
 {
-  for (const h of [944, 1117]) {
-    const world = w.createWorld({ ms: 0, dodged: 0 }, 'volley');
-    world.onRecord = () => {}; world.onGameOver = () => {}; world.onMenu = () => {};
-    w.resize(world, 1512, h); world.state = 'play'; w.spread(world); world.team = 0;
-    const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
-    world.player.x = 100;
-    b.ball.x = 400; b.ball.y = world.groundY - BODY_H; b.ball.vx = 0; b.ball.vy = -950;
-    let top = b.ball.y, hit = false, prev = b.ball.vy;
-    for (let i = 0; i < 90; i++) {
-      volley.update(world, 1 / 60);
-      top = Math.min(top, b.ball.y);
-      if (prev < -100 && b.ball.vy > 0) hit = true;
-      prev = b.ball.vy;
-    }
-    check(`판 높이 ${h} — 머리 높이에서 MAX_UP 으로 뜬 공이 천장을 친다`, hit, true);
-    note(`판 높이 ${h} — 바닥 위 최고 ${(world.groundY - top).toFixed(0)}px`);
+  // 뛰어서 손끝에서 MAX_UP 으로 올려 본다 — 이 게임에서 제일 높이 뜨는 공이다.
+  const world = mk(); world.state = 'play'; world.team = 0;
+  const b = world.bag; b.started = true; b.wait = 0; b.serving = false;
+  world.player.x = 100;
+  b.ball.x = 400; b.ball.y = world.groundY - 61.5 - BODY_H; b.ball.vx = 0; b.ball.vy = -950;
+  let top = b.ball.y, flipped = false, prev = b.ball.vy;
+  for (let i = 0; i < 120; i++) {
+    volley.update(world, 1 / 60);
+    top = Math.min(top, b.ball.y);
+    if (prev < -100 && b.ball.vy > 0) flipped = true;
+    prev = b.ball.vy;
   }
+  check('어디에도 부딪혀 꺾이지 않는다', flipped, false);
+  ok('화면 위로 안 나간다', top - BALL_R > 0);
+  note(`바닥 위 최고 ${(world.groundY - top).toFixed(0)}px (판 ${world.h})`);
 }
 
 done('배구');
