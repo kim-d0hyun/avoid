@@ -89,10 +89,30 @@ const SERVE_HOLD = 0.14;          // 이만큼은 눌러야 힘이 붙기 시작
 const SERVE_FULL = 0.72;          // 여기서 꽉 찬다
 const SERVE_BURST = 1.06;         // 여기를 넘기면 실패
 const SERVE_SLOW = 700 * SLOW;    // 톡 쳐도 이만큼은 간다 — **넘기지도 못하면 고를 게 없다**
-const SERVE_FAST = 1250 * SLOW;   // 꽉 채운 서브
+/// 꽉 채운 서브.
+///
+/// 1250 은 **채우는 보람이 없었다.** 코트 맨 뒤(x200)에서 재 보면 살살 넣은 공은 1.82초에
+/// 926 에 떨어지고 꽉 채운 공은 1.35초에 1173 — 받는 쪽에는 둘 다 「높이 뜬 공이 천천히
+/// 온다」로 똑같이 보였다. 그게 「서브가 약하다」였다. 2200 이면:
+///
+///   | 힘   | 예전                  | 지금                        |
+///   |------|----------------------|----------------------------|
+///   | 0%   | 926 · 1.82초         | 그대로 (살살은 안 건드렸다)   |
+///   | 100% | 1173 · 1.35초 · 최고 378 | **1275 · 0.80초 · 최고 292** |
+///
+/// 네트를 0.43초에 넘는다(예전 0.77초). 공 자체는 1452 로 강타(1201)보다 빠르다 —
+/// 실제 배구의 점프 서브가 스파이크보다 빠른 것과 같다. 대신 갈 길이 멀어서 받는 쪽에는
+/// 네트를 넘고도 0.37초가 남는다 (디그·슬라이딩이 닿는 시간).
+const SERVE_FAST = 2200 * SLOW;
 const SERVE_AIM = 250 * SLOW;     // ⌥←→ 로 더 깊이 / 더 짧게
 const SERVE_LIFT = 1150 * SLOW;   // 살살 넘기면 높이 뜬다
-const SERVE_FLAT = 430 * SLOW;    // 꽉 채울수록 낮고 곧게 간다
+const SERVE_FLAT = 750 * SLOW;    // 꽉 채울수록 낮고 곧게 간다
+/// 여기를 넘겨 채우면 **앞으로 돌며 꽂힌다**(탑스핀).
+///
+/// 빠르게만 하면 공이 길어져 뒷벽까지 날아간다 — 세게 칠수록 코트를 벗어나면 셀 수가 없다.
+/// 실제 배구도 같은 이유로 강서브에 회전을 건다. 「강서브!」가 뜨는 세기와 **같은 값**이라,
+/// 글자가 뜨면 꽂힌 것이고 안 뜨면 길게 뜬 것이다 — 보고 배울 수 있다.
+const SERVE_SPIN = 0.85;
 const SERVE_BAR = 46;             // 머리 위 힘 막대 길이
 /// **서브는 뒤쪽 절반에서만 올린다.** 배구가 엔드라인 뒤에서 넣는 것과 같은 뜻이고,
 /// 네트 코앞에서 꽉 채워 때리면 그물을 스치거나 뒷벽을 맞고 되돌아오던 것도 여기서 사라진다.
@@ -332,12 +352,15 @@ export function hitServe(world, power, dir) {
   ball.vx = across * (SERVE_SLOW + (SERVE_FAST - SERVE_SLOW) * k) + dir * across * SERVE_AIM;
   ball.vy = -(SERVE_LIFT - SERVE_FLAT * k);
   ball.spinV = across * (2 + k * 4);
+  // 강서브는 달아오른 채 앞으로 돌며 간다 — 중력의 1.45배로 떨어져 코트 안에 꽂힌다.
+  // (달아오름은 꾸러미의 일곱째 칸으로 가고, 손님은 그걸 보고 같은 회전을 그린다.)
+  if (k > SERVE_SPIN) { ball.hot = HOT_TIME; ball.ace = false; ball.topspin = true; }
   b.tail = [];
   // **서브는 바로 넘겨야 한다.** 넘어가기 전까지 올린 편은 공을 못 건드린다 —
   // 올려 놓고 자기 편끼리 주고받다 넘기는 건 서브가 아니다.
   b.mustCross = b.serveBy;
   addFx(b, { k: 'dig', x: ball.x, y: ball.y, t: 0, life: 0.4,
-             word: k > 0.85 ? '강서브!' : null });
+             word: k > SERVE_SPIN ? '강서브!' : null });
   netEvent(world, [5, Math.round(ball.x), Math.round(ball.y), Math.round(k * 100)]);
   return true;
 }

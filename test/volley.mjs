@@ -1112,6 +1112,47 @@ say('서브 — 살살 올리면 높고 느리게, 꽉 채우면 낮고 빠르�
   note(`깊게 ${deep.vx.toFixed(0)} · 짧게 ${shortly.vx.toFixed(0)}`);
 }
 
+// **서브는 채운 만큼 빨라져야 한다.** 1250 이던 시절에는 살살 넣은 공이 1.65초에 902,
+// 꽉 채운 공이 1.13초에 1058 — 반 초 빨라지고 156px 더 갈 뿐이라 받는 쪽에는 둘 다
+// 「높이 뜬 공이 천천히 온다」로 똑같이 보였다. 그게 「서브가 약하다」였다.
+say('서브 — 꽉 채우면 빠르게 꽂히고, 살살 넣으면 높이 뜬다');
+{
+  // 코트 맨 뒤(x 200)에서 넣어 본다 — 제일 멀리서 넣는 자리다.
+  const fly = (k, dir = 0) => {
+    const world = mk(); world.state = 'play'; world.team = 0;
+    const b = world.bag; b.started = true; b.wait = 0; b.idle = 0;
+    world.player.x = 200; b.serveBy = 0; b.serving = true; b.charge = -1;
+    for (let f = 0; f < 10; f++) volley.update(world, 1 / 60);   // 공이 손 위로 따라온다
+    hitServe(world, k, dir);
+    const spin = !!b.ball.topspin;
+    let top = b.ball.y;
+    for (let f = 0; f < 60 * 6; f++) {
+      volley.update(world, 1 / 60);
+      top = Math.min(top, b.ball.y);
+      if (b.ball.y > world.groundY - 40 && b.ball.vy > 0) {
+        return { t: (f + 1) / 60, x: b.ball.x, high: world.groundY - top, spin, vx: b.ball.vx };
+      }
+    }
+    return { t: 99, x: b.ball.x, high: world.groundY - top, spin, vx: b.ball.vx };
+  };
+
+  const full = fly(1), soft = fly(0);
+  ok('꽉 채운 서브는 1초 안에 상대 코트에 떨어진다', full.t < 1 && full.x > 1512 / 2);
+  note(`꽉 ${full.t.toFixed(2)}초 · ${Math.round(full.x)} · 최고 ${Math.round(full.high)}px`);
+  ok('살살 넣으면 1.4초 넘게 높이 뜬다', soft.t > 1.4 && soft.high > 300);
+  note(`살살 ${soft.t.toFixed(2)}초 · ${Math.round(soft.x)} · 최고 ${Math.round(soft.high)}px`);
+  ok('꽉 채운 쪽이 반 초 넘게 빨리 온다', soft.t - full.t > 0.5);
+  ok('꽉 채운 쪽이 더 낮게 간다', full.high < soft.high * 0.6);
+
+  // 강서브는 **앞으로 돌며** 간다 — 안 그러면 빨라진 공이 뒷벽까지 날아간다.
+  ok('강서브는 앞으로 돈다', full.spin === true);
+  ok('살살 넣은 공은 안 돈다', soft.spin === false);
+  const deep = fly(1, 1), shortly = fly(1, -1);
+  ok('⌥→ 로 더 깊이 꽂는다', deep.x > full.x && shortly.x < full.x);
+  note(`깊게 ${Math.round(deep.x)} · 그냥 ${Math.round(full.x)} · 짧게 ${Math.round(shortly.x)}`);
+  ok('어느 쪽이든 상대 코트 안이다', shortly.x > 1512 / 2 && deep.x < 1512 - 40);
+}
+
 say('서브 — 제자리에서 올리면 어떤 세기로도 네트를 넘는다');
 {
   const cross = (held, dir) => {
@@ -1130,11 +1171,14 @@ say('서브 — 제자리에서 올리면 어떤 세기로도 네트를 넘는�
     world.input.right = dir > 0; world.input.left = dir < 0;
     volley.release(world);
     world.player.x = 60; world.mp.others.get(2).x = 1460;
+    // **공이 네트를 넘었는지를 본다.** 예전에는 점수로 갈랐는데, 서브가 빨라지고 나서
+    // 깊은 서브가 뒤에 선 사람 몸에 맞고 되넘어와 **넘어갔는데도 상대 점수**가 났다 —
+    // 그건 서브가 못 넘은 것이 아니라 그 뒤의 랠리를 진 것이다.
     const was = [...b.score];
     for (let f = 0; f < 60 * 8; f++) {
       volley.update(world, 1 / 60);
-      if (b.score[0] !== was[0]) return true;      // 넘어가 상대 코트에 떨어졌다
-      if (b.score[1] !== was[1]) return false;     // 못 넘었다
+      if (b.ball.x > 1512 / 2 + 20) return true;   // 네트를 넘어갔다
+      if (b.score[1] !== was[1]) return false;     // 못 넘고 내 코트에 떨어졌다
     }
     return null;
   };
