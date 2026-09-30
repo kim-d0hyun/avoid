@@ -668,19 +668,22 @@ export function menuItems(world) {
       return [{ id: 'none', label: '열려 있는 방이 없다', note: '같은 와이파이인지 확인' },
               { id: 'rescan', label: '다시 찾기' }];
     }
-    // **켜 둔 사람들.** 방에 있는 사람은 고르면 그 방으로 간다. 나머지는 보여 주기만 한다.
+    // **켜 둔 사람들. 고르면 그 사람에게 초대장(알림)을 보낸다.** 그 사람이 딴 방의 방장이어도
+    // 내가 그리로 가는 게 아니다 — 한때 그렇게 했더니 「초대하려고 골랐는데 내가 끌려갔다」가 됐다.
+    // 내가 방에 없으면 지금 게임으로 방을 먼저 열고 부른다 (초대장에는 들어올 방이 있어야 한다).
+    // 같은 방 사람은 「판으로 부르기」(딴 데 가 있는 사람을 불러온다). 나 자신만 한 줄로 알려 준다.
     case 'together/people': {
+      const mp = world.mp;
       return (world.people ?? []).map((person) => {
         const where = person.room
           ? [`방 ${person.room}`, person.game || null, person.host ? '방장' : null].filter(Boolean).join(' · ')
           : '쉬는 중';
-        const canJoin = !person.mine && person.room && person.room !== world.mp.code;
-        return {
-          id: canJoin ? `join:${person.room}` : 'person',
-          label: `${person.name}${person.mine ? ' (나)' : ''}`,
-          note: `${where}${person.old ? ' · 버전 다름' : ''}`,
-          info: !canJoin,
-        };
+        const label = `${person.name}${person.mine ? ' (나)' : ''}`;
+        if (person.mine) return { id: 'tell:나다', label, note: where };
+        // 같은 방 사람도 부른다 — 들어와 놓고 딴 데 가 있으면 알림으로 판에 불러온다.
+        if (mp.on && person.room && person.room === mp.code) return { id: `invite:${person.id}`, label, note: '같은 방 · 판으로 부르기' };
+        return { id: `invite:${person.id}`, label,
+                 note: `${where}${person.old ? ' · 버전 다름' : ''} · ${mp.on ? '초대' : '방 열고 초대'}` };
       });
     }
     // 내보낼 사람 고르기. 다 내보내고 나면 고를 게 없으니 한 겹 나온다.

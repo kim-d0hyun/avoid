@@ -252,6 +252,10 @@ const TIP_LAND = 140;          // 네트에서 이만큼 너머에 떨군다
 /// 못 닿아 제 코트에 떨어진다. 네트에서 150 안쪽이면 넘어가고, 80 안쪽이면 떠오른 블로커도 넘는다
 /// (30 안쪽은 넘어온 블로커 손 안이라 못 넘는다 — 벽이 네트 너머 43px 까지 온다).
 const TIP_SIDE = 200;
+/// **페인트가 너무 느렸다** (1.26초를 떠 있었다). 블로커를 넘는 길은 그대로 두고 **그 길을 빨리
+/// 지나가게** 한다 — 속도를 k 배, 이 공에만 중력을 k² 배로 하면 그리는 선은 같고 시간만 1/k 이 된다.
+/// 1.5 면 0.84초. 몸·벽·네트에 한 번 닿으면 보통 공으로 돌아간다(cool).
+const TIP_PACE = 1.5;
 
 // ── 디그 ───────────────────────────────────────────────────────────────────
 //
@@ -423,7 +427,7 @@ const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 /// 달아오른 강타를 식힌다. 몸·벽·네트·바닥·서브 — 무엇이든 한 번 닿으면 보통 공이다.
 function cool(ball) {
-  ball.hot = 0; ball.ace = false; ball.topspin = false; ball.dip = false;
+  ball.hot = 0; ball.ace = false; ball.topspin = false; ball.dip = false; ball.pace = 0;
 }
 
 /// 공이 사람 몸에 닿았나. 몸은 세로로 긴 알약이라 가로·세로를 따로 본다.
@@ -566,6 +570,8 @@ function applyHit(world, at, want, body = null, who = -1) {
     const fall = (TIP_UP + Math.sqrt(TIP_UP * TIP_UP + 2 * GRAVITY * h0)) / GRAVITY;
     const goal = (world.w / 2 + away * TIP_LAND - ball.x) * away;
     vx = away * clamp2(goal / fall, 60, TIP_SIDE) + held * 60;
+    // 같은 길을 TIP_PACE 배 빠르게 (중력은 update 가 pace² 로 건다).
+    vx *= TIP_PACE; vy *= TIP_PACE;
     kind = 3;
   } else if (at.air <= 12) {
     // 토스. 위로 올려 주고 옆으로는 살짝만.
@@ -665,6 +671,7 @@ function applyHit(world, at, want, body = null, who = -1) {
       else { ball.hot = HOT_TIME; ball.ace = ace; ball.topspin = true; ball.dip = dip; }
     } else {
       cool(ball);
+      if (kind === 3) ball.pace = TIP_PACE;
     }
     // 친 사람 몸은 잠깐 공을 안 받는다 (SELF_SKIP).
     ball.skip = body; ball.skipT = body ? SELF_SKIP : 0;
@@ -1530,7 +1537,7 @@ export default {
     ball: { x: 0, y: 0, vx: 0, vy: 0, spin: 0, spinV: 0, hit: 0, smash: 0, hitX: 0, hitY: 0,
             // 달아오른 강타: 남은 시간 · 정타인가 · 탑스핀인가. 친 사람 몸을 건너뛰는 몫(skip)과
             // 손끝으로 미끄러져 오는 몫(g*) 도 여기 산다.
-            hot: 0, ace: false, topspin: false, dip: false, skip: null, skipT: 0, gx: 0, gy: 0, gT: 0 },
+            hot: 0, ace: false, topspin: false, dip: false, pace: 0, skip: null, skipT: 0, gx: 0, gy: 0, gT: 0 },
     tail: [], tailT: 0,
     // 타격 자국(각자 굴린다) · 남에게 알릴 한 줄짜리 일 · 히트스톱 남은 시간.
     fx: [], events: [], stop: 0, stopHold: 0, mineAt: 9,
@@ -1592,7 +1599,8 @@ export default {
       b.errorY *= Math.exp(-dt / 0.06);
       // 탑스핀도 방장과 같은 식으로 이어 그린다. 안 그러면 달아오른 공만 손님 화면에서
       // 조금 위로 뜨고, 그 차이가 꾸러미마다 다시 녹느라 공이 미세하게 떤다.
-      const g = GRAVITY + (b.ball.topspin ? TOPSPIN + (b.ball.dip ? DIP_SPIN : 0) : 0);
+      const g = GRAVITY * (b.ball.pace > 1 ? b.ball.pace * b.ball.pace : 1)
+        + (b.ball.topspin ? TOPSPIN + (b.ball.dip ? DIP_SPIN : 0) : 0);
       // **앞질러 그리는 셈은 벽을 모른다.** 그대로 두면 끊긴 사이에 공이 코트 밖으로
       // 나갔다 돌아온다 — 재 보니 0.4초 끊길 때 스무 프레임이 밖에 있었다. 판 안에 가둔다.
       // (net.js 가 남의 자리를 판 안에 가두는 것과 같은 까닭이다.)
@@ -1678,7 +1686,8 @@ export default {
       if (ball.hot <= 0) cool(ball);
     }
     // **탑스핀.** 앞으로 도는 강타는 중력의 1.45배로 떨어진다 — 포물선이 아니라 꺾여 꽂힌다.
-    ball.vy += (GRAVITY + (ball.topspin ? TOPSPIN + (ball.dip ? DIP_SPIN : 0) : 0)) * dt;
+    ball.vy += (GRAVITY * (ball.pace > 1 ? ball.pace * ball.pace : 1)
+      + (ball.topspin ? TOPSPIN + (ball.dip ? DIP_SPIN : 0) : 0)) * dt;
 
     // 공기 저항. **빠를수록 많이 깎인다** (제곱 저항).
     //
@@ -1986,7 +1995,9 @@ export default {
           // 일곱째 칸 — 달아오름(0 보통 · 1 강타 · 2 정타). 옛 손님은 여섯 칸만 읽고 지나간다.
           b.ball.hot > 0 ? (b.ball.ace ? 2 : 1) : 0,
           // 여덟째 칸 — 감아 친 공(⌥↓)인가. 손님이 같은 무게로 이어 그린다. 옛 손님은 안 읽는다.
-          b.ball.hot > 0 && b.ball.dip ? 1 : 0],
+          b.ball.hot > 0 && b.ball.dip ? 1 : 0,
+          // 아홉째 칸 — 빨리 가는 페인트(무게 배율). 옛 손님은 안 읽는다.
+          b.ball.pace > 1 ? b.ball.pace : 0],
       s: b.score,
       w: Math.round(b.wait * 100) / 100,
       // 서브 — 들고 있나 · 누가 올리나 · 얼마나 찼나.
@@ -2069,7 +2080,7 @@ export default {
       || !Number.isFinite(b.ball.x) || !Number.isFinite(b.ball.y);
     const showX = b.ball.x;
     const showY = b.ball.y;
-    const [x, y, vx, vy, spin, spinV, hot, dipped] = data.b;
+    const [x, y, vx, vy, spin, spinV, hot, dipped, pace] = data.b;
     b.baseX = x; b.baseY = y; b.baseVX = vx; b.baseVY = vy;
     b.ball.spin = spin; b.ball.spinV = spinV;
     // 달아오름은 보이는 것(속도선·탑스핀)에만 쓴다. 판정은 어차피 방장이 한다.
@@ -2077,6 +2088,7 @@ export default {
     b.ball.ace = hot === 2;
     b.ball.topspin = hot > 0;
     b.ball.dip = hot > 0 && dipped === 1;
+    b.ball.pace = Number.isFinite(pace) && pace > 1 ? pace : 0;
     b.age = 0;
     b.errorX = first ? 0 : showX - x;
     b.errorY = first ? 0 : showY - y;

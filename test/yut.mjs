@@ -11,7 +11,7 @@ const m = await import(R0 + 'games/yut.js');
 const { HOME, OUT, CENTER, nextOf, walk, spotOf, isCorner, toss, flatUp, NAMES, STEPS, again,
         throwTo, isNak, MAT_NEAR, MAT_FAR, SAFE_LOW, SAFE_HIGH, GAUGE_CYCLE, gaugeAt,
         preview, move, movable, movableWith, backOf, MARKED, doneOf, pileOf, riders, throwYut, playMove, whoseTurn, myTurn, seatsOf,
-        aiPick, aiGauge, CREW } = m;
+        aiPick, aiPlan, aiGauge, CREW, current } = m;
 
 import { check, ok, say, note, done } from './check.mjs';
 
@@ -282,7 +282,7 @@ say('차례는 편 안에서도 돈다 — 2:2');
     // **잡히거나 윷이 나면 한 번 더 던진다** — 그건 규칙이 맞다. 차례가 도는 것만 보려고
     // 매번 말을 멀찍이 떼어 놓고 개(두 칸)만 쓴다. 안 그러면 다 같이 2번 밭에 모여 잡는다.
     b.men.forEach((x, i) => { x.at = i < CREW ? 1 + i * 2 : 12 + (i - CREW) * 2; x.on = -1; x.done = false; });
-    b.roll = { name: '개', steps: 2, nak: false, flats: 2, sticks: [] };
+    b.stock = [{ name: '개', steps: 2 }]; b.use = 0;
     b.phase = 'pick';
     playMove(world, movable(b.men, b.turn)[0]);
     for (let f = 0; f < 5; f++) w.update(world, FR);
@@ -290,33 +290,75 @@ say('차례는 편 안에서도 돈다 — 2:2');
   check('빨1 → 파1 → 빨2 → 파2 … 로 돈다', order, [1, 2, 3, 4, 1, 2, 3, 4]);
 }
 
-say('윷·모·잡기면 한 번 더 던진다');
+const tap = (world, key) => yut.tap(world, key);
+/// 던진 것이 떨어진 것으로 친다 (결과를 정해 두고).
+const land = (world, name, flats, steps, nak = false) => {
+  const b = world.bag;
+  b.roll = { name, steps, nak, flats, sticks: [] };
+  b.phase = 'fly'; b.fly = 99;
+  w.update(world, FR);
+};
+
+say('윷·모 — 옮기기 전에 한 번 더 던져 모으고, 다 던진 뒤 나눠 쓴다 (실제 윷놀이)');
 {
   const world = mk(); world.team = 0;
   const b = world.bag;
-  b.roll = { name: '윷', steps: 4, nak: false, flats: 4, sticks: [] };
-  b.phase = 'pick';
-  playMove(world, movable(b.men, 0)[0]);
-  check('윷이면 차례가 그대로', b.turn, 0);
-  check('다시 던지기로', b.phase, 'charge');
-  // 잡으면 한 번 더
-  const w2 = mk(); w2.team = 0;
-  const c = w2.bag;
-  c.men[0].at = 3; c.men[4].at = 5;              // 내 말 3번, 상대 말 5번
-  c.roll = { name: '개', steps: 2, nak: false, flats: 2, sticks: [] };
-  c.phase = 'pick';
-  playMove(w2, 0);
-  check('잡으면 차례가 그대로', c.turn, 0);
-  ok('잡았다고 알려 준다', /잡았다/.test(c.say ?? ''));
-  // 낙이면 넘어간다
+  land(world, '윷', 4, 4);
+  check('윷이면 차례가 그대로 · 다시 던지기로', [b.turn, b.phase], [0, 'charge']);
+  check('옮기지 않고 모아 둔다', b.stock.map((r) => r.name), ['윷']);
+  ok('말은 아직 집에', b.men.every((x) => x.at === HOME));
+  land(world, '모', 0, 5);
+  check('모도 모은다', [b.phase, b.stock.map((r) => r.name).join(' ')], ['charge', '윷 모']);
+  land(world, '도', 1, 1);
+  check('도가 나오면 던지기가 끝나고 고른다', [b.phase, b.stock.map((r) => r.name).join(' ')], ['pick', '윷 모 도']);
+  // ⌥↓ 로 쓸 것을 고른다
+  check('처음 짚는 것은 첫째', current(b).name, '윷');
+  tap(world, 'duck'); tap(world, 'duck');
+  check('⌥↓ 두 번이면 도', current(b).name, '도');
+  const first = b.pick;
+  yut.action(world);
+  check('도로 한 칸', b.men[first].at, 1);
+  check('남은 것', [b.phase, b.turn, b.stock.map((r) => r.name).join(' ')], ['pick', 0, '윷 모']);
+  playMove(world, b.pick, 0);                    // 윷
+  playMove(world, b.pick, 0);                    // 모
+  check('다 쓰면 다음 편', [b.turn, b.phase, b.stock.length], [1, 'charge', 0]);
+}
+
+say('잡기 — 한 번 더. 윷으로 잡으면 두 번 더 던지는 셈');
+{
+  const world = mk(); world.team = 0;
+  const b = world.bag;
+  b.men[0].at = 1; b.men[CREW].at = 5;           // 내 말 1번 · 상대 말 5번
+  land(world, '윷', 4, 4);                        // 윷 몫 한 번 더
+  land(world, '개', 2, 2);
+  check('윷 · 개를 모았다', b.stock.map((r) => r.name), ['윷', '개']);
+  playMove(world, 0, 0);                         // 윷으로 1 → 5, 잡는다
+  check('잡았다', b.men[CREW].at, HOME);
+  check('잡은 몫 한 번 더 — 남은 개는 그대로', [b.turn, b.phase, b.stock.map((r) => r.name).join(' ')], [0, 'charge', '개']);
+  ok('잡았다고 알려 준다', /잡았다/.test(b.say ?? ''));
+  land(world, '걸', 3, 3);
+  check('던진 것이 남은 것에 더해진다', [b.phase, b.stock.map((r) => r.name).join(' ')], ['pick', '개 걸']);
+}
+
+say('낙 — 그 한 번만 날아간다');
+{
   const w3 = mk(); w3.team = 0;
   const d = w3.bag;
   d.phase = 'charge';
   throwYut(w3, 0.02);                            // 못 닿는 힘
   ok('낙이다', d.roll.nak);
   for (let f = 0; f < 200 && d.phase === 'fly'; f++) w.update(w3, FR);
-  check('낙이면 차례가 넘어간다', d.turn, 1);
+  check('모아 둔 것이 없으면 차례가 넘어간다', d.turn, 1);
   ok('까닭을 알려 준다', /낙/.test(d.say ?? ''));
+  // 윷 뒤에 낙 — 모아 둔 윷은 쓴다
+  const w4 = mk(); w4.team = 0;
+  land(w4, '윷', 4, 4);
+  land(w4, '낙', 0, 0, true);
+  check('모아 둔 윷으로 옮긴다', [w4.bag.turn, w4.bag.phase, w4.bag.stock.map((r) => r.name).join(' ')], [0, 'pick', '윷']);
+  // 갈 말이 없는 것은 버린다 — 다 집에 있는데 빽도
+  const w5 = mk(); w5.team = 0;
+  land(w5, '빽도', 1, -1);
+  check('빽도인데 다 집에 있으면 넘어간다', [w5.bag.turn, w5.bag.stock.length], [1, 0]);
 }
 
 say('이기는 것 — 말 넷을 다 내보내면');
@@ -325,7 +367,7 @@ say('이기는 것 — 말 넷을 다 내보내면');
   const b = world.bag;
   for (let i = 0; i < CREW - 1; i++) { b.men[i].done = true; b.men[i].at = OUT; }
   b.men[CREW - 1].at = 20;
-  b.roll = { name: '도', steps: 1, nak: false, flats: 1, sticks: [] };
+  b.stock = [{ name: '도', steps: 1 }, { name: '개', steps: 2 }]; b.use = 0;
   b.phase = 'pick';
   playMove(world, CREW - 1);
   ok('넷을 다 내보내면 끝난다', b.over);
@@ -339,6 +381,9 @@ say('컴퓨터 — 잡는 수를 고른다');
                { side: 0, face: 1, at: 8, done: false, on: -1 },
                { side: 1, face: 0, at: 5, done: false, on: -1 }];
   check('잡을 수 있는 말을 고른다', aiPick(men, 0, 2), 0);
+  // 모아 둔 것 가운데서도 잡는 짝을 고른다 — 도로는 못 잡고 개로 잡는다
+  check('모아 둔 것에서 잡는 수를 고른다', aiPlan(men, 0, [{ name: '도', steps: 1 }, { name: '개', steps: 2 }]),
+        { use: 1, piece: 0 });
   const g = aiGauge();
   ok('멍석에 닿는 힘을 노린다', g > SAFE_LOW - 0.05 && g < SAFE_HIGH + 0.05);
   // 빈 편은 컴퓨터가 한다
@@ -368,6 +413,11 @@ say('꾸러미 — 손님이 같은 판을 본다');
   check('차례도 온다', g.turn, b.turn);
   check('던진 것도 온다', g.roll.name, b.roll.name);
   ok('윷 네 짝이 다 온다', g.roll.sticks.length === 4);
+  // 모아 둔 것과 쓰려고 고른 것도 온다 — 손님 차례면 손님이 ⌥↑↓ 로 고른다.
+  b.stock = [{ name: '윷', steps: 4 }, { name: '도', steps: 1 }]; b.use = 1;
+  yut.unpack(guest, yut.pack(host));
+  check('모아 둔 것이 온다', g.stock.map((r) => r.name), ['윷', '도']);
+  check('고른 것도 온다 (내 차례가 아니면)', g.use, 1);
   ok('나는 중이면 매 프레임 싣는다', Array.isArray(yut.pack(host).m));
   // 판이 멎으면 0.6초마다
   b.phase = 'pick';
@@ -450,17 +500,20 @@ say('전수 점검 — 예순 판을 돌려 규칙이 깨지는 데를 찾는다
       throwsAll++;
       for (let f = 0; f < 200 && b.phase === 'fly'; f++) w.update(world, FR);
       audit(b.men);
-      if (b.phase === 'pick') {
-        const row = movable(b.men, b.turn);
-        if (!row.length) { pickless++; continue; }
+      // 윷·모면 모아 둔 채 다시 던지기로 — 그때 차례가 넘어가면 틀린 것이다.
+      if (!b.over && b.phase === 'charge' && again(b.roll?.flats ?? -1) && !b.roll?.nak && b.turn !== before) wrongTurn++;
+      while (!b.over && b.phase === 'pick') {
+        const side = b.turn;
+        if (!b.stock.length) { flag('고르는데 모아 둔 것이 없다'); break; }
         const before2 = b.men.map((m) => ({ ...m }));
-        const roll = b.roll;
-        if (!playMove(world, aiPick(b.men, b.turn, roll.steps))) flag('말을 못 옮겼다');
+        const plan = aiPlan(b.men, side, b.stock);
+        if (!playMove(world, plan.piece, plan.use)) { flag('말을 못 옮겼다'); break; }
         audit(b.men);
-        // 차례는 **윷·모·잡기일 때만** 그대로다
-        const ate = before2.some((m, i) => m.at !== HOME && b.men[i].at === HOME && m.side !== b.turn);
-        const keep = ate || again(roll.flats);
-        if (!b.over && ((keep && b.turn !== before) || (!keep && b.turn === before))) wrongTurn++;
+        // 잡으면 **같은 편이 한 번 더 던진다.**
+        const ate = before2.some((m, i) => m.at !== HOME && b.men[i].at === HOME && m.side !== side);
+        if (!b.over && ate && (b.turn !== side || b.phase !== 'charge')) wrongTurn++;
+        // 모아 둔 것이 남았으면 같은 편이 이어 고른다
+        if (!b.over && !ate && b.stock.length && b.turn !== side) wrongTurn++;
       }
     }
     if (!b.over) hangs++;

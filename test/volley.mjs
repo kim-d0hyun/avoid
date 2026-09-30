@@ -719,7 +719,7 @@ say('꾸러미 — 남의 화면에서도 같은 순간에 같은 모션');
   check('친 사람 번호가 실린다', pkt.f[3], 1);
   check('종류는 강타(1) 나 정타(2)', pkt.f[4] >= 1, true);
   check('멈춤 시간이 실린다', pkt.f[6] > 0, true);
-  check('공에 달아오름 칸과 감아 친 공 칸이 붙는다', pkt.b.length, 8);
+  check('공에 달아오름 · 감아 친 공 · 빠른 페인트 칸이 붙는다', pkt.b.length, 9);
   check('달아올랐다', pkt.b[6] >= 1, true);
   // **멈춰 있는 동안은 속도도 0으로 보낸다** — 안 그러면 손님 화면에서만 공이 계속 간다.
   check('히트스톱 중에는 속도를 0으로 보낸다', [pkt.b[2], pkt.b[3]], [0, 0]);
@@ -940,7 +940,8 @@ say('페인트 — 공중에서 ⌥↑ 로 살짝 얹어 블록 너머로');
   check('공중이면 얹기가 된다', tipHit(r.world), true);
   const sp = Math.hypot(r.b.ball.vx, r.b.ball.vy);
   check('상대 코트 쪽으로 간다', r.b.ball.vx > 0, true);
-  check('강타보다 훨씬 느리다', sp < 700, true);
+  // 페인트는 같은 길을 1.5배 빨리 지나간다(TIP_PACE) — 그래도 강타보다는 느리다.
+  check('강타보다 느리다', sp < 900, true);
   check('조금 떠올랐다 떨어진다', r.b.ball.vy < 0, true);
   check('달아오르지 않는다', r.b.ball.hot, 0);
   check('멈추지도 않는다 (톡 얹는 것이다)', r.b.stop, 0);
@@ -949,7 +950,7 @@ say('페인트 — 공중에서 ⌥↑ 로 살짝 얹어 블록 너머로');
   // 같은 자리에서 그냥 치면 강타다 — 페인트가 훨씬 느려야 블록을 넘기는 뜻이 있다.
   const hard = rig({ air: 60, off: [6, 10] });
   spike(hard.world);
-  check('그냥 치면 강타가 훨씬 세다', Math.hypot(hard.b.ball.vx, hard.b.ball.vy) > sp * 1.6, true);
+  check('그냥 치면 강타가 더 세다', Math.hypot(hard.b.ball.vx, hard.b.ball.vy) > sp * 1.2, true);
 
   // 땅에서 ⌥↓ 는 페인트가 아니다 — 웅크리기(디그)다.
   const ground = rig({ air: 0, off: [6, 10] });
@@ -969,7 +970,7 @@ say('페인트 — 공중에서 ⌥↑ 로 살짝 얹어 블록 너머로');
   // 그 사이 공이 손 밑으로 빠졌다.
   const up = rig({ air: 60, off: [6, 10], vy: 0 });
   tap(up.world, 'jump');
-  check('점프 뒤 ⌥↑ 로도 페인트 — 누른 그 프레임에', up.b.ball.vx > 0 && up.b.ball.vx < 300, true);
+  check('점프 뒤 ⌥↑ 로도 페인트 — 누른 그 프레임에', up.b.ball.vx > 0 && up.b.ball.vx < 400, true);
   check('같이 떠오른다', Math.round(up.b.ball.vy) < -300, true);
   check('⌥↑ 페인트도 안 달아오른다', up.b.ball.hot, 0);
 
@@ -1650,7 +1651,8 @@ say('페인트 — 떠오른 블로커 손 위로 넘어간다');
     }
     const high = r.world.groundY - top;
     ok('바닥 위 280 안쪽까지만 뜬다', high < 280);
-    ok('1.35초 안에 떨어진다', t < 1.35);
+    // **느리지도 않다.** 800×SLOW 에서 1.26초였다 — 「페인트가 너무 느리다」. 같은 길을 1.5배로.
+    ok('0.9초 안에 떨어진다', t < 0.9);
     note(`페인트 — 최고 ${high.toFixed(0)}px · ${t.toFixed(2)}초`);
   }
 }

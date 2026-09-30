@@ -29,8 +29,8 @@ struct OnlinePerson {
     let game: String
     /// 그 방을 연 사람인가.
     let host: Bool
-    /// 지금 부르고 있는 방과 부른 시각(초). 안 부르면 nil.
-    let call: (room: String, at: Int)?
+    /// 지금 부르고 있는 방과 부른 시각(초), 한 사람만 부르면 그 사람. 안 부르면 nil.
+    let call: (room: String, at: Int, to: String?)?
     var mine = false
     var old: Bool { !version.isEmpty && version != appVersion }
 }
@@ -53,7 +53,7 @@ final class Presence {
     private var room = ""
     private var game = ""
     private var host = false
-    private var call: (room: String, at: Int)?
+    private var call: (room: String, at: Int, to: String?)?
     private var callTimer: Timer?
     private(set) var lastCall: Date?
 
@@ -92,11 +92,20 @@ final class Presence {
 
     /// 지금 있는 방으로 모두를 부른다. 방에 없거나 방금 불렀으면 false.
     @discardableResult
-    func callEveryone() -> Bool {
+    func callEveryone() -> Bool { callOut(to: nil) }
+
+    /// 한 사람만 부른다 (접속 중 목록에서 쉬는 사람을 골랐을 때). 쿨다운은 모두 부르기와 같이 쓴다.
+    @discardableResult
+    func invite(_ person: String) -> Bool {
+        guard person != id, seen.contains(where: { $0.id == person }) else { return false }
+        return callOut(to: person)
+    }
+
+    private func callOut(to target: String?) -> Bool {
         guard !room.isEmpty else { return false }
         if let lastCall, Date().timeIntervalSince(lastCall) < callCooldown { return false }
         lastCall = Date()
-        call = (room, Int(Date().timeIntervalSince1970))
+        call = (room, Int(Date().timeIntervalSince1970), target)
         republish()
         rebuild()
         callTimer?.invalidate()
@@ -106,7 +115,7 @@ final class Presence {
             self.republish()
             self.rebuild()
         }
-        debugLog("모두 부르기 → 방 \(room)")
+        debugLog("\(target == nil ? "모두 부르기" : "한 사람 부르기(\(target!))") → 방 \(room)")
         return true
     }
 
@@ -123,7 +132,8 @@ final class Presence {
         if !room.isEmpty { fields["r"] = room }
         if !game.isEmpty { fields["g"] = game }
         if host { fields["h"] = "1" }
-        if let call { fields["c"] = "\(call.room):\(call.at)" }
+        // 한 사람만 부를 때는 끝에 그 사람의 Bonjour 이름을 붙인다 — 나머지는 이걸 보고 지나간다.
+        if let call { fields["c"] = "\(call.room):\(call.at)" + (call.to.map { ":\($0)" } ?? "") }
         return fields
     }
 
@@ -180,6 +190,12 @@ final class Presence {
                 if case .bonjour(let record) = result.metadata {
                     for key in ["n", "v", "r", "g", "h", "c"] { if let value = record[key] { txt[key] = value } }
                 }
+                // **이름표가 바뀌는 순간 빈 이름표가 한 번 온다** — 그대로 쓰면 목록에 이름 없는 사람이
+                // 「쉬는 중」으로 끼었다가 돌아온다. 이름표에는 늘 버전(v)이 있으니, 없으면 알던 대로 둔다.
+                if txt["v"] == nil, let known = self.seen.first(where: { $0.id == name }) {
+                    found.append(known)
+                    continue
+                }
                 found.append(Presence.person(id: name, txt))
             }
             DispatchQueue.main.async {
@@ -212,10 +228,12 @@ final class Presence {
 
     /// 이름표 한 장을 사람 하나로. **남이 적은 글자라 모양을 안 믿는다.**
     static func person(id: String, _ txt: [String: String]) -> OnlinePerson {
-        var call: (room: String, at: Int)?
+        var call: (room: String, at: Int, to: String?)?
         if let raw = txt["c"] {
-            let bits = raw.split(separator: ":", maxSplits: 1).map(String.init)
-            if bits.count == 2, bits[0].count == 4, let at = Int(bits[1]) { call = (bits[0].uppercased(), at) }
+            let bits = raw.split(separator: ":", maxSplits: 2).map(String.init)
+            if bits.count >= 2, bits[0].count == 4, let at = Int(bits[1]) {
+                call = (bits[0].uppercased(), at, bits.count == 3 ? bits[2] : nil)
+            }
         }
         let room = (txt["r"] ?? "").uppercased()
         return OnlinePerson(id: id, name: String((txt["n"] ?? "").prefix(24)), version: txt["v"] ?? "",
@@ -248,13 +266,16 @@ final class Presence {
         let now = Int(Date().timeIntervalSince1970)
         for person in found {
             guard let call = person.call else { continue }
-            let key = "\(person.id)|\(call.room)|\(call.at)"
+            let key = "\(person.id)|\(call.room)|\(call.at)|\(call.to ?? "")"
             guard !heard.contains(key) else { continue }
             heard.insert(key)
+            // 딴 사람을 부른 것이다.
+            if let to = call.to, to != id { continue }
             // 오래된 부름은 안 띄운다 — 두 맥의 시계가 조금 달라도 넉넉하게 본다.
             guard abs(now - call.at) <= Int(callLife) + 30 else { continue }
-            // 이미 그 방에 있으면 부를 까닭이 없다.
-            guard call.room != room else { continue }
+            // 이미 그 방에 있으면 「모두 부르기」는 지나간다. **나만 콕 집어 불렀으면** 같은 방이어도 띄운다 —
+            // 방에 들어와 놓고 딴 데 가 있는 사람을 판으로 불러오는 것이다.
+            guard call.room != room || call.to == id else { continue }
             debugLog("\(person.name) 이(가) 방 \(call.room) 으로 부른다")
             delegate?.presenceCalled(by: person, room: call.room)
         }

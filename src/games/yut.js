@@ -347,9 +347,12 @@ function freshBag() {
     men: freshMen(),
     turn: 0,
     seat: [0, 0],
-    phase: 'charge',              // charge → fly → pick
+    phase: 'charge',              // charge → fly → (윷·모면 charge 로 한 번 더) → pick
     held: -1, gauge: 0,
-    fly: 0, roll: null,           // roll = { sticks, nak, flats, steps, name }
+    fly: 0, roll: null,           // roll = { sticks, nak, flats, steps, name } — 방금 던진 것
+    // **모아 둔 것.** 윷·모가 나오면 옮기지 않고 한 번 더 던져 모은다 — 실제 윷놀이가 그렇다.
+    // 다 던진 뒤 어느 것으로 어느 말을 옮길지 고른다(use 가 고른 것). [{ name, steps }]
+    stock: [], use: 0,
     pick: 0,
     log: [],
     over: false, winner: null, hold: 0, note: null,
@@ -361,7 +364,10 @@ function freshBag() {
 }
 function say(b, text) { b.say = text; b.sayT = 0; }
 
-/// 다음 사람에게. 한 번 더 던질 차례면 같은 사람이 이어서 던진다.
+/// 지금 쓰려고 고른 것 (모아 둔 것 가운데).
+export const current = (b) => b.stock?.[b.use] ?? null;
+
+/// 다음 사람에게. 한 번 더 던질 차례면 같은 사람이 이어서 던진다 (모아 둔 것은 그대로 둔다).
 function handOver(world, b, keep = false) {
   const me = doneOf(b.men, 0), you = doneOf(b.men, 1);
   if (me >= CREW || you >= CREW) {
@@ -374,6 +380,7 @@ function handOver(world, b, keep = false) {
   if (!keep) {
     b.seat[b.turn] = (b.seat[b.turn] ?? 0) + 1;
     b.turn = b.turn === 0 ? 1 : 0;
+    b.stock = []; b.use = 0;
   }
   b.phase = 'charge';
   b.held = -1; b.gauge = 0; b.roll = null; b.fly = 0;
@@ -394,40 +401,72 @@ export function throwYut(world, gauge) {
   return true;
 }
 
-/// 던진 것이 땅에 닿았다 — 결과를 판에 적용할 준비를 한다.
+/// 던진 것이 땅에 닿았다.
+///
+/// **실제 윷놀이대로 한다.** 윷·모가 나오면 말을 옮기지 않고 모아 둔 채 한 번 더 던진다.
+/// 도·개·걸이 나와 던지기가 끝나면, 모아 둔 것들을 어느 말에 어떤 순서로 쓸지 고른다
+/// (윷 → 모 → 도 면 셋을 다 쓴다). 예전에는 윷이 나오자마자 옮기고 한 번 더 던졌다 —
+/// 그러면 「윷은 이 말로, 도는 저 말로」가 안 되고, 윷으로 잡아도 한 번만 더 던졌다.
+///
+/// **낙**은 그 한 번만 날아간다. 모아 둔 것이 있으면 그걸로 옮긴다.
 function landed(world, b) {
   const r = b.roll;
   b.log.push({ side: b.turn, name: r.name });
   if (b.log.length > 40) b.log.shift();
   if (r.nak) {
-    say(b, '낙 — 한 번 쉰다');
+    say(b, b.stock.length ? '낙 — 모아 둔 것만 쓴다' : '낙 — 한 번 쉰다');
+    toPick(world, b);
+    return;
+  }
+  b.stock.push({ name: r.name, steps: r.steps });
+  if (again(r.flats)) {
+    say(b, `${r.name} — 한 번 더!`);
+    handOver(world, b, true);
+    return;
+  }
+  toPick(world, b);
+}
+
+/// 모아 둔 것을 쓰러 간다. **갈 말이 없는 것은 버린다** (빽도인데 다 집에 있을 때처럼).
+/// 쓸 게 하나도 안 남으면 다음 사람 차례다.
+function toPick(world, b) {
+  const before = b.stock.length;
+  b.stock = b.stock.filter((r) => movableWith(b.men, b.turn, r.steps).length);
+  if (!b.stock.length) {
+    if (before) say(b, '갈 말이 없다');
     handOver(world, b);
     return;
   }
-  const row = movableWith(b.men, b.turn, r.steps);
-  if (!row.length) {
-    // 갈 말이 없다 (다 났거나 다 업혀 있거나, **빽도인데 다 집에 있거나**).
-    // 한 번 더 던질 차례면 이어서 던진다.
-    say(b, `${r.name} — 갈 말이 없다`);
-    handOver(world, b, again(r.flats));
-    return;
-  }
-  b.pick = row[0];
+  b.use = Math.max(0, Math.min(b.use ?? 0, b.stock.length - 1));
+  const row = movableWith(b.men, b.turn, current(b).steps);
+  if (!row.includes(b.pick)) b.pick = row[0];
   b.phase = 'pick';
 }
 
-/// 고른 말을 옮긴다. **방장만 부른다.**
-export function playMove(world, i) {
+/// 고른 것(use)으로 고른 말을 옮긴다. **방장만 부른다.**
+///
+/// 잡으면 **한 번 더 던진다** — 모아 둔 것이 남아 있어도 그대로 두고 던져서 더 모은다.
+/// 그래서 윷으로 잡으면 윷 몫 한 번 · 잡은 몫 한 번, 두 번을 더 던진다.
+export function playMove(world, i, use = world.bag.use) {
   const b = world.bag;
-  if (b.over || b.phase !== 'pick' || !b.roll) return false;
-  const row = movableWith(b.men, b.turn, b.roll.steps);
-  if (!row.includes(i)) return false;
-  const res = move(b.men, i, b.roll.steps);
+  if (b.over || b.phase !== 'pick') return false;
+  const u = Number.isInteger(use) && use >= 0 && use < b.stock.length ? use : 0;
+  const r = b.stock[u];
+  if (!r) return false;
+  if (!movableWith(b.men, b.turn, r.steps).includes(i)) return false;
+  const res = move(b.men, i, r.steps);
   if (!res) return false;
-  const bonus = res.ate || again(b.roll.flats);
-  if (res.ate) say(b, '잡았다 — 한 번 더!');
-  else if (again(b.roll.flats)) say(b, `${b.roll.name} — 한 번 더!`);
-  handOver(world, b, bonus);
+  b.stock.splice(u, 1);
+  b.use = 0;
+  b.fresh = true;
+  // 다 났다 — 남은 것이 있어도 끝이다.
+  if (doneOf(b.men, b.turn) >= CREW) { handOver(world, b); return true; }
+  if (res.ate) {
+    say(b, b.stock.length ? `잡았다 — 한 번 더! (남은 것: ${b.stock.map((x) => x.name).join(' · ')})` : '잡았다 — 한 번 더!');
+    handOver(world, b, true);
+    return true;
+  }
+  toPick(world, b);
   return true;
 }
 
@@ -440,19 +479,36 @@ export const aiGauge = () => {
   return Math.max(0, Math.min(1, mid + wob));
 };
 
-/// 어느 말을 옮길까. 잡는 수가 제일 값지고, 다음이 나는 수, 그다음이 많이 간 말이다.
+/// 이 말을 이만큼 옮기면 얼마나 좋은가. 잡는 수가 제일 값지고, 다음이 나는 수, 그다음이 많이 간 말이다.
+function moveScore(men, i, steps) {
+  const plan = preview(men, i, steps);
+  if (!plan) return -1e9;
+  const far = plan.to === OUT ? 40 : plan.to;
+  return plan.eat.length * 100 + (plan.to === OUT ? 60 : 0)
+       + plan.ride.length * 12 + far * 0.6
+       + (pileOf(men, i) > 1 ? 8 : 0);
+}
+
+/// 어느 말을 옮길까 (한 가지 세기로).
 export function aiPick(men, side, steps) {
   const row = movableWith(men, side, steps);
   let best = row[0], top = -1e9;
   for (const i of row) {
-    const plan = preview(men, i, steps);
-    if (!plan) continue;
-    const far = plan.to === OUT ? 40 : plan.to;
-    const score = plan.eat.length * 100 + (plan.to === OUT ? 60 : 0)
-                + plan.ride.length * 12 + far * 0.6
-                + (pileOf(men, i) > 1 ? 8 : 0);
+    const score = moveScore(men, i, steps);
     if (score > top) { top = score; best = i; }
   }
+  return best;
+}
+
+/// 모아 둔 것 가운데 무엇으로 어느 말을 옮길까 — 가장 좋은 짝을 고른다.
+export function aiPlan(men, side, stock) {
+  let best = { use: 0, piece: -1 }, top = -1e9;
+  stock.forEach((r, use) => {
+    for (const i of movableWith(men, side, r.steps)) {
+      const score = moveScore(men, i, r.steps);
+      if (score > top) { top = score; best = { use, piece: i }; }
+    }
+  });
   return best;
 }
 
@@ -463,8 +519,10 @@ export default {
   keys: [
     ['⌥ Space', '잡고 있으면 힘이 찬다 · 떼면 던진다'],
     ['⌥ ← →', '옮길 말 고르기'],
+    ['⌥ ↑ ↓', '모아 둔 것 가운데 쓸 것 고르기'],
     ['⌥ Space', '그 말을 옮긴다'],
-    ['윷 · 모 · 잡기', '한 번 더 던진다'],
+    ['윷 · 모', '옮기기 전에 한 번 더 던져 모은다 — 다 던지고 나서 나눠 쓴다'],
+    ['잡기', '한 번 더 던진다 (윷으로 잡으면 두 번 더)'],
     ['빽도', '표 있는 짝 하나만 젖혀지면 — 한 칸 뒤로'],
     ['낙', '판을 벗어나거나 못 닿으면 그 차례를 잃는다'],
   ],
@@ -512,9 +570,17 @@ export default {
   tap(world, key) {
     const b = world.bag;
     if (b.over || !myTurn(world) || b.phase !== 'pick') return;
+    // 위아래 — 모아 둔 것 가운데 무엇을 쓸지. 바꾸면 그 세기로 갈 수 있는 말로 고쳐 짚는다.
+    const up = key === 'jump' ? -1 : key === 'duck' ? 1 : 0;
+    if (up && b.stock.length > 1) {
+      b.use = (b.use + up + b.stock.length) % b.stock.length;
+      const row = movableWith(b.men, b.turn, current(b)?.steps ?? 1);
+      if (row.length && !row.includes(b.pick)) b.pick = row[0];
+      return;
+    }
     const dir = key === 'left' ? -1 : key === 'right' ? 1 : 0;
     if (!dir) return;
-    const row = movableWith(b.men, b.turn, b.roll?.steps ?? 1);
+    const row = movableWith(b.men, b.turn, current(b)?.steps ?? 1);
     if (!row.length) return;
     const at = Math.max(0, row.indexOf(b.pick));
     b.pick = row[(at + dir + row.length) % row.length];
@@ -527,7 +593,7 @@ export default {
     if (b.phase === 'charge') { b.held = 0; b.gauge = 0; return; }
     if (b.phase === 'pick') {
       if (world.mp.on && world.mp.role === 'guest') {
-        world.send?.({ t: 'gm', k: 'move', i: b.pick });
+        world.send?.({ t: 'gm', k: 'move', i: b.pick, u: b.use });
         return;
       }
       playMove(world, b.pick);
@@ -569,7 +635,7 @@ export default {
       b.told = (b.told ?? 0) + dt;
       if (b.told >= 0.1) {
         b.told = 0;
-        world.send?.({ t: 'gm', k: 'aim', g: Math.round(b.gauge * 1000), p: b.pick,
+        world.send?.({ t: 'gm', k: 'aim', g: Math.round(b.gauge * 1000), p: b.pick, u: b.use,
                        h: b.held >= 0 ? 1 : 0 });
       }
     }
@@ -599,7 +665,10 @@ export default {
       if (b.think <= 0) {
         b.think = THINK;
         if (b.phase === 'charge') throwYut(world, aiGauge());
-        else if (b.phase === 'pick') playMove(world, aiPick(b.men, b.turn, b.roll.steps));
+        else if (b.phase === 'pick') {
+          const plan = aiPlan(b.men, b.turn, b.stock);
+          playMove(world, plan.piece, plan.use);
+        }
       }
     }
   },
@@ -633,7 +702,11 @@ export default {
       circle(ctx, world.w / 2 - wide / 2 + 20, 32, 9,
              { width: 2, color: TEAM_INK[b.turn], fill: TEAM_INK[b.turn], seed: 3, amp: 0.3 });
     }
-    const step = b.phase === 'pick' && b.roll ? ` · ${b.roll.name} — 옮길 말을 고른다` : '';
+    // 모아 둔 것 — 쓰려고 고른 것은 [ ] 로 감싼다.
+    const pile = (b.stock ?? []).map((r, k) => (b.phase === 'pick' && k === b.use ? `[${r.name}]` : r.name)).join(' ');
+    const step = b.phase === 'pick' && current(b)
+      ? ` · ${pile} — ${b.stock.length > 1 ? '⌥↑↓ 로 쓸 것 · ' : ''}옮길 말을 고른다`
+      : b.stock?.length ? ` · 모아 둔 것 ${pile} — 한 번 더 던진다` : '';
     text(ctx, `난 말 ${doneOf(b.men, 0)} : ${doneOf(b.men, 1)}${step}`, world.w / 2, 57,
          { font: `600 12px ${MONO}`, color: PENCIL, align: 'center', halo: 0 });
     // 방금 나온 것 — 크게 한 번
@@ -664,14 +737,16 @@ export default {
     if (msg.k === 'aim') {
       if (b.phase === 'charge') b.gauge = Math.max(0, Math.min(1, (+msg.g || 0) / 1000));
       if (b.phase === 'pick') {
-        const row = movableWith(b.men, b.turn, b.roll?.steps ?? 1);
+        const use = msg.u | 0;
+        if (use >= 0 && use < b.stock.length) b.use = use;
+        const row = movableWith(b.men, b.turn, current(b)?.steps ?? 1);
         const want = msg.p | 0;
         if (row.includes(want)) b.pick = want;
       }
       return;
     }
     if (msg.k === 'toss') throwYut(world, Math.max(0, Math.min(1, (+msg.g || 0) / 1000)));
-    if (msg.k === 'move') playMove(world, msg.i | 0);
+    if (msg.k === 'move') playMove(world, msg.i | 0, Number.isInteger(msg.u) ? msg.u : b.use);
   },
 
   pack(world) {
@@ -687,6 +762,8 @@ export default {
       tm: [...rosterSides(world).entries()],
       t: b.turn, st: [b.seat[0] ?? 0, b.seat[1] ?? 0],
       ph: b.phase, pk: b.pick, gg: Math.round(b.gauge * 1000),
+      // 모아 둔 것 [세기, 이름] · 쓰려고 고른 것
+      sk: (b.stock ?? []).map((r) => [r.steps, r.name]), us: b.use ?? 0,
       fy: Math.round(b.fly * 100),
       o: b.over ? 1 : 0, wn: b.winner === 0 || b.winner === 1 ? b.winner : -1,
       nt: b.note ?? null,
@@ -722,10 +799,17 @@ export default {
     if (Array.isArray(data.st) && data.st.every(Number.isFinite)) b.seat = [data.st[0], data.st[1]];
     const boss = !myTurn(world);
     if (typeof data.ph === 'string' && (boss || b.phase !== 'charge')) b.phase = data.ph;
+    if (Array.isArray(data.sk)) {
+      b.stock = data.sk.filter((r) => Array.isArray(r) && r.length >= 2 && Number.isFinite(r[0]))
+        .map((r) => ({ steps: r[0] | 0, name: String(r[1]) }));
+    }
     if (boss) {
       if (Number.isFinite(data.gg)) b.gauge = data.gg / 1000;
       if (Number.isFinite(data.pk)) b.pick = data.pk | 0;
+      if (Number.isFinite(data.us)) b.use = data.us | 0;
     }
+    // 내 차례여도 모아 둔 것이 줄었으면 고른 것을 판 안으로 당겨 둔다.
+    b.use = Math.max(0, Math.min(b.use ?? 0, Math.max(0, (b.stock?.length ?? 1) - 1)));
     if (Number.isFinite(data.fy)) b.fly = data.fy / 100;
     if (data.rl && typeof data.rl === 'object' && Array.isArray(data.rl.t)) {
       b.roll = {
@@ -885,7 +969,7 @@ function drawMen(ctx, L, world, b, time) {
                { width: 2.4, color: INK, seed: 20 + sx * 3 + sy, amp: 0.4, alpha: 0.85, haloWidth: 3 });
       }
       // 이 말이 어디로 가는지 미리 보여 준다
-      const plan = b.roll ? preview(b.men, b.pick, b.roll.steps) : null;
+      const plan = current(b) ? preview(b.men, b.pick, current(b).steps) : null;
       if (plan) {
         const [tu, tv] = spotOf(plan.to);
         const [tx, ty] = at2(L, tu, tv);
@@ -1013,7 +1097,9 @@ function drawCrew(ctx, world, b, time, boil) {
 const KEY_ROWS = [
   ['⌥ Space', '잡으면 힘이 찬다 · 떼면 던진다'],
   ['⌥ ← →', '옮길 말 고르기'],
-  ['윷 · 모 · 잡기', '한 번 더'],
+  ['⌥ ↑ ↓', '모아 둔 것 중 쓸 것'],
+  ['윷 · 모', '한 번 더 — 모았다 나눠 쓴다'],
+  ['잡기', '한 번 더'],
   ['빽도', '표 있는 짝만 젖혀지면 한 칸 뒤로'],
   ['낙', '못 닿거나 넘어가면 한 번 쉰다'],
 ];

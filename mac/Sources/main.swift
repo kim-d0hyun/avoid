@@ -508,6 +508,18 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             }
         }
 
+        // 시험용. 목록에서 이 이름인 사람 한 명만 부른다 — DDONG_INVITE="다라@6" 이면 6초 뒤.
+        if env["DDONG_DEBUG"] != nil, let plan = env["DDONG_INVITE"], let at = plan.firstIndex(of: "@"),
+           let after = Double(plan[plan.index(after: at)...]) {
+            let who = String(plan[..<at])
+            DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak self] in
+                guard let self, let person = self.presence.people.first(where: { $0.name == who && !$0.mine })
+                else { debugLog("한 사람 부르기 — \(who) 이(가) 목록에 없다"); return }
+                self.invitePerson(person.id)
+                debugLog("한 사람 부르기 — 내 방 \(self.net.code ?? "없음")")
+            }
+        }
+
         if env["DDONG_DEBUG"] != nil, let room = env["DDONG_ROOM"] {
             autoRoom = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in
@@ -661,6 +673,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
           // 같은 와이파이에서 몰겜을 켜 둔 사람들. 바뀔 때마다 onPeople 로 새 목록이 온다.
           people: \(peopleJSON()),
           onPeople: (handler) => { window.__ddongPeople = handler },
+          // 쉬는 사람 한 명만 부른다 (접속 중 목록에서 골랐을 때).
+          invite: (id) => window.webkit.messageHandlers.ddong.postMessage({ type: 'invite', id }),
           pickScreen: (number) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'screen', number,
           }),
@@ -809,7 +823,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     private func peopleJSON() -> String {
         let rows = presence.people.map { person -> String in
             let game = games.first(where: { $0.id == person.game })?.name ?? person.game
-            return "{\"name\":\(jsLiteral(person.name.isEmpty ? "누군가" : person.name)),"
+            return "{\"id\":\(jsLiteral(person.id)),\"name\":\(jsLiteral(person.name.isEmpty ? "누군가" : person.name)),"
                  + "\"room\":\"\(person.room)\",\"game\":\(jsLiteral(game)),"
                  + "\"host\":\(person.host),\"mine\":\(person.mine),\"old\":\(person.old)}"
         }
@@ -830,6 +844,34 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     // MARK: 알림 — 누가 부르면 뜬다
 
     private let callCategory = "ddong.call"
+
+    /// **시스템 알림이 꺼져 있나.** 켜져 있지 않으면 부름이 알림 센터로 안 간다 — 메뉴 막대에
+    /// 「켜기…」 줄을 세워 설정 화면으로 바로 보낸다. 처음 한 번 허락 창에서 「허용 안 함」을
+    /// 누르면 그 뒤로는 macOS 가 다시 묻지 않아서, 앱이 할 수 있는 건 이 길뿐이다.
+    private var notifyOff = false
+
+    private func checkNotifications() {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            let off = settings.authorizationStatus == .denied
+            DispatchQueue.main.async {
+                guard let self, self.notifyOff != off else { return }
+                self.notifyOff = off
+                debugLog("시스템 알림 \(off ? "꺼져 있다" : "켜져 있다")")
+                self.refreshMenu()
+            }
+        }
+    }
+
+    /// 시스템 설정의 몰겜 알림 화면을 연다.
+    @objc private func openNotificationSettings() {
+        let id = Bundle.main.bundleIdentifier ?? "dev.turban.ddong-dodge"
+        let urls = ["x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)",
+                    "x-apple.systempreferences:com.apple.preference.notifications"]
+        for text in urls {
+            if let url = URL(string: text), NSWorkspace.shared.open(url) { return }
+        }
+    }
 
     /// **알림이 막혀 있어도 부름을 놓치지 않게.** 알림 허락을 안 했거나(임시 서명 앱은 macOS 가
     /// 막기도 한다) 방해 금지 중이면 알림이 안 뜬다. 그래서 메뉴 막대 아이콘에 📣 를 달고
@@ -878,10 +920,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             center.getNotificationSettings { settings in
                 debugLog("알림 상태 \(settings.authorizationStatus.rawValue) (0 아직·1 거절·2 허락·3 임시)")
             }
+            checkNotifications()
             return
         }
-        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             debugLog("알림 허락 \(granted ? "받음" : "못 받음")\(error.map { " (\($0.localizedDescription))" } ?? "")")
+            DispatchQueue.main.async { self?.checkNotifications() }
         }
     }
 
@@ -892,14 +936,18 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
     private func notifyCall(from person: OnlinePerson, room: String) {
         let who = person.name.isEmpty ? "누군가" : person.name
         let game = games.first(where: { $0.id == person.game })?.name ?? person.game
-        let body = [game.isEmpty ? nil : game, "방 \(room)", person.old ? "버전이 달라 못 들어갈 수 있다" : nil]
-            .compactMap { $0 }.joined(separator: " · ")
+        // 같은 방에서 불렀다 — 들어와 놓고 딴 데 가 있는 나를 판으로 부른 것이다.
+        let back = net.role != "off" && net.code == room
+        let body = back ? "같은 방 \(room) · 누르면 게임이 다시 보인다"
+            : [game.isEmpty ? nil : game, "방 \(room)", person.old ? "버전이 달라 못 들어갈 수 있다" : nil]
+                .compactMap { $0 }.joined(separator: " · ")
         debugLog("알림: \(who) 님이 부른다 — \(body)")
         showPendingCall(who: who, room: room, note: body)
+        checkNotifications()
         let env = ProcessInfo.processInfo.environment
         guard !isDebugRun || env["DDONG_NOTIFY"] != nil, Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
-        content.title = "\(who) 님이 같이 하자고 부른다"
+        content.title = back ? "\(who) 님이 판으로 부른다" : "\(who) 님이 같이 하자고 부른다"
         content.body = body
         content.sound = .default
         content.categoryIdentifier = callCategory
@@ -937,6 +985,27 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         refreshMenu()
     }
 
+    /// 한 사람에게 초대장을 보낸다. 메뉴 막대에서 고르든 게임 안에서 고르든 여기로.
+    /// **방에 없으면 방부터 연다** — 지금 하던 게임으로. 초대장에는 들어올 방이 있어야 한다.
+    private func invitePerson(_ id: String) {
+        if net.role == "off" {
+            guard confirmName(), net.host() != nil else { return }
+            syncPresence()                   // 이름표에 방이 적혀야 부를 수 있다
+        }
+        guard presence.invite(id) else { return }
+        refreshMenu()
+        pushPeople()
+        DispatchQueue.main.asyncAfter(deadline: .now() + callCooldown + 0.2) { [weak self] in
+            self?.refreshMenu()
+            self?.pushPeople()
+        }
+    }
+
+    @objc private func invitePersonFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        invitePerson(id)
+    }
+
     @objc private func callEveryone() {
         guard presence.callEveryone() else { return }
         refreshMenu()
@@ -971,6 +1040,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         if let call = pendingCall {
             menu.addItem(withTitle: "📣 \(call.who) 님이 부른다 — \(call.note)  ·  참여",
                          action: #selector(joinPendingCall), keyEquivalent: "").target = self
+            menu.addItem(.separator())
+        }
+        if notifyOff {
+            menu.addItem(withTitle: "⚠️ 시스템 알림이 꺼져 있다 — 켜야 부름이 알림으로 온다  ·  켜기…",
+                         action: #selector(openNotificationSettings), keyEquivalent: "").target = self
             menu.addItem(.separator())
         }
         menu.addItem(withTitle: isHidden ? "보이기  ⌥H" : "숨기기  ⌥H",
@@ -1176,12 +1250,21 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                     .compactMap { $0 }.joined(separator: " · ")
             let name = person.name.isEmpty ? "누군가" : person.name
             let title = "\(name)\(person.mine ? " (나)" : "")  —  \(where_)\(person.old ? " · 버전 다름" : "")"
-            let canJoin = !person.mine && !person.room.isEmpty && person.room != net.code
-            let item = NSMenuItem(title: title, action: canJoin ? #selector(joinFromList(_:)) : nil,
-                                  keyEquivalent: "")
-            item.representedObject = person.room
+            // **고르면 그 사람에게 초대장을 보낸다** — 그 사람이 딴 방의 방장이어도 내가 가지 않는다.
+            // 내가 방에 없으면 방을 먼저 연다. 같은 방 사람 · 나는 고를 수 없다.
+            // 같은 방 사람도 부를 수 있다 — 판에서 딴 데 가 있으면 알림으로 불러온다.
+            let sameRoom = net.role != "off" && !person.room.isEmpty && person.room == net.code
+            let canInvite = !person.mine && presence.callWait == 0
+            let item: NSMenuItem
+            if canInvite {
+                item = NSMenuItem(title: title + (sameRoom ? "  ·  판으로 부르기" : net.role == "off" ? "  ·  방 열고 초대" : "  ·  초대"),
+                                  action: #selector(invitePersonFromMenu(_:)), keyEquivalent: "")
+                item.representedObject = person.id
+            } else {
+                item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+            }
             item.target = self
-            item.isEnabled = canJoin
             list.addItem(item)
         }
         let parent = NSMenuItem(title: "접속 중  (\(presence.people.count)명)", action: nil, keyEquivalent: "")
@@ -1668,6 +1751,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             }
         case "roomGame":
             if let id = body["id"] as? String { net.roomGame = id; syncPresence() }
+        case "invite":
+            if let id = body["id"] as? String { invitePerson(id) }
         case "rescanRooms":
             net.refreshRooms()
         case "joinRoom":
@@ -1745,6 +1830,7 @@ extension App: NetDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         net.refreshRooms()
         presence.refresh()
+        checkNotifications()      // 설정에서 켜고 돌아왔으면 「켜기…」 줄을 걷는다
     }
 
     /// 열려 있는 방이 바뀌었다 — 메뉴 막대와 게임 안 메뉴 둘 다에 새 목록을 준다.

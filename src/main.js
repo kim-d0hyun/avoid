@@ -150,6 +150,18 @@ world.onMenu = (action) => {
     game.stand?.(world, world.team ?? 0, 2);
     return;
   }
+  // 접속 중 목록에서 고른 것 — 까닭 한 줄 · 한 사람 부르기.
+  if (action.startsWith('tell:')) { say(world, action.slice(5)); return; }
+  if (action.startsWith('invite:')) {
+    const wait = callWaitLeft(world);
+    if (wait > 0) { say(world, `${wait}초 뒤에 다시 부를 수 있다`); return; }
+    const person = (world.people ?? []).find((p) => p.id === action.slice(7));
+    shell.invite?.(action.slice(7));
+    const same = world.mp.on && person?.room && person.room === world.mp.code;
+    say(world, same ? `${person.name} 을(를) 판으로 불렀다`
+      : `${person?.name ?? '그 사람'} 에게 초대장을 보냈다${world.mp.on ? '' : ' (방을 열었다)'}`);
+    return;
+  }
   // 모두 부르기 — 부르는 건 셸이 한다(이름표에 적는다). 여기서는 불렀다는 것만 알려 준다.
   if (action === 'call') {
     const wait = callWaitLeft(world);

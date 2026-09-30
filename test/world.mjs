@@ -156,10 +156,10 @@ say('접속 중 — 켜 둔 사람들 · 방에 있는 사람을 고르면 그 �
 {
   const w = make([]);
   w.people = [
-    { name: '도현', room: '', game: '', host: false, mine: true, old: false },
-    { name: '범창', room: 'K3P9', game: '배구', host: true, mine: false, old: false },
-    { name: '보람', room: '', game: '', host: false, mine: false, old: false },
-    { name: '옛날', room: 'Z7Q2', game: '오목', host: true, mine: false, old: true },
+    { id: 'p1', name: '도현', room: '', game: '', host: false, mine: true, old: false },
+    { id: 'p2', name: '범창', room: 'K3P9', game: '배구', host: true, mine: false, old: false },
+    { id: 'p3', name: '보람', room: '', game: '', host: false, mine: false, old: false },
+    { id: 'p4', name: '옛날', room: 'Z7Q2', game: '오목', host: true, mine: false, old: true },
   ];
   tap(w, 'menu');
   into(w, 'together');
@@ -167,11 +167,28 @@ say('접속 중 — 켜 둔 사람들 · 방에 있는 사람을 고르면 그 �
   into(w, 'people');
   check('또 한 겹', w.menu.path, ['together', 'people']);
   check('이름', labels(w), ['도현 (나)', '범창', '보람', '옛날']);
-  check('어디에 있나', menuItems(w).map((i) => i.note),
-        ['쉬는 중', '방 K3P9 · 배구 · 방장', '쉬는 중', '방 Z7Q2 · 오목 · 방장 · 버전 다름']);
-  check('방에 있는 사람만 고를 수 있다', menuItems(w).map((i) => !i.info), [false, true, false, true]);
-  tap(w, 'duck'); tap(w, 'right');                   // 범창
-  check('그 방으로 들어간다', w.picked, ['join:K3P9']);
+  // **고르면 초대장이다.** 딴 방의 방장을 골라도 내가 그리로 가지 않는다 — 그 사람을 부른다.
+  // 방에 없으면 방을 열고 부른다.
+  check('어디에 있나 · 고르면 무엇을 하나', menuItems(w).map((i) => i.note),
+        ['쉬는 중', '방 K3P9 · 배구 · 방장 · 방 열고 초대', '쉬는 중 · 방 열고 초대',
+         '방 Z7Q2 · 오목 · 방장 · 버전 다름 · 방 열고 초대']);
+  check('고르면 하는 일', menuItems(w).map((i) => i.id), ['tell:나다', 'invite:p2', 'invite:p3', 'invite:p4']);
+  tap(w, 'duck'); tap(w, 'right');                   // 범창 — 딴 방의 방장
+  check('그 방으로 가지 않고 그 사람을 초대한다', w.picked, ['invite:p2']);
+
+  // 내가 방에 있으면 같은 방 사람은 부를 까닭이 없다. 나머지는 초대.
+  const r = make([]);
+  r.mp.on = true; r.mp.role = 'host'; r.mp.code = 'K3P9';
+  r.people = [{ id: 'p1', name: '범창', room: 'K3P9', mine: true }, { id: 'p2', name: '보람', room: 'K3P9' },
+              { id: 'p3', name: '도현', room: '' }, { id: 'p4', name: '연우', room: 'Z7Q2', host: true }];
+  tap(r, 'menu'); into(r, 'together'); into(r, 'people');
+  // 같은 방 사람도 부른다 — 들어와 놓고 딴 데 가 있는 사람을 판으로.
+  check('같은 방 사람 · 쉬는 사람 · 딴 방 방장', menuItems(r).map((i) => i.id),
+        ['tell:나다', 'invite:p2', 'invite:p3', 'invite:p4']);
+  check('같은 방 사람은 판으로 부르기', menuItems(r)[1].note, '같은 방 · 판으로 부르기');
+  check('초대라고 적는다', menuItems(r)[3].note, '방 Z7Q2 · 방장 · 초대');
+  tap(r, 'duck'); tap(r, 'duck'); tap(r, 'duck'); tap(r, 'right');
+  check('셸에 그 사람을 초대하라고 넘긴다', r.picked, ['invite:p4']);
 
   // 방 안에서는 「모두 부르기」가 생긴다. 같은 방 사람은 부를 수에서 뺀다.
   const h = make([]);
