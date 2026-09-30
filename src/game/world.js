@@ -533,6 +533,20 @@ function roomsNote(world) {
   return n ? `${n}개` : '찾는 중…';
 }
 
+/// 「접속 중」 옆에 적는 한 줄 — 나까지 몇 명 켜 두었나.
+function peopleNote(world) {
+  const n = (world.people ?? []).length;
+  return n > 1 ? `${n}명` : '나 혼자';
+}
+
+/// 「모두 부르기」 — 방에 있을 때만 세운다. 방금 불렀으면 몇 초 남았는지 적는다.
+function callRow(world) {
+  const wait = world.callWaitLeft?.() ?? 0;
+  const others = (world.people ?? []).filter((p) => !p.mine && p.room !== world.mp.code).length;
+  return { id: 'call', label: '모두 부르기',
+           note: wait > 0 ? `${wait}초 뒤 다시` : `켜 둔 ${others}명에게 알림` };
+}
+
 function togetherItems(world) {
   const mp = world.mp;
   if (!mp.on) {
@@ -544,13 +558,18 @@ function togetherItems(world) {
       // 같은 와이파이면 방을 연 순간 남들 목록에 뜬다.
       { id: 'rooms', into: 'rooms', label: '방 목록', note: roomsNote(world) },
       { id: 'join', label: '코드로 입장' },
+      // **같은 와이파이에서 몰겜을 켜 둔 사람들.** 방에 있는 사람을 고르면 그 방으로 간다.
+      { id: 'people', into: 'people', label: '접속 중', note: peopleNote(world) },
       // 남들 머리 위에 뜨는 이름. 방에 들어가기 전에 고쳐 두는 게 맞다 —
       // 들어간 뒤에 고치면 이미 다들 옛 이름으로 부르고 있다.
       { id: 'name', label: '이름 바꾸기', note: world.mp.myName || '' },
     ];
   }
   const rows = [{ id: 'name', label: '이름 바꾸기', note: mp.myName || '' },
-                { id: 'copy', label: '코드 복사', note: mp.code ?? '' }];
+                { id: 'copy', label: '코드 복사', note: mp.code ?? '' },
+                // **켜 둔 사람 모두에게 알림을 보낸다.** 알림의 「참여」를 누르면 이 방으로 바로 온다.
+                callRow(world),
+                { id: 'people', into: 'people', label: '접속 중', note: peopleNote(world) }];
   // **아무도 안 들어온 내 방에서는 남의 방에도 들어갈 수 있어야 한다.**
   // 야구·오목은 고르는 순간 방이 열려서(`opensRoom`) 곧바로 「방 안」이 되는데,
   // 방 안 메뉴에는 코드 입력이 없었다 — 그래서 **친구가 불러 준 코드를 넣을 데가 사라졌다.**
@@ -648,6 +667,21 @@ export function menuItems(world) {
       // 로컬 네트워크 권한을 뒤늦게 허용한 경우). 뒤쪽이면 이것만이 방법이다.
       return [{ id: 'none', label: '열려 있는 방이 없다', note: '같은 와이파이인지 확인' },
               { id: 'rescan', label: '다시 찾기' }];
+    }
+    // **켜 둔 사람들.** 방에 있는 사람은 고르면 그 방으로 간다. 나머지는 보여 주기만 한다.
+    case 'together/people': {
+      return (world.people ?? []).map((person) => {
+        const where = person.room
+          ? [`방 ${person.room}`, person.game || null, person.host ? '방장' : null].filter(Boolean).join(' · ')
+          : '쉬는 중';
+        const canJoin = !person.mine && person.room && person.room !== world.mp.code;
+        return {
+          id: canJoin ? `join:${person.room}` : 'person',
+          label: `${person.name}${person.mine ? ' (나)' : ''}`,
+          note: `${where}${person.old ? ' · 버전 다름' : ''}`,
+          info: !canJoin,
+        };
+      });
     }
     // 내보낼 사람 고르기. 다 내보내고 나면 고를 게 없으니 한 겹 나온다.
     case 'together/kick': {

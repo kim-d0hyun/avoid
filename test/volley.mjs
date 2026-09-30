@@ -1637,6 +1637,22 @@ say('페인트 — 떠오른 블로커 손 위로 넘어간다');
   for (const air of [40, 61.5]) check(`네트에서 80 — 블로커가 ${air} 떠 있어도 넘긴다`, tip(80, air), '넘김');
   check('네트에서 80 — 블로커가 없어도 넘긴다', tip(80, null), '넘김');
   check('가운데(250)에서는 제 코트에 떨어진다', tip(250, null), '제코트');
+  // **너무 높이 뜨지도 않는다.** 1000×SLOW 일 때는 바닥 위 335 까지 올라 1.5초를 떠 있었다 —
+  // 톡 얹는 공이 아니라 높이 띄운 공이었다.
+  {
+    const r = rig({ x: 650, air: 58, off: [10, 10], vy: 150 });
+    tipHit(r.world);
+    let top = r.b.ball.y, t = 0;
+    for (let i = 0; i < 400 && !r.b.serving; i++) {
+      r.p.x = 200; r.p.air = 0;
+      volley.update(r.world, 1 / 120); t += 1 / 120;
+      if (!r.b.serving) top = Math.min(top, r.b.ball.y);
+    }
+    const high = r.world.groundY - top;
+    ok('바닥 위 280 안쪽까지만 뜬다', high < 280);
+    ok('1.35초 안에 떨어진다', t < 1.35);
+    note(`페인트 — 최고 ${high.toFixed(0)}px · ${t.toFixed(2)}초`);
+  }
 }
 
 say('⌥↑ 와 ⌥Space + ↑ — 두 기술이 한 공을 두 번 치지 않는다');

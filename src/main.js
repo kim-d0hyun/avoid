@@ -25,6 +25,8 @@ const shell = window.ddong ?? {
   onRooms() {},
   joinRoom() {},
   rescanRooms() {},
+  people: { list: [], callWait: 0 },
+  onPeople() {},
   setRoomGame() {},
   pickScreen() {},
   fade: 1,
@@ -51,7 +53,7 @@ world.saveProgress = (gameId, index) => shell.saveProgress?.(gameId, index);
 
 // 게임 안 메뉴에서 고른 것. 방을 열고 닫는 일은 셸이 해야 해서 이름만 넘긴다.
 const SHELL_ACTIONS = { host: 'host', join: 'join', leave: 'leave', hide: 'hide',
-                        copy: 'copy', name: 'name', quitYes: 'quit' };
+                        copy: 'copy', name: 'name', call: 'call', quitYes: 'quit' };
 world.onMenu = (action) => {
   if (action === 'again') {
     // 판이 여럿인 게임에서 하던 판을 되감는 것이면 횟수를 센다 (단계 끝에 보여 준다).
@@ -148,6 +150,13 @@ world.onMenu = (action) => {
     game.stand?.(world, world.team ?? 0, 2);
     return;
   }
+  // 모두 부르기 — 부르는 건 셸이 한다(이름표에 적는다). 여기서는 불렀다는 것만 알려 준다.
+  if (action === 'call') {
+    const wait = callWaitLeft(world);
+    if (wait > 0) { say(world, `${wait}초 뒤에 다시 부를 수 있다`); return; }
+    const others = (world.people ?? []).filter((p) => !p.mine && p.room !== world.mp.code).length;
+    say(world, others ? `켜 둔 ${others}명에게 알림을 보냈다` : '켜 둔 사람이 없다 — 같은 와이파이인지 확인');
+  }
   const name = SHELL_ACTIONS[action];
   if (name) shell.menu?.(name);
 };
@@ -216,6 +225,19 @@ shell.onScreens?.((list) => { world.screens = Array.isArray(list) ? list : []; }
 // 같은 와이파이에 열려 있는 방들. 셸이 Bonjour 로 찾아서 바뀔 때마다 밀어 준다.
 world.rooms = Array.isArray(shell.rooms) ? shell.rooms : [];
 shell.onRooms?.((list) => { world.rooms = Array.isArray(list) ? list : []; });
+// 같은 와이파이에서 몰겜을 켜 둔 사람들 · 내가 다시 부를 수 있기까지 남은 초.
+/// 다시 부를 수 있기까지 남은 초. 셸이 알려 준 값을 받은 때부터 줄여 센다.
+const callWaitLeft = (w) => Math.max(0, Math.ceil((w.callWait ?? 0) - (performance.now() - (w.callWaitAt ?? 0)) / 1000));
+world.callWaitLeft = () => callWaitLeft(world);
+const takePeople = (data) => {
+  world.people = Array.isArray(data?.list) ? data.list : [];
+  world.callWait = Number.isFinite(data?.callWait) ? data.callWait : 0;
+  world.callWaitAt = performance.now();
+};
+takePeople(shell.people);
+// 셸이 판 위에 한 줄 띄울 때 (누가 불렀다 같은 것).
+window.__ddongSay = (text) => say(world, String(text));
+shell.onPeople?.(takePeople);
 shell.setRoomGame?.(world.gameId);
 
 let ground = null;
