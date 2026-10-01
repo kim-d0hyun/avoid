@@ -258,21 +258,22 @@ say('슬라이딩 — 닿는 거리면 던지지 말고 쳐야 한다');
   check('공이 위로 떴다', b.ball.vy < 0, true);
 }
 
-say('한쪽 편이 비면 판이 안 열린다');
+say('한쪽 편이 비어도 판이 열린다 — 2대1 · 2대0 도 된다');
 {
+  // 예전엔 한쪽이 비면 못 열었고, 1:1 에서 한 사람이 편을 바꾸면 둘 다 굳었다.
   const world = mk();
   world.mp.on = true; world.mp.myId = 1; world.mp.myName = '도현';
   world.team = 0; world.player.x = 300;
-  check('나 혼자 빨강 → 못 연다', volley.blocked(world), '파랑 편에 아무도 없다');
+  check('나 혼자 빨강이어도 연다', volley.blocked(world), null);
   // 파랑에 한 명 세운다
   world.mp.others.set(2, { id: 2, name: '범창', x: 1200, dead: false, waiting: false, air: 0 });
   check('2대1 이 아니라 1대1 → 열린다', volley.blocked(world), null);
   world.mp.others.set(3, { id: 3, name: '보람', x: 400, dead: false, waiting: false, air: 0 });
   check('2대1 도 열린다', volley.blocked(world), null);
   check('편 이름표', volley.tally(world) !== undefined, true);
-  // 파랑 사람이 빨강으로 넘어가면 다시 막힌다
+  // 파랑 사람이 빨강으로 넘어와도 막지 않는다 — 둘이 한 편이 된다
   world.mp.others.get(2).x = 500;
-  check('파랑이 비면 다시 막힌다', volley.blocked(world), '파랑 편에 아무도 없다');
+  check('파랑이 비어도 연다', volley.blocked(world), null);
 }
 
 
@@ -1750,6 +1751,28 @@ say('⌥↓ 와 ⌥→ — ↓ 는 짧게 뚝, → 는 빠르고 깊게');
   check('손님 공도 감겼다', g.bag.ball.dip, true);
   volley.unpack(g, { b: [700, 600, 900, 300, 0, 0, 1], w: 0 });
   check('옛 꾸러미(일곱 칸)는 안 감긴 공', g.bag.ball.dip, false);
+}
+
+say('편 바꾸기 — 판이 끝나고 다음 판에도 그대로');
+{
+  // 고른 편을 bag 에 두었더니 판이 새로 열릴 때마다(restart) 지워져 원래 편으로 돌아갔다.
+  const world = mk(); world.state = 'play';
+  world.mp.on = true; world.mp.role = 'host'; world.mp.myId = 1;
+  world.mp.others.set(2, { id: 2, name: '범창', x: 1100, air: 0, groundY: world.groundY, dead: false, waiting: false });
+  volley.update(world, 1 / 60);
+  check('처음엔 번호 순 — 나는 빨강', world.team, 0);
+  volley.swap(world, null, 1);                       // 나는 파랑으로
+  volley.message(world, 2, { t: 'gm', s: 0 });       // 손님은 빨강으로
+  volley.update(world, 1 / 60);
+  check('바꿨다', world.team, 1);
+  const before = volley.pack(world).tm;
+  w.restart(world); world.state = 'play';            // 판이 끝나고 다음 판
+  volley.update(world, 1 / 60);
+  check('다음 판에도 나는 파랑', world.team, 1);
+  check('손님 편도 그대로', volley.pack(world).tm, before);
+  w.pickGame(world, 'volley'); world.state = 'play'; // 게임을 다시 골라도
+  volley.update(world, 1 / 60);
+  check('게임을 다시 골라도 파랑', world.team, 1);
 }
 
 done('배구');

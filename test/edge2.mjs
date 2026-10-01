@@ -70,12 +70,17 @@ say('⑱ 배구 도중 한 편이 통째로 나가면');
   world.mp.others.set(2, peer(2, 1200, { groundY: world.groundY }));
   ok('처음엔 양쪽에 사람이 있다', volley.blocked(world) === null);
   net.peerChanged(world, shell, 2, 'p2', false, api(world));
-  ok('한쪽이 비었다고 말한다', typeof volley.blocked(world) === 'string');
+  // **판을 접지 않는다.** 접으면 끝난 화면에서 사람이 안 움직이고, 한쪽이 빈 채로는 다시 열 수도
+  // 없어서 남은 사람이 그대로 굳었다. 이제 빈 코트는 혼자 할 때처럼 저절로 서브를 넣는다.
+  ok('한쪽이 비어도 막지 않는다', volley.blocked(world) === null);
   let ended = false;
-  world.onGameOver = (r) => { ended = true; check('이긴 편 없이 끝난다', r.name, null); };
+  world.onGameOver = () => { ended = true; };
+  const x0 = world.player.x;
+  world.input.right = true;
   for (let i=0;i<60;i++) w.update(world,1/60);
-  ok('빈 코트로 계속 돌지 않고 판을 접는다', ended);
-  ok('점수를 쌓지 않았다', world.bag.score[0] + world.bag.score[1] === 0);
+  world.input.right = false;
+  ok('판이 그대로 돈다', !ended && world.state === 'play');
+  ok('남은 사람은 자유롭게 움직인다', world.player.x > x0 + 50);
   ok('그래도 안 터진다', Number.isFinite(world.bag.ball.x));
 }
 

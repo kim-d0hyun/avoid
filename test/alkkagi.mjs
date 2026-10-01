@@ -291,15 +291,15 @@ say('차례는 편 안에서도 돈다 — 여럿이서');
   check('검1 → 하1 → 검2 → 하2 … 로 돈다', order, [1, 2, 3, 4, 1, 2, 3, 4]);
 }
 
-say('편 바꾸기 — 둘이면 색을 맞바꾼다');
+say('편 바꾸기 — 고른 사람만 옮긴다 (둘이 한 편이면 빈 편은 컴퓨터)');
 {
   const host = mk();
   host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1; host.team = 0;
   join(host, 2, 1);
   alk.swap(host, null, 1);
-  check('맞바뀐다', [host.team, host.mp.alkSides.get(2)], [1, 0]);
+  check('나만 옮긴다', [host.team, host.mp.alkSides.get(2)], [1, 1]);
   w.update(host, FR);
-  check('양쪽에 한 명씩', [seatsOf(host, 0).length, seatsOf(host, 1).length], [1, 1]);
+  check('한 편에 둘', [seatsOf(host, 0).length, seatsOf(host, 1).length], [0, 2]);
 }
 
 say('손님이 보내는 말 — 차례인 사람 것만 받는다');

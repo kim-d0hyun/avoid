@@ -131,23 +131,23 @@ say('차례는 편 안에서도 돈다 — N:N 이라 한 사람이 연달아 �
   ok('내(1번) 차례다', myTurn(world));
 }
 
-say('편 바꾸기 — 둘이면 색을 맞바꾼다');
+say('편 바꾸기 — 고른 사람만 옮긴다 (둘이 한 편이면 빈 편은 컴퓨터)');
 {
+  // 예전엔 1:1 에서 상대를 반대편으로 맞바꿔 줬다 — 같이 한 편이 되려던 사람에게는 「바꿔도 안 바뀐다」였다.
   const host = mk();
   host.mp.on = true; host.mp.role = 'host'; host.mp.myId = 1; host.team = 0;
   join(host, 2, 1);
   check('처음엔 내가 검정, 상대가 하양', [host.team, host.mp.omokSides.get(2)], [0, 1]);
   omok.swap(host, null, 1);                       // 나도 하양으로 가겠다
   check('내가 하양이 됐다', host.team, 1);
-  check('상대는 검정으로 밀려났다', host.mp.omokSides.get(2), 0);
+  check('상대는 그대로 하양', host.mp.omokSides.get(2), 1);
   w.update(host, FR);
-  check('양쪽에 한 명씩 남는다', [seatsOf(host, 0).length, seatsOf(host, 1).length], [1, 1]);
-  // 되돌려도 마찬가지
+  check('하양에 둘 · 검정은 비었다 (컴퓨터가 맡는다)', [seatsOf(host, 0).length, seatsOf(host, 1).length], [0, 2]);
   omok.swap(host, null, 0);
-  check('되돌리면 다시 맞바뀐다', [host.team, host.mp.omokSides.get(2)], [0, 1]);
-  // 손님이 바꿔 달라고 해도 맞바꾼다
+  check('되돌리면 나만 돌아간다', [host.team, host.mp.omokSides.get(2)], [0, 1]);
+  // 손님이 검정으로 와도 나는 그대로
   omok.message(host, 2, { s: 0 });
-  check('손님이 검정으로 오면 내가 하양으로', [host.mp.omokSides.get(2), host.team], [0, 1]);
+  check('손님이 검정으로 오면 둘 다 검정', [host.mp.omokSides.get(2), host.team], [0, 0]);
   // 셋이면 맞바꾸지 않는다 (누구와 바꿀지 알 수 없다)
   const three = mk();
   three.mp.on = true; three.mp.role = 'host'; three.mp.myId = 1; three.team = 0;

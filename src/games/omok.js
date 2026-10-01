@@ -251,26 +251,13 @@ function rosterSides(world) {
   return sides;
 }
 
-/// **편을 바꾼다.** 방장이 정한다.
-///
-/// 1:1 에서 내가 상대 편으로 가면 **색을 맞바꾼다.** 안 바꾸면 둘이 같은 편에 서고
-/// 빈 편은 컴퓨터가 맡는다 — 편을 고른 게 아니라 상대를 컴퓨터로 갈아 치운 셈이 된다.
-/// 셋 이상이면 그냥 옮긴다 (누구와 바꿀지 알 수 없다).
+/// 편을 고른다. **고른 사람만 옮긴다** — 1:1 에서 한 사람이 편을 바꾸면 둘이 한 편에 서고
+/// 빈 편은 컴퓨터가 맡는다. 예전엔 상대를 반대편으로 맞바꿔 줬는데, 같이 한 편이 되려고
+/// 바꾼 사람에게는 그게 「바꿔도 안 바뀐다」였다.
 function takeSide(world, id, side) {
   const want = side ? 1 : 0;
-  const picked = picks(world);
-  const before = id === world.mp.myId ? (world.team ?? 0) : (picked.get(id) ?? 0);
-  const ids = [world.mp.myId, ...world.mp.others.keys()];
-  const sideOf = (who) => (who === world.mp.myId ? (world.team ?? 0) : (picked.get(who) ?? 0));
-  const foes = ids.filter((who) => who !== id && sideOf(who) === want);
-  picked.set(id, want);
+  picks(world).set(id, want);
   if (id === world.mp.myId) world.team = want;
-  // 둘뿐이고 그 한 사람이 내가 가려는 편에 있으면 자리를 맞바꾼다.
-  if (ids.length === 2 && foes.length === 1 && before !== want) {
-    const other = foes[0];
-    picked.set(other, before);
-    if (other === world.mp.myId) world.team = before;
-  }
 }
 
 /// 그 편에 선 사람들 (번호 순). 번호 순이라 방장과 손님이 같은 차례를 센다.

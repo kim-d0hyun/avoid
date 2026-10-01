@@ -300,21 +300,13 @@ function rosterSides(world) {
   return sides;
 }
 
-/// 1:1 이면 색을 맞바꾼다 — 안 바꾸면 둘이 같은 편에 서고 빈 편은 컴퓨터가 맡는다.
+/// 편을 고른다. **고른 사람만 옮긴다** — 1:1 에서 한 사람이 편을 바꾸면 둘이 한 편에 서고
+/// 빈 편은 컴퓨터가 맡는다. 예전엔 상대를 반대편으로 맞바꿔 줬는데, 같이 한 편이 되려고
+/// 바꾼 사람에게는 그게 「바꿔도 안 바뀐다」였다.
 function takeSide(world, id, side) {
   const want = side ? 1 : 0;
-  const picked = picks(world);
-  const before = id === world.mp.myId ? (world.team ?? 0) : (picked.get(id) ?? 0);
-  const ids = [world.mp.myId, ...world.mp.others.keys()];
-  const sideOf = (who) => (who === world.mp.myId ? (world.team ?? 0) : (picked.get(who) ?? 0));
-  const foes = ids.filter((who) => who !== id && sideOf(who) === want);
-  picked.set(id, want);
+  picks(world).set(id, want);
   if (id === world.mp.myId) world.team = want;
-  if (ids.length === 2 && foes.length === 1 && before !== want) {
-    const other = foes[0];
-    picked.set(other, before);
-    if (other === world.mp.myId) world.team = before;
-  }
 }
 
 export function seatsOf(world, side) {

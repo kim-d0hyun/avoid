@@ -289,6 +289,11 @@ const teamName = (side) => (side === 0 ? '빨강' : '파랑');
 /// 번호 순으로 갈라 명단을 만들어 뿌리고, 손님은 그 명단을 따른다.
 ///
 /// 손으로 바꾼 사람은 그 선택을 지켜 준다 — 방장에게 알려 두면 다음 명단부터 반영된다.
+///
+/// **고른 편은 판(bag)이 아니라 방(mp)에 둔다.** bag 은 판이 새로 열릴 때마다 새로 만들어져서,
+/// 편을 바꾸고 한 판 하고 나면 다음 판에 원래 편으로 돌아갔다. 다른 게임(윷·오목·알까기·야구)은
+/// 처음부터 mp 에 두었다.
+const picks = (world) => (world.mp.volleySides ??= new Map());
 function rosterSides(world) {
   const mp = world.mp;
   // 관전 중인 사람은 뺀다. 아직 이 세트에 안 낀 사람까지 세면 편이 어그러진다.
@@ -296,7 +301,7 @@ function rosterSides(world) {
     ...(mp.waiting ? [] : [mp.myId]),
     ...[...mp.others.keys()].filter((id) => !mp.others.get(id)?.waiting),
   ].sort((a, b) => a - b);
-  const picked = world.bag.picked ?? new Map();
+  const picked = picks(world);
   const out = new Map();
   let auto = 0;
   for (const id of ids) {
@@ -316,19 +321,6 @@ export function teams(world) {
     add(other.name || '?', other.x, false);
   }
   return rows;
-}
-
-/// 한쪽 편이 비었나. 비었으면 그 까닭을 돌려준다.
-///
-/// **2대1도 된다.** 편이 안 맞아도 하고 싶으면 하는 것이다 — 사무실에서 셋이 모이면
-/// 그렇게 논다. 다만 **한쪽이 비면 안 된다.** 상대 없이 넘기는 건 배구가 아니고,
-/// 공이 빈 코트에 떨어지면 그냥 점수만 쌓인다.
-function emptySide(world) {
-  if (!world.mp.on) return null;              // 혼자면 연습이니 막지 않는다
-  const rows = teams(world);
-  if (!rows[0].length) return '빨강 편에 아무도 없다';
-  if (!rows[1].length) return '파랑 편에 아무도 없다';
-  return null;
 }
 
 function serve(world, toSide) {
@@ -1429,7 +1421,10 @@ export default {
   /// **2대1도 된다.** 편이 안 맞아도 하고 싶으면 하는 것이다 — 사무실에서 셋이 모이면
   /// 그렇게 논다. 다만 **한쪽이 비면 안 된다.** 상대 없이 넘기는 건 배구가 아니고,
   /// 공이 빈 코트에 떨어지면 그냥 점수만 쌓인다.
-  blocked: (world) => emptySide(world),
+  /// **한쪽 편이 비어도 연다** — 2대1도, 2대0도 된다. 예전엔 한쪽이 비면 판을 못 열게 막고 판 도중에
+  /// 비면 끊었는데, 끊긴 화면에서는 사람이 안 움직이고 빈 채로는 다시 열 수도 없어서 1:1 에서 한 사람이
+  /// 편을 바꾸면 **둘 다 그대로 굳었다.** 빈 코트는 혼자 할 때처럼 저절로 서브를 넣는다(EMPTY_WAIT).
+  blocked: () => null,
   /// 옷 색은 번호가 아니라 **선 자리**로 정한다. 왼쪽은 빨강, 오른쪽은 파랑.
   /// 만세 부르는 우승 인형은 번호가 음수로 온다 (-1 빨강, -2 파랑) — 그건 자리로 못 정한다.
   shirt: (world, x, id) => TEAM_INK[id < 0 ? -1 - id : sideOfX(world, x)],
@@ -1547,7 +1542,7 @@ export default {
     spaceDown: false, guestHold: new Map(),
     // 서브 — 들고 있나 · 얼마나 찼나 · 손님이 제 화면에서 세는 몫.
     serving: false, charge: -1, myCharge: -1,
-    score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false, emptyFor: 0,
+    score: [0, 0], wait: RESET_WAIT, lastPoint: null, started: false,
     // 손님이 받은 공을 부드럽게 따라가려고 남겨 두는 것.
     age: 0, errorX: 0, errorY: 0, baseX: undefined,
   }),
@@ -1611,16 +1606,6 @@ export default {
       releaseHold(world, dt);
       trail(b, dt);
       report(world, b, dt);
-      return;
-    }
-
-    // **판이 도는 중에 한쪽이 비면 거기서 끊는다.** 안 그러면 빈 코트에 공이 떨어지며
-    // 혼자 남은 편이 다섯 점을 채운다 — 이긴 것도 아니고 진 것도 아닌 판이 된다.
-    b.emptyFor = emptySide(world) ? (b.emptyFor ?? 0) + dt : 0;
-    if (b.emptyFor > 0.6) {
-      b.emptyFor = 0;
-      b.score = [0, 0];
-      world.onGameOver?.({ name: null, rows: [] });
       return;
     }
 
@@ -1966,14 +1951,14 @@ export default {
       if (other && !other.dead && canBlock(world, other)) doBlock(world, other, false, from);
       return;
     }
-    if (typeof msg.s === 'number') (world.bag.picked ??= new Map()).set(from, msg.s ? 1 : 0);
+    if (typeof msg.s === 'number') picks(world).set(from, msg.s ? 1 : 0);
   },
 
   /// 편을 고른다. 내 화면에서 먼저 옮기고 방장에게 알린다 —
   /// 방장이 명단을 다시 뿌리면 남들 화면에서도 옮겨진다.
   swap(world, shell, side) {
     world.team = side === undefined ? 1 - (world.team ?? 0) : (side ? 1 : 0);
-    (world.bag.picked ??= new Map()).set(world.mp.myId, world.team);
+    picks(world).set(world.mp.myId, world.team);
     if (world.mp.on) (shell?.net?.send ?? world.send)?.({ t: 'gm', s: world.team });
   },
 
