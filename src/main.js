@@ -5,7 +5,7 @@ import { drawStickman } from './draw/stickman.js';
 import { makeGround, drawClock, drawIntro, drawFreeze, drawStamp, drawRoom, drawResults, drawMenu,
   drawVictory, drawPick, drawToast, drawLockBadge } from './draw/hud.js';
 import { createWorld, resize, update, press, restart, spread, gameOf,
-  pickGame, goHome, say } from './game/world.js';
+  pickGame, goHome, leftRoom, say } from './game/world.js';
 import { games } from './games/index.js';
 import { pump, handleMessage, peerChanged, roleChanged, reportDeath, startRound,
   endRound } from './game/net.js';
@@ -153,9 +153,9 @@ world.onMenu = (action) => {
   // 접속 중 목록에서 고른 것 — 까닭 한 줄 · 한 사람 부르기.
   if (action.startsWith('tell:')) { say(world, action.slice(5)); return; }
   if (action.startsWith('invite:')) {
-    const wait = callWaitLeft(world);
-    if (wait > 0) { say(world, `${wait}초 뒤에 다시 부를 수 있다`); return; }
     const person = (world.people ?? []).find((p) => p.id === action.slice(7));
+    const wait = world.inviteWaitLeft(person);
+    if (wait > 0) { say(world, `${person?.name ?? '그 사람'} 은(는) ${wait}초 뒤에 다시 부를 수 있다`); return; }
     shell.invite?.(action.slice(7));
     const same = world.mp.on && person?.room && person.room === world.mp.code;
     say(world, same ? `${person.name} 을(를) 판으로 불렀다`
@@ -241,6 +241,8 @@ shell.onRooms?.((list) => { world.rooms = Array.isArray(list) ? list : []; });
 /// 다시 부를 수 있기까지 남은 초. 셸이 알려 준 값을 받은 때부터 줄여 센다.
 const callWaitLeft = (w) => Math.max(0, Math.ceil((w.callWait ?? 0) - (performance.now() - (w.callWaitAt ?? 0)) / 1000));
 world.callWaitLeft = () => callWaitLeft(world);
+/// 그 사람을 다시 부를 수 있기까지 남은 초 — 사람마다 따로 센다.
+world.inviteWaitLeft = (person) => Math.max(0, Math.ceil((person?.wait ?? 0) - (performance.now() - (world.callWaitAt ?? 0)) / 1000));
 const takePeople = (data) => {
   world.people = Array.isArray(data?.list) ? data.list : [];
   world.callWait = Number.isFinite(data?.callWait) ? data.callWait : 0;
@@ -348,9 +350,8 @@ shell.net.onRole((role, code, id, name) => {
   roleChanged(world, role, code, id, name);
   // 방을 나가면 내 화면 크기로 돌아온다. 방장은 처음부터 자기 크기로 논다.
   if (role !== 'guest' && shared) setSize(null, null);
-  // **방을 나오면 홈으로.** 방장이 깼든, 쫓겨났든, 스스로 나갔든 — 남의 판 한가운데에
-  // 혼자 남겨 두지 않는다. 방장 자신도 방을 깨면 홈으로 온다.
-  if (wasOn && !world.mp.on) goHome(world);
+  // **방을 나오면 하던 게임에 혼자 남는다** (넷이서·셋이서는 홈으로) — world.js leftRoom.
+  if (wasOn && !world.mp.on) leftRoom(world);
   else if (world.state === 'ready') spread(world);
 });
 shell.net.onPeer((id, name, joined) => {

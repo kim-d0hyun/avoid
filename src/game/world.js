@@ -681,7 +681,14 @@ export function menuItems(world) {
         const label = `${person.name}${person.mine ? ' (나)' : ''}`;
         if (person.mine) return { id: 'tell:나다', label, note: where };
         // 같은 방 사람도 부른다 — 들어와 놓고 딴 데 가 있으면 알림으로 판에 불러온다.
-        if (mp.on && person.room && person.room === mp.code) return { id: `invite:${person.id}`, label, note: '같은 방 · 판으로 부르기' };
+        if (mp.on && person.room && person.room === mp.code) {
+          const wait = world.inviteWaitLeft?.(person) ?? 0;
+          if (wait > 0) return { id: `tell:${person.name} 은(는) ${wait}초 뒤에 다시 부를 수 있다`, label, note: `같은 방 · ${wait}초 뒤 다시` };
+          return { id: `invite:${person.id}`, label, note: '같은 방 · 판으로 부르기' };
+        }
+        // 방금 부른 사람은 그 사람 몫만 기다린다 (사람마다 10초).
+        const wait = world.inviteWaitLeft?.(person) ?? 0;
+        if (wait > 0) return { id: `tell:${person.name} 은(는) ${wait}초 뒤에 다시 부를 수 있다`, label, note: `${where} · ${wait}초 뒤 다시` };
         return { id: `invite:${person.id}`, label,
                  note: `${where}${person.old ? ' · 버전 다름' : ''} · ${mp.on ? '초대' : '방 열고 초대'}` };
       });
@@ -755,6 +762,16 @@ export function menuItems(world) {
 }
 
 /// 게임 고르는 화면(홈)으로 나간다. 메뉴의 「홈으로 나가기」와, 방이 깨졌을 때 모두가 오는 곳.
+/// **방에서 나왔다** — 방장이 깼든, 쫓겨났든, 스스로 나갔든, 줄이 끊겼든.
+///
+/// 예전엔 늘 홈(게임 고르기)으로 보냈다. 홈에서는 방향키가 메뉴를 움직여서, 친구가 방을 닫는 순간
+/// 「내 캐릭터가 안 움직인다」가 됐다. 이제 **하던 게임에 혼자 남아** 시작 전 화면에 선다 —
+/// 바로 걸을 수 있고, 방향키 하나면 혼자 이어 한다. 혼자는 못 하는 게임(넷이서·셋이서)만 홈으로.
+export function leftRoom(world) {
+  if (gameOf(world).waitsForCrew) goHome(world);
+  else restart(world);
+}
+
 export function goHome(world) {
   openMenu(world, false);
   world.state = 'pick';
@@ -1017,6 +1034,10 @@ export function press(world, action, down) {
   if (action === 'restart') {
     // 되감을 수 있는 게임(넷이서)은 판 도중에도 ⌥R 이 먹는다. 방장만 — 손님이 누르면 부탁이 간다.
     const rewind = gameOf(world).rewindable && world.state === 'play';
+    // **시작 전 화면에서도 ⌥R 로 연다.** 안내에는 「⌥R 로 판 시작」이라고 적어 두고 정작 ⌥R 은
+    // 판이 끝난 화면에서만 먹었다 — 시작 전에 누르면 아무 일도 없었다.
+    const start = world.state === 'ready' && !world.menu.open && !gameOf(world).blocked?.(world);
+    if (down && start) { world.mp.on ? world.onMenu?.('again') : (world.state = 'play'); return; }
     if (down && (canRestart(world) || rewind)) world.onMenu?.('again');
     return;
   }

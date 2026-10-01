@@ -15,8 +15,12 @@ import Network
 let presenceServiceType = "_ddong-here._tcp"
 /// 부름이 이름표에 남아 있는 시간. 이 안에 켠 사람도 알림을 받는다.
 let callLife: TimeInterval = 90
-/// 너무 자주 못 부른다. 한 번 부르면 이만큼은 다시 못 누른다.
-let callCooldown: TimeInterval = 20
+/// 너무 자주 못 부른다. 한 번 부르면 **그 사람은** 이만큼 다시 못 부른다 — 사람마다 따로 센다
+/// (보람을 불렀다고 도현까지 못 부르면 안 된다). 「모두 부르기」는 모두 부르기끼리 센다.
+let callCooldown: TimeInterval = 10
+/// 이름표에 한꺼번에 싣는 부름 수. 값 하나가 255바이트까지라 넉넉히 줄여 둔다.
+private let callsMax = 6
+typealias Call = (room: String, at: Int, to: String?)
 
 /// 목록에 뜨는 한 사람. 이름표에 적힌 것만 안다.
 struct OnlinePerson {
@@ -29,8 +33,8 @@ struct OnlinePerson {
     let game: String
     /// 그 방을 연 사람인가.
     let host: Bool
-    /// 지금 부르고 있는 방과 부른 시각(초), 한 사람만 부르면 그 사람. 안 부르면 nil.
-    let call: (room: String, at: Int, to: String?)?
+    /// 지금 내고 있는 부름들 — 방 · 부른 시각(초) · 한 사람만 부르면 그 사람.
+    let calls: [Call]
     var mine = false
     var old: Bool { !version.isEmpty && version != appVersion }
 }
@@ -53,9 +57,12 @@ final class Presence {
     private var room = ""
     private var game = ""
     private var host = false
-    private var call: (room: String, at: Int, to: String?)?
+    /// 내고 있는 부름들. **여럿을 같이 싣는다** — 한 칸에 하나만 두면, 보람을 부르고 곧바로 도현을
+    /// 부를 때 보람이 아직 못 본 부름이 덮여 사라진다.
+    private var calls: [Call] = []
     private var callTimer: Timer?
-    private(set) var lastCall: Date?
+    /// 마지막으로 부른 때 — 사람마다 (모두 부르기는 "" 칸).
+    private var lastCall: [String: Date] = [:]
 
     private var listener: NWListener?
     private var browser: NWBrowser?
@@ -84,7 +91,7 @@ final class Presence {
         self.game = game
         self.host = host
         // 방을 떠났으면 그 방으로 부르던 것도 거둔다.
-        if let call, call.room != room { self.call = nil }
+        calls.removeAll { $0.room != room }
         guard changed else { return }
         republish()
         rebuild()
@@ -94,7 +101,7 @@ final class Presence {
     @discardableResult
     func callEveryone() -> Bool { callOut(to: nil) }
 
-    /// 한 사람만 부른다 (접속 중 목록에서 쉬는 사람을 골랐을 때). 쿨다운은 모두 부르기와 같이 쓴다.
+    /// 한 사람만 부른다 (접속 중 목록에서 골랐을 때). 쿨다운은 그 사람 몫만 센다.
     @discardableResult
     func invite(_ person: String) -> Bool {
         guard person != id, seen.contains(where: { $0.id == person }) else { return false }
@@ -102,28 +109,43 @@ final class Presence {
     }
 
     private func callOut(to target: String?) -> Bool {
-        guard !room.isEmpty else { return false }
-        if let lastCall, Date().timeIntervalSince(lastCall) < callCooldown { return false }
-        lastCall = Date()
-        call = (room, Int(Date().timeIntervalSince1970), target)
+        guard !room.isEmpty, wait(for: target) == 0 else { return false }
+        lastCall[target ?? ""] = Date()
+        let now = Int(Date().timeIntervalSince1970)
+        // 같은 사람(또는 모두)에게 내던 옛 부름은 새것으로 바꾸고, 식은 것은 걷는다.
+        calls.removeAll { $0.to == target || now - $0.at >= Int(callLife) }
+        calls.append((room, now, target))
+        if calls.count > callsMax { calls.removeFirst(calls.count - callsMax) }
         republish()
         rebuild()
-        callTimer?.invalidate()
-        callTimer = Timer.scheduledTimer(withTimeInterval: callLife, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            self.call = nil
-            self.republish()
-            self.rebuild()
-        }
+        scheduleExpiry()
         debugLog("\(target == nil ? "모두 부르기" : "한 사람 부르기(\(target!))") → 방 \(room)")
         return true
     }
 
-    /// 다시 부를 수 있기까지 남은 초. 0 이면 지금 된다.
-    var callWait: Int {
-        guard let lastCall else { return 0 }
-        return max(0, Int(ceil(callCooldown - Date().timeIntervalSince(lastCall))))
+    /// 제일 먼저 식는 부름이 식을 때 걷는다.
+    private func scheduleExpiry() {
+        callTimer?.invalidate()
+        guard let first = calls.map({ $0.at }).min() else { return }
+        let left = max(0.5, Double(first) + callLife - Date().timeIntervalSince1970)
+        callTimer = Timer.scheduledTimer(withTimeInterval: left, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            let now = Int(Date().timeIntervalSince1970)
+            self.calls.removeAll { now - $0.at >= Int(callLife) - 1 }
+            self.republish()
+            self.rebuild()
+            self.scheduleExpiry()
+        }
     }
+
+    /// 그 사람(nil 이면 모두 부르기)을 다시 부를 수 있기까지 남은 초. 0 이면 지금 된다.
+    func wait(for target: String?) -> Int {
+        guard let last = lastCall[target ?? ""] else { return 0 }
+        return max(0, Int(ceil(callCooldown - Date().timeIntervalSince(last))))
+    }
+
+    /// 「모두 부르기」를 다시 할 수 있기까지 남은 초.
+    var callWait: Int { wait(for: nil) }
 
     // MARK: 광고
 
@@ -132,8 +154,11 @@ final class Presence {
         if !room.isEmpty { fields["r"] = room }
         if !game.isEmpty { fields["g"] = game }
         if host { fields["h"] = "1" }
-        // 한 사람만 부를 때는 끝에 그 사람의 Bonjour 이름을 붙인다 — 나머지는 이걸 보고 지나간다.
-        if let call { fields["c"] = "\(call.room):\(call.at)" + (call.to.map { ":\($0)" } ?? "") }
+        // 부름들 — `방:시각[:받는사람]` 을 ; 로 잇는다. 한 사람만 부를 때는 그 사람의 Bonjour 이름을
+        // 붙인다 — 나머지는 이걸 보고 지나간다.
+        if !calls.isEmpty {
+            fields["c"] = calls.map { "\($0.room):\($0.at)" + ($0.to.map { ":\($0)" } ?? "") }.joined(separator: ";")
+        }
         return fields
     }
 
@@ -228,17 +253,17 @@ final class Presence {
 
     /// 이름표 한 장을 사람 하나로. **남이 적은 글자라 모양을 안 믿는다.**
     static func person(id: String, _ txt: [String: String]) -> OnlinePerson {
-        var call: (room: String, at: Int, to: String?)?
-        if let raw = txt["c"] {
+        var calls: [Call] = []
+        for raw in (txt["c"] ?? "").split(separator: ";").prefix(callsMax) {
             let bits = raw.split(separator: ":", maxSplits: 2).map(String.init)
             if bits.count >= 2, bits[0].count == 4, let at = Int(bits[1]) {
-                call = (bits[0].uppercased(), at, bits.count == 3 ? bits[2] : nil)
+                calls.append((bits[0].uppercased(), at, bits.count == 3 ? bits[2] : nil))
             }
         }
         let room = (txt["r"] ?? "").uppercased()
         return OnlinePerson(id: id, name: String((txt["n"] ?? "").prefix(24)), version: txt["v"] ?? "",
                             room: room.count == 4 ? room : "", game: txt["g"] ?? "",
-                            host: txt["h"] == "1", call: call)
+                            host: txt["h"] == "1", calls: calls)
     }
 
     /// 브라우저가 알려 준 것만 따로 (나를 얹기 전의 날것).
@@ -247,7 +272,7 @@ final class Presence {
     /// **나는 브라우저가 안 알려 준다** (같은 프로세스 광고). 목록 맨 위에 내가 아는 값으로 얹는다.
     private func rebuild() {
         let me = OnlinePerson(id: id, name: name, version: appVersion, room: room, game: game,
-                              host: host, call: call, mine: true)
+                              host: host, calls: calls, mine: true)
         let rows = [me] + seen.sorted {
             // 방에 있는 사람이 먼저, 그다음 이름 순.
             if $0.room.isEmpty != $1.room.isEmpty { return !$0.room.isEmpty }
@@ -265,7 +290,7 @@ final class Presence {
     private func listen(_ found: [OnlinePerson]) {
         let now = Int(Date().timeIntervalSince1970)
         for person in found {
-            guard let call = person.call else { continue }
+          for call in person.calls {
             let key = "\(person.id)|\(call.room)|\(call.at)|\(call.to ?? "")"
             guard !heard.contains(key) else { continue }
             heard.insert(key)
@@ -278,6 +303,7 @@ final class Presence {
             guard call.room != room || call.to == id else { continue }
             debugLog("\(person.name) 이(가) 방 \(call.room) 으로 부른다")
             delegate?.presenceCalled(by: person, room: call.room)
+          }
         }
         if heard.count > 256 { heard = Set(heard.suffix(128)) }
     }

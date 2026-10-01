@@ -1378,8 +1378,27 @@ export function deuce(score) {
 /// 전에는 update 끝에서 봤는데, 점수가 나면 곧바로 다음 서브로 넘어가고 서브를 기다리는
 /// 동안은 update 가 일찍 돌아가 버린다 — 그래서 **이긴 사람이 진 사람의 다음 서브를
 /// 기다려야** 만세가 떴다. 진 사람이 안 올리면 영영 안 끝났다.
+/// **세트 스코어** — 판이 끝날 때마다 이긴 편에 하나. 네트 위의 숫자는 그 판의 점수고, 이건 이 방에서
+/// 몇 판을 이겼나다. **방이 깨지면**(net.js roleChanged 가 지운다) 그리고 **편이 바뀌면**(누가 편을
+/// 옮기거나 들어오고 나가면) 0:0 으로 돌아간다 — 다른 짝끼리 붙은 판을 이어 세면 뜻이 없다.
+/// 방장이 세고 꾸러미(ss)로 나눠 준다.
+function rosterKey(world) {
+  return [...rosterSides(world).entries()].sort((a, c) => a[0] - c[0]).map(([id, side]) => `${id}:${side}`).join(',');
+}
+function setsOf(world) {
+  const mp = world.mp;
+  if (!mp.on) return null;
+  if (mp.role === 'host') {
+    const key = rosterKey(world);
+    if (!mp.volleySets || mp.volleySets.key !== key) mp.volleySets = { key, score: [0, 0] };
+  }
+  return mp.volleySets ?? null;
+}
+
 function finish(world, b) {
   const won = b.score[0] > b.score[1] ? 0 : 1;
+  const sets = setsOf(world);
+  if (sets && world.mp.role === 'host') sets.score[won]++;
   // 순위표 칸은 [이름, 시간ms, 개수, 번호] 다. 배구에서는 「점수」를 개수 칸에 넣는다.
   const rows = [0, 1]
     .map((side) => [`${teamName(side)} 팀`, Math.round(world.elapsed * 1000), b.score[side], -1 - side])
@@ -1425,6 +1444,10 @@ export default {
   /// 비면 끊었는데, 끊긴 화면에서는 사람이 안 움직이고 빈 채로는 다시 열 수도 없어서 1:1 에서 한 사람이
   /// 편을 바꾸면 **둘 다 그대로 굳었다.** 빈 코트는 혼자 할 때처럼 저절로 서브를 넣는다(EMPTY_WAIT).
   blocked: () => null,
+  /// **판 도중에 들어와도 바로 낀다.** 예전엔 다음 판까지 구경이었는데, 1:1 하다 친구가 나갔다
+  /// 다시 들어오면 판은 혼자 빈 코트로 돌고(끝나지도 않는다) 친구는 굳은 채 구경만 했다.
+  /// 팀 경기라 중간에 들어와도 그대로 2대1 · 1대1 로 이어진다.
+  joinsAnytime: true,
   /// 옷 색은 번호가 아니라 **선 자리**로 정한다. 왼쪽은 빨강, 오른쪽은 파랑.
   /// 만세 부르는 우승 인형은 번호가 음수로 온다 (-1 빨강, -2 파랑) — 그건 자리로 못 정한다.
   shirt: (world, x, id) => TEAM_INK[id < 0 ? -1 - id : sideOfX(world, x)],
@@ -1576,6 +1599,7 @@ export default {
     // 얼어붙은 채로 우승 화면까지 따라온다.
     visuals(world, b, dt);
     arms(world, b, dt);
+    setsOf(world);                    // 편이 바뀌었으면 세트 스코어를 0:0 으로
     if (world.state !== 'play') return;
 
     // 손님은 방장이 뿌린 공을 따라 그리기만 한다. 판정도 방장이 한다.
@@ -1895,6 +1919,18 @@ export default {
     // 기술표. 왼쪽 위 구석에 작게.
     drawKeys(ctx, world, b);
 
+    // 세트 스코어 — 맨 위 가운데. 같이 할 때만 (혼자면 셀 상대가 없다).
+    const sets = world.mp.on ? world.mp.volleySets : null;
+    if (sets) {
+      const sy = 48;          // 맨 위의 「⌥ 고정」 표시(y 20 까지) 밑으로
+      text(ctx, '세트', netX, sy - 16, { font: `700 11px ${HAN}`, color: PENCIL, align: 'center', halo: 3 });
+      text(ctx, String(sets.score[0]), netX - 30, sy + 8,
+           { font: `800 24px ${HAN}`, color: TEAM_INK[0], align: 'center', halo: 3 });
+      text(ctx, ':', netX, sy + 6, { font: `800 20px ${HAN}`, color: PENCIL, align: 'center', halo: 3 });
+      text(ctx, String(sets.score[1]), netX + 30, sy + 8,
+           { font: `800 24px ${HAN}`, color: TEAM_INK[1], align: 'center', halo: 3 });
+    }
+
     // 점수. 네트 위에 좌우로.
     const y = netTop - 34;
     text(ctx, String(b.score[0]), netX - 44, y,
@@ -1994,6 +2030,8 @@ export default {
       // **서브 잠금.** 이걸 안 실어서 손님 쪽은 늘 null 이었다 — 방장은 「바로 넘겨야」로
       // 막히는데 손님만 자기 팀 서브를 네트 앞에서 받아 꽂을 수 있었다.
       mc: b.mustCross === 0 || b.mustCross === 1 ? b.mustCross : -1,
+      // 세트 스코어 — 이 방에서 몇 판을 이겼나.
+      ss: setsOf(world)?.score ?? undefined,
     };
   },
 
@@ -2093,6 +2131,9 @@ export default {
     // 서브 잠금 — 넘어가기 전까지 올린 편은 못 건드린다. 손님도 자기 화면에서 미리 막혀야
     // 「바로 넘겨야」가 뜬다 (안 그러면 눌러 놓고 왜 안 맞는지 모른다).
     if (Number.isFinite(data.mc)) b.mustCross = data.mc === 0 || data.mc === 1 ? data.mc : null;
+    if (Array.isArray(data.ss) && data.ss.length === 2 && data.ss.every(Number.isFinite)) {
+      world.mp.volleySets = { key: 'host', score: [data.ss[0] | 0, data.ss[1] | 0] };
+    }
     b.started = true;
   },
 

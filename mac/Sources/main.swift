@@ -418,6 +418,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.poll()
         }
+        // **창(이름 묻기·코드 입력)이 떠 있는 동안에도 돈다.** 기본 갈래에만 걸어 두면 모달 창이 떠 있는
+        // 내내 이 타이머가 멎어서 — 받은 꾸러미를 게임에 안 넘기고, 숨은 판도 안 굴린다 — 같이 하던
+        // 사람 모두에게 내가 굳어 보였다.
+        if let pollTimer { RunLoop.main.add(pollTimer, forMode: .common) }
 
         updater.onChange = { [weak self] in self?.refreshMenu() }
         // 시험용. 업데이트 길을 사람 손 없이 끝까지 밟아 본다 — 못 고치는 업데이터는
@@ -524,6 +528,14 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             autoRoom = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in
                 if room == "host" {
+                    // 시험용. DDONG_GAME=volley 면 그 게임으로 갈아 끼운 뒤 연다 (메뉴 막대의 「방 만들기 › 게임」과 같은 길).
+                    if let game = env["DDONG_GAME"] {
+                        webView.evaluateJavaScript("window.__ddongPickGame && window.__ddongPickGame('\(Net.escape(game))')") { [self] _, _ in
+                            debugLog("방 코드 \(net.host() ?? "실패")")
+                            refreshMenu()
+                        }
+                        return
+                    }
                     debugLog("방 코드 \(net.host() ?? "실패")")
                 } else {
                     net.join(room)
@@ -825,7 +837,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             let game = games.first(where: { $0.id == person.game })?.name ?? person.game
             return "{\"id\":\(jsLiteral(person.id)),\"name\":\(jsLiteral(person.name.isEmpty ? "누군가" : person.name)),"
                  + "\"room\":\"\(person.room)\",\"game\":\(jsLiteral(game)),"
-                 + "\"host\":\(person.host),\"mine\":\(person.mine),\"old\":\(person.old)}"
+                 + "\"host\":\(person.host),\"mine\":\(person.mine),\"old\":\(person.old),"
+                 + "\"wait\":\(person.mine ? 0 : presence.wait(for: person.id))}"
         }
         return "{\"list\":[" + rows.joined(separator: ",") + "],\"callWait\":\(presence.callWait)}"
     }
@@ -1042,6 +1055,12 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                          action: #selector(joinPendingCall), keyEquivalent: "").target = self
             menu.addItem(.separator())
         }
+        if let note = lastNote {
+            let item = NSMenuItem(title: "⚠️ \(note.text.replacingOccurrences(of: "\n", with: " "))", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
         if notifyOff {
             menu.addItem(withTitle: "⚠️ 시스템 알림이 꺼져 있다 — 켜야 부름이 알림으로 온다  ·  켜기…",
                          action: #selector(openNotificationSettings), keyEquivalent: "").target = self
@@ -1254,14 +1273,17 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             // 내가 방에 없으면 방을 먼저 연다. 같은 방 사람 · 나는 고를 수 없다.
             // 같은 방 사람도 부를 수 있다 — 판에서 딴 데 가 있으면 알림으로 불러온다.
             let sameRoom = net.role != "off" && !person.room.isEmpty && person.room == net.code
-            let canInvite = !person.mine && presence.callWait == 0
+            let wait = presence.wait(for: person.id)
+            let canInvite = !person.mine && wait == 0
             let item: NSMenuItem
             if canInvite {
                 item = NSMenuItem(title: title + (sameRoom ? "  ·  판으로 부르기" : net.role == "off" ? "  ·  방 열고 초대" : "  ·  초대"),
                                   action: #selector(invitePersonFromMenu(_:)), keyEquivalent: "")
                 item.representedObject = person.id
             } else {
-                item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                // 방금 부른 사람이면 몇 초 남았는지 적는다 (사람마다 따로 센다).
+                item = NSMenuItem(title: title + (!person.mine && wait > 0 ? "  ·  \(wait)초 뒤 다시" : ""),
+                                  action: nil, keyEquivalent: "")
                 item.isEnabled = false
             }
             item.target = self
@@ -1687,8 +1709,43 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         }
         defer { if let watcher { NSEvent.removeMonitor(watcher) } }
 
-        guard panel.runModal() == .alertFirstButtonReturn else { return nil }
+        guard modal(panel) == .alertFirstButtonReturn else { return nil }
         return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// **같이 하기 쪽 소식은 창으로 막지 않는다.**
+    ///
+    /// 「방과 끊겼다」 같은 것을 모달 창(NSAlert)으로 띄웠더니, 그 창이 화면보호기 높이에 뜬 게임 창
+    /// **밑에 깔려 안 보이는데** 창이 떠 있는 동안 앱이 멎어서 — 키도 안 먹고 판도 안 돌고 —
+    /// 「친구가 나가면 내 캐릭터가 안 움직인다」가 됐다. 사람이 누른 것도 아닌데 뜨는 소식이라 막을
+    /// 까닭도 없다. 판 위에 한 줄, 메뉴 막대 맨 위에 한 줄(2분), 게임이 숨어 있으면 시스템 알림으로.
+    private var lastNote: (text: String, at: Date)?
+    private func notice(_ text: String) {
+        lastNote = (text, Date())
+        refreshMenu()
+        if !isHidden {
+            webView.evaluateJavaScript("window.__ddongSay && window.__ddongSay(\(jsLiteral(text)))")
+        } else if Bundle.main.bundleIdentifier != nil, !isDebugRun {
+            let content = UNMutableNotificationContent()
+            content.title = "몰겜 — 같이 하기"
+            content.body = text
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "note", content: content, trigger: nil))
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+            guard let self, let note = self.lastNote, Date().timeIntervalSince(note.at) >= 119 else { return }
+            self.lastNote = nil
+            self.refreshMenu()
+        }
+    }
+
+    /// 창을 띄우는 동안 게임 창을 보통 높이로 내린다. **화면보호기 높이에 뜬 게임 창이 창을 덮어서**
+    /// 사람이 창을 못 보고 앱만 멎은 것처럼 보였다. 닫히면 도로 올린다.
+    private func modal(_ panel: NSAlert) -> NSApplication.ModalResponse {
+        let level = window.level
+        window.level = .normal
+        defer { window.level = level }
+        NSApp.activate(ignoringOtherApps: true)
+        return panel.runModal()
     }
 
     private func alert(title: String, body: String, copy: String? = nil) {
@@ -1697,8 +1754,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         panel.informativeText = body
         panel.addButton(withTitle: "확인")
         if copy != nil { panel.addButton(withTitle: "코드 복사") }
-        NSApp.activate(ignoringOtherApps: true)
-        if panel.runModal() == .alertSecondButtonReturn, let copy {
+        if modal(panel) == .alertSecondButtonReturn, let copy {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(copy, forType: .string)
         }
@@ -1848,7 +1904,8 @@ extension App: NetDelegate {
             refreshMenu()
             guard let note else { return }
             debugLog("알림: \(note)")
-            if !autoRoom { alert(title: "같이 하기", body: note) }
+            // 시험용 자동 입장(autoRoom)은 소식을 안 띄운다 — DDONG_SHOW_NOTES 를 주면 띄운다.
+            if !autoRoom || ProcessInfo.processInfo.environment["DDONG_SHOW_NOTES"] != nil { notice(note) }
         }
     }
 

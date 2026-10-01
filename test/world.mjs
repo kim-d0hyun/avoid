@@ -190,6 +190,17 @@ say('접속 중 — 켜 둔 사람들 · 방에 있는 사람을 고르면 그 �
   tap(r, 'duck'); tap(r, 'duck'); tap(r, 'duck'); tap(r, 'right');
   check('셸에 그 사람을 초대하라고 넘긴다', r.picked, ['invite:p4']);
 
+  // **기다리는 시간은 사람마다.** 방금 부른 사람만 그 사람 몫 10초를 기다린다 — 딴 사람은 바로 부른다.
+  const q = make([]);
+  q.mp.on = true; q.mp.role = 'host'; q.mp.code = 'K3P9';
+  q.people = [{ id: 'p1', name: '나', room: 'K3P9', mine: true },
+              { id: 'p2', name: '보람', room: '', wait: 7 }, { id: 'p3', name: '도현', room: '', wait: 0 }];
+  q.inviteWaitLeft = (p) => p?.wait ?? 0;
+  tap(q, 'menu'); into(q, 'together'); into(q, 'people');
+  check('방금 부른 사람은 남은 초', menuItems(q)[1].note, '쉬는 중 · 7초 뒤 다시');
+  check('그 사람은 아직 못 부른다', menuItems(q)[1].id.startsWith('tell:'), true);
+  check('딴 사람은 바로 부른다', menuItems(q)[2].id, 'invite:p3');
+
   // 방 안에서는 「모두 부르기」가 생긴다. 같은 방 사람은 부를 수에서 뺀다.
   const h = make([]);
   h.mp.on = true; h.mp.role = 'host'; h.mp.code = 'K3P9';
@@ -205,6 +216,21 @@ say('접속 중 — 켜 둔 사람들 · 방에 있는 사람을 고르면 그 �
   while (menuItems(h)[h.menu.index].id !== 'call') tap(h, 'duck');
   tap(h, 'right');
   check('셸에 부르라고 넘긴다', h.picked, ['call']);
+}
+
+say('⌥R — 시작 전 화면에서도 판을 연다 (안내에 그렇게 적혀 있다)');
+{
+  const solo = make([]);
+  tap(solo, 'restart');
+  check('혼자면 바로 시작', solo.state, 'play');
+  const host = make([]);
+  host.mp.on = true; host.mp.role = 'host'; host.mp.code = 'K3P9';
+  tap(host, 'restart');
+  check('방장이면 판을 열어 달라고 넘긴다', host.picked, ['again']);
+  const menu = make([]);
+  tap(menu, 'menu'); menu.picked.length = 0;
+  tap(menu, 'restart');
+  check('메뉴가 열려 있으면 안 연다', [menu.state, menu.picked], ['ready', []]);
 }
 
 say('이름 바꾸기 — 메뉴에 있다');

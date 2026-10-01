@@ -222,6 +222,11 @@ final class Updater {
         panel.informativeText = text
         panel.addButton(withTitle: "확인")
         NSApp.activate(ignoringOtherApps: true)
+        // 화면보호기 높이에 뜬 게임 창이 이 창을 덮지 않게 잠깐 내린다 (main.swift 의 modal 과 같은 까닭).
+        let raised = NSApp.windows.filter { $0.level.rawValue > NSWindow.Level.modalPanel.rawValue }
+        let levels = raised.map(\.level)
+        raised.forEach { $0.level = .normal }
+        defer { zip(raised, levels).forEach { $0.level = $1 } }
         panel.runModal()
     }
 }

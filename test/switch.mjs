@@ -45,7 +45,9 @@ check('내 편도 받았다', world.team, 1);
 for (let i = 0; i < 30; i++) w.update(world, 1/60);
 check('공이 움직인다', Number.isFinite(world.bag.ball.x) && world.bag.ball.x !== 0, true);
 check('바로 판을 본다 (구경)', world.state, 'play');
-check('이번 판에는 안 낀다', [world.mp.waiting, world.player.dead], [true, true]);
+// 배구는 판 도중에 들어와도 **바로 낀다** (joinsAnytime) — 다음 판까지 구경하게 뒀더니, 나갔다 다시
+// 들어온 친구가 혼자 도는 판을 굳은 채 보기만 했다.
+check('배구는 판 도중이어도 바로 낀다', [world.mp.waiting, world.player.dead], [false, false]);
 
 // 방장이 배구를 하던 중 ⌥M → 같이 하기 → 게임 바꾸기 → 똥피하기. 방장 쪽은 main.js 가 pickGame 을 부르고 결과를 지운다.
 // 그 다음 스냅샷에 새 게임 이름이 실려 가고, 손님은 그걸 보고 갈아탄다.

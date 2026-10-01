@@ -1775,4 +1775,36 @@ say('편 바꾸기 — 판이 끝나고 다음 판에도 그대로');
   check('게임을 다시 골라도 파랑', world.team, 1);
 }
 
+say('세트 스코어 — 판이 끝날 때마다 이긴 편에 하나 · 편이 바뀌거나 방이 깨지면 0:0');
+{
+  const net = await import(R + 'game/net.js');
+  const world = mk(); world.state = 'play';
+  world.mp.on = true; world.mp.role = 'host'; world.mp.myId = 1;
+  world.mp.others.set(2, { id: 2, name: '범창', x: 1100, air: 0, groundY: world.groundY, dead: false, waiting: false });
+  volley.update(world, 1 / 60);
+  check('처음엔 0:0', world.mp.volleySets.score, [0, 0]);
+  const win = (side) => {                       // 그 편이 다섯 점째를 낸다
+    world.state = 'play';
+    const b = world.bag; b.serving = false; b.wait = 0; b.stop = 0;
+    b.score = side === 0 ? [4, 0] : [0, 4];
+    b.ball.x = side === 0 ? 1300 : 200; b.ball.y = world.groundY - 25; b.ball.vx = 0; b.ball.vy = 400;
+    for (let i = 0; i < 10 && b.score[side] === 4; i++) volley.update(world, 1 / 60);
+  };
+  win(0); win(0); win(1);
+  check('빨강 둘 · 파랑 하나', world.mp.volleySets.score, [2, 1]);
+  check('손님에게도 간다', volley.pack(world).ss, [2, 1]);
+  const g = mk(); g.mp.on = true; g.mp.role = 'guest'; g.mp.myId = 2;
+  volley.unpack(g, volley.pack(world));
+  check('손님 화면에도', g.mp.volleySets.score, [2, 1]);
+  w.restart(world); world.state = 'play'; volley.update(world, 1 / 60);
+  check('다음 판으로 넘어가도 남는다', world.mp.volleySets.score, [2, 1]);
+  volley.message(world, 2, { t: 'gm', s: 0 });  // 손님이 빨강으로 — 편이 바뀌었다
+  volley.update(world, 1 / 60);
+  check('편이 바뀌면 0:0', world.mp.volleySets.score, [0, 0]);
+  win(0);
+  check('다시 센다', world.mp.volleySets.score, [1, 0]);
+  net.roleChanged(world, 'off', null, 0, '도현'); // 방이 깨졌다
+  check('방이 깨지면 지운다', world.mp.volleySets, null);
+}
+
 done('배구');

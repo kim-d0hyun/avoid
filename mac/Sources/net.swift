@@ -372,10 +372,14 @@ final class Net {
         let params = lanParameters()
 
         // 포트가 이미 쓰이고 있으면 아무 포트나 잡는다.
+        // 시험용(DDONG_DEBUG)은 DDONG_PORT 로 따로 연다 — 같은 맥에 깔린 몰겜이 방을 열어 두면
+        // 51301 이 막혀 시험용 방장을 못 띄운다.
+        let env = ProcessInfo.processInfo.environment
+        let want = env["DDONG_DEBUG"] != nil ? (UInt16(env["DDONG_PORT"] ?? "") ?? netDefaultPort) : netDefaultPort
         let listener: NWListener
-        var known: UInt16? = netDefaultPort
+        var known: UInt16? = want
         do {
-            listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: netDefaultPort)!)
+            listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: want)!)
         } catch {
             guard let fallback = try? NWListener(using: params) else {
                 delegate?.netRoleChanged(role: "off", code: nil, myId: 0, note: "방을 열지 못했다")
@@ -394,7 +398,7 @@ final class Net {
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
-                let port = listener.port?.rawValue ?? netDefaultPort
+                let port = listener.port?.rawValue ?? want
                 // 기본 포트를 못 잡아 다른 포트로 떴을 때만 이름표를 고친다.
                 if known != port { listener.service = Net.service(room: room, port: port, game: self?.roomGame ?? "") }
                 debugLog("방 열림 \(localIPv4() ?? "?"):\(port)")

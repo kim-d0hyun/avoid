@@ -690,6 +690,8 @@ export function roleChanged(world, role, code, myId, myName) {
   mp.hostGameGen = undefined;
   mp.stageEpoch = 0; mp.snapshotSeq = 0; mp.lastSnapshotSeq = -1;
   mp.round = 0;
+  // 방에 매인 기록은 방이 바뀌면 지운다 — 배구의 세트 스코어.
+  mp.volleySets = null;
   mp.role = role;
   mp.code = code;
   mp.myId = myId;
