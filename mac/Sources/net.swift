@@ -130,6 +130,8 @@ protocol NetDelegate: AnyObject {
     func netReceived(from: Int, json: String)
     /// 같은 와이파이에 열려 있는 방 목록이 바뀌었다.
     func netRoomsChanged()
+    /// 방은 그대로인데 알려 줄 것이 있다 (방장이 바뀌었다 같은 것).
+    func netNotice(_ text: String)
 }
 
 /// 목록에 뜨는 방 하나. 이름표(TXT)에 적힌 것만 안다 — 들어가 보기 전까지는 이게 전부다.
@@ -150,6 +152,8 @@ private final class Peer {
     var name = ""
     var buffer = Data()
     var ready = false
+    /// 이 손님이 방장이 되면 열 포트 (들어올 때 알려 온다).
+    var hostPort: UInt16 = netDefaultPort
     init(id: Int, connection: NWConnection) {
         self.id = id
         self.connection = connection
@@ -211,6 +215,20 @@ final class Net {
     private var candidates: [NWEndpoint] = []
     private var attempt = 0
     private var joinedAt: Date?
+
+    // MARK: 방장 넘기기
+    //
+    // **방장이 나가도 방은 남는다.** 방장 맥이 곧 서버라, 방장이 나가면 손님끼리는 이을 줄이 없다.
+    // 그래서 방장이 **미리** 다음 방장(heir)을 무작위로 뽑아 모두에게 알려 둔다 — 나갈 때 뽑으면,
+    // 앱을 그냥 꺼 버리거나 와이파이가 끊긴 경우엔 뽑을 틈이 없다. 방장이 나가거나 끊기면 heir 는
+    // **같은 코드로** 방을 다시 열고, 나머지는 heir 의 주소(없으면 Bonjour)로 다시 붙는다.
+    // 남은 사람이 없으면 넘길 데가 없으니 방은 그대로 사라진다.
+    /// 방장: 다음 방장으로 뽑아 둔 손님 번호.
+    private var heirId: Int?
+    /// 손님: 방장이 알려 온 다음 방장 — 번호 · 주소 · 포트.
+    private var heir: (id: Int, ip: String, port: UInt16)?
+    /// 손님: 넘어가는 중이면 언제까지 다시 붙어 볼지. 그동안 「못 붙었다」로 끝내지 않는다.
+    private var migrating: (room: String, until: Date, tries: Int)?
 
     // MARK: 방 목록
     //
@@ -366,16 +384,15 @@ final class Net {
 
     // MARK: 방 열기
 
-    func host() -> String? {
+    func host(code wanted: String? = nil) -> String? {
         leave()
-        let room = makeRoomCode()
+        let room = wanted ?? makeRoomCode()
         let params = lanParameters()
 
         // 포트가 이미 쓰이고 있으면 아무 포트나 잡는다.
         // 시험용(DDONG_DEBUG)은 DDONG_PORT 로 따로 연다 — 같은 맥에 깔린 몰겜이 방을 열어 두면
         // 51301 이 막혀 시험용 방장을 못 띄운다.
-        let env = ProcessInfo.processInfo.environment
-        let want = env["DDONG_DEBUG"] != nil ? (UInt16(env["DDONG_PORT"] ?? "") ?? netDefaultPort) : netDefaultPort
+        let want = Net.preferredPort
         let listener: NWListener
         var known: UInt16? = want
         do {
@@ -505,6 +522,7 @@ final class Net {
         browser.stateUpdateHandler = { [weak self] state in
             guard case .failed = state else { return }
             DispatchQueue.main.async {
+                if self?.retryIfMigrating() == true { return }
                 self?.leave()
                 self?.delegate?.netRoleChanged(role: "off", code: nil, myId: 0,
                                                note: "같은 와이파이에서 방을 찾지 못했다")
@@ -515,7 +533,8 @@ final class Net {
 
         // 못 찾으면 계속 기다리게 두지 않는다. 8초면 같은 망에 있는 방은 이미 보였다.
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-            guard let self, self.role == "guest", self.uplink == nil else { return }
+            guard let self, self.role == "guest", self.uplink == nil, self.code == room else { return }
+            if self.retryIfMigrating() { return }
             self.leave()
             self.delegate?.netRoleChanged(
                 role: "off", code: nil, myId: 0,
@@ -567,7 +586,7 @@ final class Net {
                 self.joinedAt = Date()
                 debugLog("붙음 → \(connection.currentPath?.remoteEndpoint.map { "\($0)" } ?? "?")")
                 let hello = #"{"t":"__join","name":"\#(Net.escape(self.myName))","#
-                    + #""p":\#(netProtocol),"v":"\#(Net.escape(appVersion))"}"#
+                    + #""p":\#(netProtocol),"v":"\#(Net.escape(appVersion))","lp":\#(Net.preferredPort)}"#
                 self.line(peer, hello)
             case .failed(let error):
                 debugLog("붙기 실패: \(error)")
@@ -588,6 +607,7 @@ final class Net {
         // 한 바퀴 돌고 한 바퀴 더. 나쁜 주소에 오래 매달리지 않으면서 흔들림에는 버틴다.
         let index = candidates.isEmpty ? 0 : attempt % candidates.count
         guard role == "guest", attempt < candidates.count * 2 else {
+            if retryIfMigrating() { return }
             leave()
             delegate?.netRoleChanged(role: "off", code: nil, myId: 0, note: reason)
             return
@@ -625,6 +645,85 @@ final class Net {
         peer.connection.cancel()
         if peer.ready { delegate?.netPeerChanged(id: id, name: peer.name, joined: false) }
         republish()
+        if heirId == id { heirId = nil }
+        pickHeir()
+    }
+
+    /// 방장: 다음 방장을 뽑아 둔다(없거나 나갔으면 새로). 바뀌면 모두에게, 새로 들어온 사람에게는 늘 알린다.
+    private func pickHeir(tellNew newcomer: Peer? = nil) {
+        guard role == "host" else { return }
+        let ready = peers.values.filter(\.ready)
+        var changed = false
+        if heirId == nil || !ready.contains(where: { $0.id == heirId }) {
+            heirId = ready.randomElement()?.id
+            changed = true
+        }
+        guard let id = heirId, let peer = peers[id] else { return }
+        let ip: String = {
+            guard case .hostPort(let host, _)? = peer.connection.currentPath?.remoteEndpoint else { return "" }
+            return "\(host)".split(separator: "%").first.map(String.init) ?? ""
+        }()
+        let message = #"{"t":"__heir","id":\#(id),"ip":"\#(Net.escape(ip))","port":\#(peer.hostPort)}"#
+        if changed {
+            debugLog("다음 방장으로 \(peer.name)(\(id)) 을 뽑아 둔다")
+            for other in ready { line(other, message) }
+        } else if let newcomer { line(newcomer, message) }
+    }
+
+    /// 손님: 방장이 나갔다 — 방을 넘겨받거나, 넘겨받은 사람에게 다시 붙는다.
+    private func migrate() {
+        guard role == "guest", let room = code, let next = heir else { return }
+        let me = myId
+        // 지금 줄은 말없이 접는다 (끊김 알림이 다시 이리로 오지 않게).
+        uplink?.connection.stateUpdateHandler = nil
+        uplink?.connection.cancel()
+        uplink = nil
+        heir = nil
+        if next.id == me {
+            debugLog("방장이 나갔다 — 내가 방 \(room) 을 넘겨받는다")
+            migrating = nil
+            if host(code: room) != nil { delegate?.netNotice("방장이 나가서 내가 방장이 됐다") }
+            return
+        }
+        debugLog("방장이 나갔다 — 다음 방장(\(next.id))에게 다시 붙는다")
+        delegate?.netNotice("방장이 나가서 다음 방장에게 옮겨 간다…")
+        migrating = (room, Date().addingTimeInterval(15), 0)
+        heirAddress = next.ip.isEmpty ? nil : "\(next.ip):\(next.port)"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.rejoin() }
+    }
+    /// 다음 방장의 주소 — 손님이 다시 붙을 때 먼저 해 본다.
+    private var heirAddress: String?
+
+    /// 넘어가는 중에 다시 붙어 본다. 주소로 한 번, Bonjour 로 한 번 번갈아.
+    private func rejoin() {
+        guard var plan = migrating else { return }
+        guard Date() < plan.until else {
+            migrating = nil
+            leave()
+            delegate?.netRoleChanged(role: "off", code: nil, myId: 0, note: "방장이 나간 뒤 새 방장에게 붙지 못했다")
+            return
+        }
+        plan.tries += 1
+        migrating = plan
+        let direct = plan.tries % 2 == 1 ? heirAddress : nil
+        debugLog("다시 붙어 본다 (\(plan.tries)번째, \(direct ?? "Bonjour"))")
+        joinKeepingPlan(direct.map { "\(plan.room)@\($0)" } ?? plan.room)
+    }
+
+    /// join 은 leave 로 시작해서 넘기기 계획까지 지운다 — 계획은 남겨 두고 붙는다.
+    private func joinKeepingPlan(_ input: String) {
+        let plan = migrating
+        let address = heirAddress
+        join(input)
+        migrating = plan
+        heirAddress = address
+    }
+
+    /// 넘어가는 중이면 「못 붙었다」로 끝내지 않고 다시 해 본다. 끝냈으면 true.
+    private func retryIfMigrating() -> Bool {
+        guard migrating != nil else { return false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.rejoin() }
+        return true
     }
 
     // MARK: 주고받기
@@ -647,6 +746,11 @@ final class Net {
                 if peer.buffer.count > 1 << 20 { peer.buffer.removeAll() }
             }
             if isComplete || error != nil {
+                // 방장이 말없이 사라졌다(앱을 껐다 · 와이파이가 끊겼다) — 다음 방장이 정해져 있으면 넘긴다.
+                if self.role == "guest", peer.ready, self.heir != nil {
+                    self.migrate()
+                    return
+                }
                 if self.role == "guest" {
                     let joined = peer.ready
                     let lived = self.joinedAt.map { Date().timeIntervalSince($0) } ?? 0
@@ -689,10 +793,25 @@ final class Net {
             }
             // 남이 보낸 이름이다. 여기서도 끊는다 — 남의 화면 이름표는 남이 정한다.
             peer.name = String((Net.field(text, "name") ?? "누군가").prefix(nameMax))
+            peer.hostPort = UInt16(Net.field(text, "lp") ?? "") ?? netDefaultPort
             peer.ready = true
             line(peer, #"{"t":"__id","id":\#(peer.id),"code":"\#(code ?? "")"}"#)
             delegate?.netPeerChanged(id: peer.id, name: peer.name, joined: true)
             self.republish()
+            pickHeir(tellNew: peer)
+            return
+        }
+        // 손님: 방장이 다음 방장을 알려 왔다. 위로 올리지 않는다 — 이 층의 일이다.
+        if text.hasPrefix(#"{"t":"__heir""#) {
+            if let id = Int(Net.field(text, "id") ?? "") {
+                heir = (id, Net.field(text, "ip") ?? "", UInt16(Net.field(text, "port") ?? "") ?? netDefaultPort)
+                debugLog("다음 방장 \(id)\(id == myId ? " (나)" : "") \(heir!.ip):\(heir!.port)")
+            }
+            return
+        }
+        // 손님: 방장이 나간다. 다음 방장이 정해져 있으면 **방을 넘긴다** — 깨진 게 아니다.
+        if text.hasPrefix(#"{"t":"bye""#), role == "guest", heir != nil {
+            migrate()
             return
         }
         if text.hasPrefix(#"{"t":"__deny""#) {
@@ -711,6 +830,7 @@ final class Net {
         if text.hasPrefix(#"{"t":"__id""#) {
             myId = Int(Net.field(text, "id") ?? "") ?? 0
             peer.ready = true
+            if migrating != nil { migrating = nil; heirAddress = nil; delegate?.netNotice("새 방장에게 옮겨 갔다") }
             delegate?.netRoleChanged(role: "guest", code: code, myId: myId, note: nil)
             return
         }
@@ -763,6 +883,9 @@ final class Net {
     /// **말없이 끊지 않는다.** 그냥 끊으면 손님들은 4초 뒤에야 「조용해졌다」로 알아채고,
     /// 그동안 판 한가운데에 멈춰 있다. 「깨졌다」를 한 줄 보내고 그 줄이 나갈 틈을 조금 주고 끊는다.
     func leave() {
+        // 넘어가는 중이었으면 그만둔다 (사람이 직접 나갔다). 넘어가는 길은 joinKeepingPlan 이 되살린다.
+        migrating = nil
+        heirAddress = nil
         listener?.cancel()
         listener = nil
         browser?.cancel()
@@ -771,7 +894,10 @@ final class Net {
         uplink?.connection.cancel()
         uplink = nil
         let gone = Array(peers.values)
+        // 다음 방장이 정해져 있으면 손님들은 이 bye 를 보고 그쪽으로 옮겨 간다.
         for peer in gone where peer.ready { line(peer, "{\"t\":\"bye\"}") }
+        heirId = nil
+        heir = nil
         peers.removeAll()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             for peer in gone {
@@ -808,6 +934,12 @@ final class Net {
     ///
     /// 원문은 「The operation couldn't be completed. (Network.NWError error 48 ...)」 같은
     /// 것이라, 그대로 띄우면 받은 사람은 뭘 해야 할지 모른다. 흔한 것 몇 가지만 골라 준다.
+    /// 내가 방장이 되면 열 포트. 시험용(DDONG_DEBUG)은 DDONG_PORT 로 따로 연다.
+    static var preferredPort: UInt16 {
+        let env = ProcessInfo.processInfo.environment
+        return env["DDONG_DEBUG"] != nil ? (UInt16(env["DDONG_PORT"] ?? "") ?? netDefaultPort) : netDefaultPort
+    }
+
     static func why(_ error: NWError) -> String {
         if case let .posix(code) = error {
             switch code {

@@ -524,6 +524,14 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             }
         }
 
+        // 시험용. 몇 초 뒤 메뉴의 「방에서 나가기」를 누른다 — DDONG_LEAVE_AFTER=30.
+        if env["DDONG_DEBUG"] != nil, let after = Double(env["DDONG_LEAVE_AFTER"] ?? "") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak self] in
+                debugLog("방에서 나간다 (시험)")
+                self?.leaveRoom()
+            }
+        }
+
         if env["DDONG_DEBUG"] != nil, let room = env["DDONG_ROOM"] {
             autoRoom = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in
@@ -1092,7 +1100,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
                              action: #selector(copyCodeWithAddress), keyEquivalent: "").target = self
             }
             addCallItem(menu)
-            menu.addItem(withTitle: "방 깨기 — 모두 홈으로", action: #selector(leaveRoom), keyEquivalent: "").target = self
+            // 방장이 나가도 방은 남는다 — 남은 사람 중 한 명이 방장을 넘겨받는다 (혼자면 방이 없어진다).
+            menu.addItem(withTitle: net.peerCount > 0 ? "방에서 나가기 — 남은 사람 중 한 명이 방장이 된다" : "방 닫기",
+                         action: #selector(leaveRoom), keyEquivalent: "").target = self
         case "guest":
             let title = NSMenuItem(title: "방 \(net.code ?? "") 에 들어가 있음", action: nil, keyEquivalent: "")
             title.isEnabled = false
@@ -1906,6 +1916,13 @@ extension App: NetDelegate {
             debugLog("알림: \(note)")
             // 시험용 자동 입장(autoRoom)은 소식을 안 띄운다 — DDONG_SHOW_NOTES 를 주면 띄운다.
             if !autoRoom || ProcessInfo.processInfo.environment["DDONG_SHOW_NOTES"] != nil { notice(note) }
+        }
+    }
+
+    func netNotice(_ text: String) {
+        onMain { [self] in
+            debugLog("알림: \(text)")
+            notice(text)
         }
     }
 

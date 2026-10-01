@@ -426,7 +426,7 @@ export function handleMessage(world, shell, from, message, api) {
       for (const row of Array.isArray(message.pl) ? message.pl : []) {
         if (!Array.isArray(row) || row.length < 8) continue;
         seen.add(row[0]);
-        if (row[0] === mp.myId) continue; // 내 몸은 내가 안다
+        if (row[0] === mp.myId) { mp.others.delete(mp.myId); continue; } // 내 몸은 내가 안다 — 내 번호로 남은 것은 유령이다
         const other = mp.others.get(row[0]) ?? blankOther(row[0], mp.names.get(row[0]) ?? '');
         // 여기까지 오는 데 걸린 시간 = 방장이 들고 있던 시간 + 방장에서 나까지의 편도.
         applyPacket(other, ['p', ...row.slice(1, 11), null, row[12]], (row[11] ?? 0) + mp.rtt / 2);
@@ -683,6 +683,8 @@ export function roleChanged(world, role, code, myId, myName) {
     }
     return;
   }
+  const wasGuest = mp.role === 'guest';
+  const wasOn = mp.on;
   // 방이 바뀌면 「안 들린 시간」도 새로 센다.
   mp.heard = 0;
   mp.lost = false;
@@ -697,6 +699,16 @@ export function roleChanged(world, role, code, myId, myName) {
   mp.myId = myId;
   mp.myName = myName;
   mp.on = role !== 'off';
+  // **방이나 번호가 바뀌면 남들 장부를 버린다.** 방장이 나가서 넘어가면(heir) 모두 새 번호로 다시
+  // 붙는데, 옛 장부를 들고 있으면 옛 번호가 남는다 — 하필 내 새 번호가 옛날 남의 번호와 같으면
+  // **나와 같은 번호의 유령**이 장부에 남아 나를 밀어냈다(스냅샷 정리는 내 번호를 건너뛴다).
+  // 남들은 곧 스냅샷·들어옴 소식으로 다시 채워진다.
+  if (wasOn || wasGuest) {
+    mp.others.clear();
+    mp.alive.clear();
+    mp.names.clear();
+    mp.roster = null;
+  }
   if (!mp.on) {
     mp.others.clear();
     mp.alive.clear();

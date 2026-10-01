@@ -596,7 +596,9 @@ function togetherItems(world) {
     rows.push({ id: 'kick', into: 'kick', label: '내보내기', note: `${mp.others.size}명` });
   }
   // 방장이 나가면 방이 깨진다 — 모두 홈으로 나간다. 손님이 나가면 자기만 홈으로.
-  rows.push({ id: 'leave', label: mp.role === 'host' ? '방 깨기 — 모두 홈으로' : '방에서 나가기' });
+  // 방장이 나가도 방은 남는다 — 남은 사람 중 한 명이 방장을 넘겨받는다. 혼자면 방이 없어진다.
+  rows.push({ id: 'leave', label: mp.role !== 'host' ? '방에서 나가기'
+    : mp.others.size ? '방에서 나가기 — 남은 사람 중 한 명이 방장이 된다' : '방 닫기' });
   return rows;
 }
 

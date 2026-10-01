@@ -99,21 +99,42 @@ export function room(gameId) {
   }
   /// 방장이 ⌥R 을 누른다 (판 시작 · 다음 판).
   const again = () => host.onMenu('again');
-  return { host, guests, join, leave, advance, again, shellOf };
+
+  /// **방장이 나가고 heir 가 넘겨받는다** (net.swift migrate 와 같은 순서). 셸은 heir 에게 방장 역할을,
+  /// 나머지에게는 heir 방에 다시 붙은 새 번호를 준다. 옛 방장 앱은 하던 게임에 혼자 남는다.
+  function promote(heir) {
+    const old = host;
+    net.roleChanged(old, 'off', null, 0, old.mp.myName); w.leftRoom(old);
+    queue.length = 0;
+    const rest = [...guests.values()].filter((g) => g !== heir);
+    guests.clear();
+    host = heir;
+    net.roleChanged(heir, 'host', 'TEST', 0, heir.mp.myName);
+    nextId = 1;
+    for (const g of rest) join(g, g.mp.myName);
+    return heir;
+  }
+  return { get host() { return host; }, guests, join, leave, advance, again, shellOf, promote };
 }
 
 if (process.env.REJOIN_LIB) { /* 시험 틀만 빌려 쓴다 */ } else {
 /// 손님이 오른쪽(또는 왼쪽)으로 걸으면 **방장 화면에서도** 그 사람이 움직이나.
 function moves(r, guest, frames = 40) {
+  // 양쪽으로 걸어 본다 — 자리는 무작위라 벽이나 서브 선에 붙어 설 때가 있다(그쪽으로는 못 간다).
   const id = guest.mp.myId;
-  const before = r.host.mp.others.get(id)?.x;
-  const mine0 = guest.player.x;
-  const dir = guest.player.x < guest.w / 2 ? 'left' : 'right';
-  guest.input[dir] = true;
-  r.advance(frames);
-  guest.input[dir] = false;
-  const after = r.host.mp.others.get(id)?.x;
-  return { self: Math.abs(guest.player.x - mine0), seen: Math.abs((after ?? 0) - (before ?? 0)) };
+  let best = { self: 0, seen: 0 };
+  for (const dir of ['left', 'right']) {
+    const before = r.host.mp.others.get(id)?.x;
+    const mine0 = guest.player.x;
+    guest.input[dir] = true;
+    r.advance(frames);
+    guest.input[dir] = false;
+    r.advance(10);
+    const after = r.host.mp.others.get(id)?.x;
+    const got = { self: Math.abs(guest.player.x - mine0), seen: Math.abs((after ?? 0) - (before ?? 0)) };
+    if (got.self > best.self) best = got;
+  }
+  return best;
 }
 
 /// 사람이 판에 끼어 있나 — 구경이 아니고, 살아 있고, 판이 돈다.
@@ -249,6 +270,23 @@ for (const gameId of ['omok', 'alk', 'yut', 'ball']) {
   note(`${gameId} — 나간 뒤 차례: ${hostTurn ? '방장' : '컴퓨터/손님 편'} · 판 ${r.host.state} · ${r.host.bag.phase ?? ''}`);
   ok(`${gameId} — 손님이 나간 뒤에도 판이 움직인다 (방장 차례면 기다린다)`, moved || hostTurn);
   void before; void turn;
+}
+
+say('방장이 나가면 남은 사람 중 한 명이 방장을 넘겨받는다 — 판이 이어진다');
+for (const gameId of ANYTIME) {
+  const r = room(gameId);
+  const a = r.join(), b = r.join();
+  r.advance(30); r.again(); r.advance(90);
+  ok(`${gameId} — 셋이 판에`, inPlay(r.host) && inPlay(a) && inPlay(b));
+  r.promote(a);
+  r.advance(120);
+  ok(`${gameId} — 넘겨받은 사람이 방장이고 판이 그대로다`, a.mp.role === 'host' && a.state === 'play');
+  ok(`${gameId} — 옛 방장 장부는 비웠다 (옛 번호가 안 남는다)`, [...a.mp.others.keys()].every((id) => id === b.mp.myId));
+  ok(`${gameId} — 다시 붙은 사람이 바로 낀다`, wait(r, () => inPlay(b) && inPlay(a)));
+  if (gameId === 'volley') {
+    const m = moves(r, b);
+    ok('volley — 다시 붙은 사람이 움직이고 새 방장 화면에도 보인다', m.self > 30 && m.seen > 30);
+  }
 }
 
 say('배구 — 서브를 들고 있던 손님이 나가면 빈 코트가 저절로 올린다');
