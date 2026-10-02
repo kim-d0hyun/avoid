@@ -386,7 +386,8 @@ say('스파이크 — 공보다 높이 떠서 때려야 꽂힌다 · 네트는 �
   // 가운데에서는 각이 다 눕혀진다 — 그러면 세기도 그냥 친 공과 같아야 한다 (벌도 덤도 아니다).
   const sp = (r) => Math.hypot(r.vx, r.vy);
   ok('가운데 ⌥↓ 는 그냥 친 공만큼은 나간다', sp(midDrive) >= sp(midPlain) * 0.97);
-  ok('가운데 ⌥↓ 가 덤이 되지도 않는다', sp(midDrive) <= sp(midPlain) * 1.15);
+  // v3.29 뒤 — 감아 치기는 어디서나 더 세다(DIP_PACE). 짧게 떨어지는 건 무게가 지킨다.
+  ok('가운데 ⌥↓ 도 그냥 친 공보다 확실히 세다', sp(midDrive) >= sp(midPlain) * 1.2);
   note(`가운데 ⌥↓ vy=${midDrive.vy.toFixed(0)}`);
 
   const lob = hit({ under: BODY_H * 0.5, keys: { jump: true } });
