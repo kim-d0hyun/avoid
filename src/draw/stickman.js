@@ -113,6 +113,37 @@ const BAT_THRU   = { lean:  0.14, legs: [[0.46, 0.30], [-0.50, -0.86]],
 const FIELD_READY = { lean: 0.16, legs: [[-0.40, -0.66], [0.38, 0.62]],
                       arms: [[1.15, 1.48], [0.92, 1.26]] };
 
+// 펜싱 — 칼을 든 자세들.
+//
+// 야구의 배트처럼 **칼은 손끝에서 자란다** (각도 하나 · 길이 하나). 배구·야구와 섞이지 않게
+// 다른 스위치(opts.fence)로 켠다. p.fence = { act, k, line } — act 는 지금 하는 수, k 는 그 수의
+// 진행(0~1), line 은 줄(−1 아래 · 0 가운데 · +1 위).
+//
+// 칼 길이: 몸(80px)이 1.75m 라 1m ≈ 46px. 플뢰레 칼날 0.9m ≈ 41px — 손잡이까지 44.
+export const BLADE_LEN = 44;
+/// 앙가르드. 무릎을 굽혀 낮게 앉고, 앞발을 내밀고, 칼 든 팔은 팔꿈치를 굽혀 가슴 앞에 둔다.
+/// 뒷손은 손바닥을 위로 해서 머리 뒤에 든다 — 실루엣만 봐도 펜싱으로 읽히는 그 손이다.
+/// 칼끝은 줄 따라 위·가운데·아래를 겨눈다.
+/// 다리가 짧아서(28px) 각만 벌려서는 발이 안 벌어진다 — 정강이도 바깥으로 벌리고 허리를 낮춘다.
+const FENCE_GUARD = { hipY: HIP_Y + 10, lean: 0.06, legs: [[1.15, 0.35], [-1.00, -0.55]],
+                      arms: [[1.22, 1.66], [-1.75, -3.05]] };
+const GUARD_BLADE = [1.36, 1.68, 2.02];       // 아래 · 가운데 · 위 줄의 칼끝 각
+/// 찌르기 — 팔을 곧게 뻗어 칼과 한 줄로. 뒷손은 그대로.
+const THRUST_ARMS = (blade) => [[blade - 0.04, blade], [-1.75, -3.05]];
+/// 런지 — 앞발을 크게 내딛고 뒷다리를 곧게 편다. 뒷손은 뒤로 떨어뜨린다(균형을 잡는 손).
+const LUNGE = { hipY: HIP_Y + 13.5, lean: 0.24, legs: [[1.45, 0.20], [-0.99, -0.99]],
+                offArm: [-1.45, -1.40] };
+/// 베기 — 칼을 머리 뒤로 젖혔다가(준비) 앞 아래로 크게 내리벤다. 줄 따라 끝나는 높이가 다르다.
+const CUT_UP = { lean: -0.12, arms: [[3.05, 3.55], [-1.20, -1.55]], blade: 3.95 };
+const CUT_END = [0.85, 1.05, 1.30];           // 아래 · 가운데 · 위 줄로 벨 때 칼끝이 멈추는 각
+/// 막기 — 손목을 틀어 칼을 세운다. 위 줄은 칼을 머리 위에 가로로, 가운데는 몸 앞에 곧게 세워,
+/// 아래는 칼끝을 앞 아래로 내려 쓸어 막는다.
+const PARRY = [
+  { arms: [[0.95, 1.40], [-1.75, -3.05]], blade: 0.60 },   // 아래 — 칼끝을 앞 아래로 쓸어
+  { arms: [[0.85, 2.10], [-1.75, -3.05]], blade: 2.95 },   // 가운데 — 몸 앞에 곧게 세워
+  { arms: [[2.30, 2.75], [-1.75, -3.05]], blade: 2.05 },   // 위 — 손을 머리 위로, 칼은 앞 위로 비스듬히
+];
+
 const lerp = (a, b, t) => a + (b - a) * t;
 /// 각도를 짧은 쪽으로 잇는다. 그냥 섞으면 머리 위로 올라가야 할 팔이 발밑을 지나 돈다.
 const wrapPi = (a) => a - TAU * Math.round(a / TAU);
@@ -275,9 +306,10 @@ function basePose(p, time, spike = true) {
 /// spike — **배구에서만 켠다.** 치는 모션(p.swing·p.toss·p.cock)은 이 스위치가 켜져야 나온다.
 /// 졸라맨은 다른 게임도 쓰니, 배구가 남겨 둔 값이 남의 그림에 새어 들면 안 된다 —
 /// 판을 갈아 끼울 때 휘두르던 사람이 다음 게임에서 그 자세로 굳는 일이 실제로 일어난다.
-function pose(p, time, face = faceOf(p), spike = true, bat = false) {
+function pose(p, time, face = faceOf(p), spike = true, bat = false, fence = false) {
   const base = basePose(p, time, spike);
   if (p.dead || p.cheer || p.waiting) return base;
+  if (fence) return fencePose(p, base, time);
   // 야구. 던지기 · 치기 · 배트 세우고 기다리기 · 글러브 들고 기다리기 — 이 순서로 센다.
   // 달리는 중에는 아무것도 안 덮는다(주자와 타구를 쫓는 수비수는 그냥 달려야 한다).
   if (bat) {
@@ -365,6 +397,79 @@ function swingPose(p, base, face) {
            [lerpAngle(OFF_HIT[0], base.arms[1][0], w), lerpAngle(OFF_HIT[1], base.arms[1][1], w)]],
     reach: [lerp(lerp(reach, 1, e), 1, w), 1],
   };
+}
+
+/// **펜싱.** 서 있을 때도 걸을 때도 앙가르드를 지킨다 — 걸을 땐 발만 작게 끌어 옮긴다(펜싱 스텝).
+function fencePose(p, base, time) {
+  const f = p.fence ?? {};
+  const line = Math.max(-1, Math.min(1, Math.round(f.line ?? 0)));
+  const li = line + 1;
+  const k = Math.max(0, Math.min(1, f.k ?? 0));
+  // 걸음 — 앞발 · 뒷발이 번갈아 조금씩. 달리기 다리를 쓰면 펜싱이 아니라 달리기가 된다.
+  const step = Math.min(1, Math.abs(p.vx ?? 0) / 200);
+  const sway = Math.sin(p.walk ?? 0) * 0.16 * step;
+  const guard = {
+    hipY: FENCE_GUARD.hipY + Math.abs(Math.sin(p.walk ?? 0)) * 1.5 * step, lean: FENCE_GUARD.lean,
+    bob: base.bob * 0.5,
+    legs: [[FENCE_GUARD.legs[0][0] + sway, FENCE_GUARD.legs[0][1] + sway],
+           [FENCE_GUARD.legs[1][0] + sway, FENCE_GUARD.legs[1][1] + sway]],
+    arms: FENCE_GUARD.arms, blade: GUARD_BLADE[li],
+  };
+  // 한 수의 앞쪽 35% 는 뻗고(내딛고), 나머지는 돌아온다.
+  const out = (k0 = 0.35) => (k < k0 ? smooth(k / k0) : 1 - smooth((k - k0) / (1 - k0)));
+  switch (f.act) {
+    case 'thrust': {
+      const e = out(0.3);
+      return { ...guard, lean: lerp(guard.lean, 0.10, e),
+               arms: mixLimbs(guard.arms, THRUST_ARMS(GUARD_BLADE[li]), e), blade: guard.blade };
+    }
+    case 'lunge': {
+      const e = out(0.32);
+      return { ...guard, hipY: lerp(guard.hipY, LUNGE.hipY, e), lean: lerp(guard.lean, LUNGE.lean, e),
+               legs: mixLimbs(guard.legs, LUNGE.legs, e),
+               arms: mixLimbs(guard.arms, [THRUST_ARMS(GUARD_BLADE[li])[0], LUNGE.offArm], e),
+               blade: guard.blade };
+    }
+    case 'cut': {
+      // 준비(앞 45%) — 칼을 머리 뒤로. 그다음 한 번에 내리베고, 끝에서 앙가르드로 풀린다.
+      if (k < 0.45) {
+        const e = smooth(k / 0.45);
+        return { ...guard, lean: lerp(guard.lean, CUT_UP.lean, e), arms: mixLimbs(guard.arms, CUT_UP.arms, e),
+                 blade: lerp(guard.blade, CUT_UP.blade, e) };
+      }
+      const end = CUT_END[li];
+      const endArms = [[end + 0.15, end], [-1.30, -1.60]];
+      if (k < 0.62) {
+        const e = ((k - 0.45) / 0.17) ** 1.6;               // 가속하며 내려온다
+        return { ...guard, lean: lerp(CUT_UP.lean, 0.24, e), arms: mixLimbs(CUT_UP.arms, endArms, e),
+                 blade: lerp(CUT_UP.blade, end - 0.2, e) };  // 칼은 곧이곧대로 앞으로 돈다 (짧은 쪽으로 안 잇는다)
+      }
+      const e = smooth((k - 0.62) / 0.38);
+      return { ...guard, lean: lerp(0.24, guard.lean, e), arms: mixLimbs(endArms, guard.arms, e),
+               blade: lerp(end - 0.2, guard.blade, e) };
+    }
+    case 'parry': {
+      const e = out(0.25);
+      const P = PARRY[li];
+      return { ...guard, arms: mixLimbs(guard.arms, P.arms, e), blade: lerp(guard.blade, P.blade, e) };
+    }
+    default:
+      return guard;
+  }
+}
+
+/// 칼끝이 판 어디에 있나 (펜싱). 판정이 이 자리를 쓴다 — 그림과 판정이 같은 칼을 본다.
+export function bladeTip(p, time = 0) {
+  const face = p.facing;
+  const s = pose(p, time, face, false, false, true);
+  if (s.blade === undefined) return null;
+  const hipY = s.hipY + s.bob;
+  const sx = Math.sin(s.lean) * TORSO;
+  const sy = hipY - Math.cos(s.lean) * TORSO;
+  const [, , hand] = limb(sx, sy, s.arms[0][0], UPPER, s.arms[0][1], FORE);
+  return { x: p.x + (hand[0] + Math.sin(s.blade) * BLADE_LEN) * face,
+           y: p.groundY - p.air + hand[1] + Math.cos(s.blade) * BLADE_LEN, angle: s.blade,
+           handX: p.x + hand[0] * face, handY: p.groundY - p.air + hand[1] };
 }
 
 /// 받아 올리기(토스). 두 팔을 머리 위로 재빨리 밀어 올렸다가 천천히 내린다. 발끝으로 살짝 선다.
@@ -513,12 +618,13 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   }
   const spike = !!opts.spike;
   const bat = !!opts.bat;
+  const fence = !!opts.fence;
   const face = faceOf(p, spike);
   ctx.scale(face, 1); // 뒤집힌 공간 안에서는 +x 가 언제나 「앞」이다
   // 몸을 던지면 앞으로 쏠린다. 발이 뒤에 남고 어깨가 앞으로 나간다.
   if (p.slide > 0) ctx.translate(-6, 0);
 
-  const s = pose(p, time, face, spike, bat);
+  const s = pose(p, time, face, spike, bat, fence);
   const hipY = s.hipY + s.bob;
   const lean = p.dead ? 0.02 : s.lean;
 
@@ -574,6 +680,18 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
     const mid = [hx + Math.sin(s.bat) * BAT_LEN * 0.45, hy + Math.cos(s.bat) * BAT_LEN * 0.45];
     stroke(ctx, [[hx, hy], mid], { width: 3.2, color: INK, seed: seed + 51, amp: 0.3 });
     stroke(ctx, [mid, tip], { width: 5.4, color: INK, seed: seed + 52, amp: 0.3 });
+  }
+  // 펜싱 칼 — 손잡이 · 종 모양 막이 · 가는 칼날 · 끝의 단추. 칼날이 가늘어야 칼로 읽힌다.
+  if (s.blade !== undefined) {
+    const [hx, hy] = armA[2];
+    const ux = Math.sin(s.blade), uy = Math.cos(s.blade);
+    const tip = [hx + ux * BLADE_LEN, hy + uy * BLADE_LEN];
+    stroke(ctx, [[hx - ux * 5, hy - uy * 5], [hx, hy]], { width: 3.4, color: INK, seed: seed + 54, amp: 0.2 });
+    stroke(ctx, [[hx + uy * 4.5 + ux * 1.5, hy - ux * 4.5 + uy * 1.5], [hx + ux * 3, hy + uy * 3],
+                 [hx - uy * 4.5 + ux * 1.5, hy + ux * 4.5 + uy * 1.5]],
+           { width: 2.6, color: INK, seed: seed + 55, amp: 0.25 });          // 막이(종)
+    stroke(ctx, [[hx + ux * 3, hy + uy * 3], tip], { width: 1.7, color: INK, seed: seed + 56, amp: 0.25 });
+    circle(ctx, tip[0], tip[1], 1.6, { width: 1.6, color: INK, seed: seed + 57, amp: 0.1 });
   }
   if (s.glove) {
     const [gx, gy] = armB[2];

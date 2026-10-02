@@ -970,11 +970,19 @@ say('페인트 — 공중에서 ⌥↑ 로 살짝 얹어 블록 너머로');
   // 키를 누르는 길(world.press → game.tap)을 그대로 지나가게 본다.
   // **⌥↑ 는 누른 그 순간 얹는다.** 네 프레임 기다리게 했더니(v3.25.0) ⌥Space 보다 늦게 나가서
   // 그 사이 공이 손 밑으로 빠졌다.
+  // **v3.30 — 페인트(드롭)는 ⌥X.** 공중 ⌥↑ 는 넘겨 주기와 키가 겹쳐서 뺐다. 키 길(world.press → game.drop)로 본다.
   const up = rig({ air: 60, off: [6, 10], vy: 0 });
+  const upBefore = [up.b.ball.vx, up.b.ball.vy];
   tap(up.world, 'jump');
-  check('점프 뒤 ⌥↑ 로도 페인트 — 누른 그 프레임에', up.b.ball.vx > 0 && up.b.ball.vx < 400, true);
-  check('같이 떠오른다', Math.round(up.b.ball.vy) < -300, true);
-  check('⌥↑ 페인트도 안 달아오른다', up.b.ball.hot, 0);
+  check('공중 ⌥↑ 는 이제 얹지 않는다 (점프만)', [up.b.ball.vx, up.b.ball.vy], upBefore);
+  tap(up.world, 'drop');
+  check('⌥X 로 드롭 — 누른 그 프레임에', up.b.ball.vx > 0 && up.b.ball.vx < 400, true);
+  check('떠오른다', Math.round(up.b.ball.vy) < -300, true);
+  check('드롭도 안 달아오른다', up.b.ball.hot, 0);
+  // 땅에서 ⌥X 는 안 얹는다 — 까닭(뛰어서)을 띄운다
+  const ground2 = rig({ air: 0, off: [6, 10] });
+  tap(ground2.world, 'drop');
+  ok('땅에서 ⌥X 는 까닭을 띄운다', ground2.b.fx.some((f) => f.k === 'miss' && f.word === '뛰어서'));
 
   // 땅에서 ⌥↑ 는 점프다 — 얹히지 않는다.
   const jumpOff = rig({ air: 0, off: [6, 10] });
@@ -1294,7 +1302,7 @@ say('기술표가 판 위에 있다 — 메뉴를 안 열어도 보이게');
   // 이 게임은 기술이 여덟인데 판 어디에도 안 적혀 있었다. 메뉴(⌥M)를 열면 나오지만
   // 판을 멈추고 메뉴를 여는 사람은 없다.
   const all = KEY_ROWS.map((r) => r.join(' ')).join(' / ');
-  for (const skill of ['달리기', '점프', '강타', '페인트', '디그', '블로킹', '슬라이딩', '넘겨 주기']) {
+  for (const skill of ['달리기', '점프', '강타', '드롭', '디그', '블로킹', '슬라이딩', '넘겨 주기']) {
     ok(`${skill} 이 적혀 있다`, all.includes(skill));
   }
   ok('한 줄에 키와 이름이 같이 있다', KEY_ROWS.every((r) => r.length === 2 && r[0].includes('⌥')));
@@ -1659,21 +1667,20 @@ say('페인트 — 떠오른 블로커 손 위로 넘어간다');
   }
 }
 
-say('⌥↑ 와 ⌥Space + ↑ — 두 기술이 한 공을 두 번 치지 않는다');
+say('⌥X 드롭과 ⌥Space — 두 기술이 한 공을 두 번 치지 않는다');
 {
-  // ↑ 를 먼저 누르고 ⌥Space 를 누르면: 예전엔 페인트가 나간 뒤 같은 프레임에 또 쳤다.
+  // 드롭 뒤에 곧바로 ⌥Space 를 눌러도 같은 공을 또 치지 않는다.
   const r = rig({ air: 60, off: [6, 10], vy: 0 });
-  tap(r.world, 'jump'); r.world.input.jump = true;
+  tap(r.world, 'drop');
   const tipped = [r.b.ball.vx, r.b.ball.vy];
   volley.action(r.world);
-  check('페인트가 나갔고, 뒤따른 ⌥Space 는 같은 공을 또 치지 않는다', [r.b.ball.vx, r.b.ball.vy], tipped);
+  check('드롭이 나갔고, 뒤따른 ⌥Space 는 같은 공을 또 치지 않는다', [r.b.ball.vx, r.b.ball.vy], tipped);
   ok('얹는 팔만 나왔다', r.p.toss > 0 && !(r.p.swing > 0));
-  // ⌥Space 를 잡은 채 누른 ↑ 는 페인트가 아니다
-  const held = rig({ air: 60, off: [6, 10], vy: 0 });
-  held.b.spaceDown = true;
-  const before = [held.b.ball.vx, held.b.ball.vy];
-  tap(held.world, 'jump');
-  check('⌥Space 를 잡은 채 ↑ 는 안 얹는다', [held.b.ball.vx, held.b.ball.vy], before);
+  // ⌥Space + ↑ 는 이제 늘 넘겨 주기다 (↑ 가 페인트를 안 낸다)
+  const lob = rig({ air: 60, off: [6, -10], vy: 100, keys: { jump: true } });
+  tap(lob.world, 'jump'); lob.world.input.jump = true;
+  volley.action(lob.world);
+  ok('↑ 를 먼저 눌러도 ⌥Space 는 넘겨 주기', lob.b.ball.vy <= -700 && lob.p.swing > 0);
   // 같은 사람이 곧바로 두 번은 못 친다
   const d = rig({ air: 60, off: [6, 10] });
   check('얹었다', tipHit(d.world), true);
@@ -1806,6 +1813,76 @@ say('세트 스코어 — 판이 끝날 때마다 이긴 편에 하나 · 편이
   check('다시 센다', world.mp.volleySets.score, [1, 0]);
   net.roleChanged(world, 'off', null, 0, '도현'); // 방이 깨졌다
   check('방이 깨지면 지운다', world.mp.volleySets, null);
+}
+
+say('드롭 — ⌥X 는 짧게, ⌥X + 상대 쪽 방향키는 길게 (같은 동작 · 같은 높이)');
+{
+  const land = (x, keys) => {
+    const r = rig({ x, air: 58, off: [10, 10], vy: 150, keys });
+    tap(r.world, 'drop');
+    const vy0 = r.b.ball.vy;
+    let last = r.b.ball.x;
+    for (let i = 0; i < 400; i++) {
+      r.p.x = 200; r.p.air = 0; Object.assign(r.world.input, { right: false, left: false });
+      last = r.b.ball.x;
+      volley.update(r.world, 1 / 120);
+      if (r.b.serving) break;
+      if (r.b.ball.y > r.world.groundY - 22) { last = r.b.ball.x; break; }
+    }
+    return { at: Math.round(last - 756), vy0 };
+  };
+  for (const x of [650, 700]) {
+    const short = land(x, {}), long = land(x, { right: true });
+    note(`${x} 에서 — 짧게 네트+${short.at} · 길게 네트+${long.at}`);
+    ok(`${x} — 짧은 드롭은 네트 바로 너머`, short.at > 0 && short.at < 250);
+    ok(`${x} — 긴 드롭은 코트 뒤쪽`, long.at > 450);
+    check(`${x} — 둘이 같은 높이로 오른다 (손을 떠날 때는 같아 보인다)`, Math.round(long.vy0), Math.round(short.vy0));
+  }
+  // 긴 드롭은 가운데에서 얹어도 넘어간다 (짧은 드롭은 제 코트)
+  ok('가운데에서 긴 드롭은 넘어간다', land(500, { right: true }).at > 300);
+  ok('가운데에서 짧은 드롭은 안 넘어간다', land(500, {}).at < 0);
+}
+
+say('검토에서 나온 것 — 네트에 붙어 친 강타 · 드롭 뒤 강타 · 뒤쪽 ⌥↓ · ⌥↓ 상한');
+{
+  // 친 공이 어디에 떨어지나 (+ 면 상대 코트, − 면 제 코트). 친 사람은 판 밖으로 비켜 둔다.
+  const fly = (r) => {
+    r.b.stop = 0; r.b.ball.gT = 0; r.p.x = r.world.team === 0 ? 60 : 1452; r.p.air = 0;
+    Object.assign(r.world.input, { left: false, right: false, duck: false, jump: false });
+    let last = r.b.ball.x;
+    for (let i = 0; i < 600; i++) {
+      last = r.b.ball.x;
+      volley.update(r.world, 1 / 120);
+      if (r.b.serving) break;
+      if (r.b.ball.y > r.world.groundY - 22) { last = r.b.ball.x; break; }
+    }
+    return Math.round(last - 756);
+  };
+  // ① 공 중심이 벌써 네트를 살짝 넘어 있다 (네트에 붙어 쳤다). 예전엔 위로 솟아 뒷벽을 맞고 제 코트에.
+  let bad = null;
+  for (const over of [2, 8, 15]) for (const keys of [{}, { right: true }, { duck: true }]) {
+    const r = rig({ x: 728, air: 58, off: [756 + over - 728, 10], vy: 200, keys });
+    if (!spike(r.world)) continue;
+    const at = fly(r);
+    if (!(at > 0)) bad = `네트 너머 ${over}px · ${JSON.stringify(keys)} → ${at}`;
+  }
+  check('네트에 붙어 친 강타도 상대 코트에', bad, null);
+
+  // ② 드롭 공을 받아 바로 때린 강타 — 드롭의 「빨리 가는」 배율이 남으면 중력 2.25배로 제 코트에.
+  const r2 = rig({ x: 500, air: 58, off: [10, 10], vy: 200 });
+  r2.b.ball.pace = 1.5;                       // 방금 날아온 드롭 공
+  spike(r2.world);
+  check('강타는 드롭 배율을 지운다', r2.b.ball.pace, 0);
+  ok('그래서 넘어간다', fly(r2) > 0);
+
+  // ③ 뒤쪽에서 ⌥↓ 가 감아 치기가 안 될 때 — 그냥 강타가 되되 1.4배 몫은 덜어 낸다 (⌥→ 보다 깊으면 안 된다).
+  const deep = (keys) => { const r = rig({ x: 456, air: 19, off: [10, 4], vy: 300, keys }); spike(r.world); return fly(r); };
+  ok('뒤쪽 ⌥↓ 가 ⌥→ 보다 깊게 가지 않는다', deep({ duck: true }) <= deep({ right: true }));
+
+  // ⑥ 정타 + ⌥↓ 상한 — 2400 까지 나가 0.15초 만에 떨어졌다.
+  const r6 = rig({ x: 716, air: 61.5, off: [6, 6], vy: 200, keys: { duck: true } });
+  spike(r6.world);
+  ok('감아 치기는 2000 을 안 넘는다', Math.hypot(r6.b.ball.vx, r6.b.ball.vy) <= 2001);
 }
 
 done('배구');

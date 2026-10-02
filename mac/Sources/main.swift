@@ -74,6 +74,7 @@ private enum HK {
     static let say4: UInt32 = 14
     static let say5: UInt32 = 15    // ⌥5 — 야구의 수비 시프트
     static let say6: UInt32 = 16
+    static let drop: UInt32 = 17    // ⌥X — 배구의 드롭(페인트)
 
     /// 게임 중에만 거는 것들. 숨기면 반드시 푼다 — ⌥←/⌥→ 는 맥에서 「단어 단위 이동」이라
     /// 계속 잡고 있으면 남의 글쓰기를 망친다. 창이 안 보이면 그 키는 원래 주인에게 돌려준다.
@@ -92,6 +93,7 @@ private enum HK {
         (say4, kVK_ANSI_4, "say4"),
         (say5, kVK_ANSI_5, "say5"),
         (say6, kVK_ANSI_6, "say6"),
+        (drop, kVK_ANSI_X, "drop"),
     ]
 
     static func action(_ id: UInt32) -> String? { play.first { $0.id == id }?.action }

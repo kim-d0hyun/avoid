@@ -1043,6 +1043,11 @@ export function press(world, action, down) {
     if (down && (canRestart(world) || rewind)) world.onMenu?.('again');
     return;
   }
+  // ⌥X — 드롭(배구의 페인트). 누른 순간만 게임에 알린다. world.input 에는 안 넣는다.
+  if (action === 'drop') {
+    if (down && !world.menu.open && world.state === 'play') gameOf(world).drop?.(world);
+    return;
+  }
   // ⌥1~4 — 이모트(머리 위 말풍선). 게임이 받는다. world.input 에는 안 넣는다.
   if (action[0] === 's' && action[1] === 'a' && action[2] === 'y') {
     if (down) gameOf(world).emote?.(world, +action.slice(3));
