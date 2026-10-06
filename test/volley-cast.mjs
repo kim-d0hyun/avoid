@@ -338,12 +338,30 @@ say('서브 — 능력치 · 점프 서브 · 회오리 서브(콩떡)');
     check('켜 두었다', b.armed.get(world.mp.myId), 'spin');
     holdServe(world, 0.5);
     ok('흔들리는 공', b.ball.wobble > 0);
-    const vxs = []; let crossed = false;
-    run(world, 70, () => { vxs.push(b.ball.vx); crossed ||= b.ball.x > world.w / 2; });
-    const swing = Math.max(...vxs.slice(0, 40)) - Math.min(...vxs.slice(0, 40));
-    note(`회오리 — 가로 빠르기가 ${swing.toFixed(0)}px/s 폭으로 흔들린다`);
-    ok('가로 빠르기가 크게 흔들린다', swing > 300);
-    ok('그래도 네트는 넘는다', crossed);
+    // **옆에서 보는 화면이라 위아래로 흔들려야 보인다** (가로 빠르기만 흔들었더니 길이 보통 서브와 똑같아 보였다).
+    // 같은 자리 · 같은 세기의 보통 서브와 높이를 견준다.
+    const plain = serving('kongtteok'); holdServe(plain.world, 0.5);
+    let dev = [], crossed = false, lowAtNet = false;
+    const netX = world.w / 2, netTop = world.groundY - 95;
+    for (let i = 0; i < 70; i++) {
+      w.update(world, FR); w.update(plain.world, FR);
+      if (!crossed) dev.push(b.ball.y - plain.b.ball.y);
+      if (!crossed && b.ball.x > netX) { crossed = true; lowAtNet = b.ball.y > netTop - 20; }
+    }
+    const up = -Math.min(...dev), down = Math.max(...dev);
+    note(`회오리 — 보통 서브보다 ${up.toFixed(0)}px 위로 떴다가 ${down.toFixed(0)}px 아래로 (네트 앞까지)`);
+    ok('위로 25px 넘게 흔들린다', up > 25);
+    ok('그래도 네트는 넘는다', crossed && !lowAtNet);
+    // 어느 자리 · 어느 세기로 넣어도 네트에 안 걸린다
+    let stuck = 0, tries = 0;
+    for (const x of [60, 120, 200, 280]) for (const hold of [0.2, 0.4, 0.6, 0.72]) {
+      const r = serving('kongtteok'); r.world.player.x = x; run(r.world, 2);
+      r.b.gauge.set(r.world.mp.myId, 4); tap(r.world, 'guard'); holdServe(r.world, hold);
+      let over = false;
+      run(r.world, 120, () => { over ||= r.b.ball.x > r.world.w / 2 + 25; });
+      tries++; if (!over || r.b.score[1] > 0) stuck++;
+    }
+    check(`자리 넷 × 세기 넷 — 네트에 걸린 회오리 서브 (${tries}번 중)`, stuck, 0);
     const w2 = rally(mk('kongtteok')); const world2 = mk('kongtteok'); const b2 = rally(world2); void w2;
     b2.gauge.set(world2.mp.myId, 4); tap(world2, 'guard');
     ok('내 서브가 아니면 못 켠다', !b2.armed.has(world2.mp.myId) && b2.gauge.get(world2.mp.myId) === 4);

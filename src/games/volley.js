@@ -397,8 +397,28 @@ function chargeGauge(world, toSide) {
 const DASH = 120;          // 번개 — 잔상 대시 거리
 const JUMP_SERVE = 1.25;   // 점프 서브 — 그만큼 빠르게
 const WOBBLE_TIME = 1.4;   // 회오리 서브(콩떡) — 흔들리는 시간
-const WOBBLE_A = 300;      //   흔들리는 가로 빠르기 폭 (px/s)
-const WOBBLE_W = 11;       //   흔들리는 빠르기 (rad/s)
+const WOBBLE_H = 52;       //   **위아래로** 흔들리는 폭 (px). 옆에서 보는 화면이라 가로 빠르기만 흔들면 안 보인다
+const WOBBLE_W = 9;        //   흔들리는 빠르기 (rad/s) — 한 번 오르내리는 데 0.7초
+/// 회오리 서브의 세로 빠르기 덧셈 — 위치로는 −H·sin(ωt) (처음엔 위로). 빠르기로는 −H·ω·cos(ωt).
+const wobbleV = (t) => -WOBBLE_H * WOBBLE_W * Math.cos(WOBBLE_W * t);
+/// 흔들리는 서브가 **네트 위로 넘어가나** — update() 와 같은 셈(중력 · 탑스핀 · 저항 · 흔들림)으로 날려 본다.
+/// flies 는 흔들림을 모른다 — 흔들리다 내려간 자리에 네트가 있으면 걸린다.
+function wobbleClears(world, x, y, vx, vy, spin, across) {
+  const netX = world.w / 2, netTop = world.groundY - NET_H;
+  const dt = 1 / 120;
+  vy += wobbleV(0);
+  for (let t = 0; t < 3; t += dt) {
+    vy += (GRAVITY + (spin ? TOPSPIN : 0)) * dt;
+    if (t + dt < WOBBLE_TIME) vy += wobbleV(t + dt) - wobbleV(t);
+    const sp = Math.hypot(vx, vy);
+    const lose = Math.min(0.5, DRAG * sp * dt * (spin && t < HOT_TIME ? HOT_DRAG : 1));
+    vx -= vx * lose; vy -= vy * lose;
+    x += vx * dt; y += vy * dt;
+    if ((x - netX) * across >= 0) return y < netTop - BALL_R - 2;
+    if (y + BALL_R >= world.groundY) return false;
+  }
+  return false;
+}
 const HOVER = 0.6;         // 둥실(풍선) — 공중에 멈추는 시간
 const FAKE_WINDOW = 0.14;  // 시간차 — 뜬 뒤 이 안에 ⌥↓
 const NETIN_LAND = 34;     // 네트 인(나비) — 네트에서 이만큼 너머에 떨어진다
@@ -724,10 +744,8 @@ export function hitServe(world, power, dir, jump = false) {
   const jumpK = jump ? JUMP_SERVE : 1;
   ball.vx = across * (SERVE_SLOW + (SERVE_FAST * sst.serve * jumpK - SERVE_SLOW) * k) + dir * across * SERVE_AIM;
   ball.vy = -(SERVE_LIFT - SERVE_FLAT * k) * (jump ? 0.55 : 1);
-  if (world.mp.role !== 'guest' && b.armed?.get(sid) === 'spin') {
-    b.armed.delete(sid);
-    ball.wobble = WOBBLE_TIME; ball.wobT = 0;
-  }
+  const wobbly = world.mp.role !== 'guest' && b.armed?.get(sid) === 'spin';
+  if (wobbly) b.armed.delete(sid);
   ball.spinV = across * (2 + k * 4);
   // 강서브는 달아오른 채 앞으로 돌며 간다 — 중력의 1.45배로 떨어져 코트 안에 꽂힌다.
   // (달아오름은 꾸러미의 일곱째 칸으로 가고, 손님은 그걸 보고 같은 회전을 그린다.)
@@ -751,6 +769,14 @@ export function hitServe(world, power, dir, jump = false) {
         if (clears(ball.vx * fast, vy)) { ball.vx *= fast; ball.vy = vy; found = true; break; }
       }
     }
+  }
+  // 회오리 서브 — 흔들리며 가도 네트는 넘어야 한다. 넘을 때까지 각을 든다(위의 찾기와 같은 뜻).
+  if (wobbly) {
+    for (let vy = ball.vy; vy >= -MAX_UP; vy -= 25) {
+      if (wobbleClears(world, ball.x, ball.y, ball.vx, vy, spin, across)) { ball.vy = vy; break; }
+    }
+    ball.wobble = WOBBLE_TIME; ball.wobT = 0;
+    ball.vy += wobbleV(0);                 // 처음엔 위로 — 위치가 −H·sin(ωt) 를 따른다
   }
   b.tail = [];
   // **서브는 바로 넘겨야 한다.** 넘어가기 전까지 올린 편은 공을 못 건드린다 —
@@ -2347,17 +2373,20 @@ export default {
     // 달아오른 시간이 다 되면 그냥 공이다.
     if (ball.hot > 0) {
       ball.hot = Math.max(0, ball.hot - dt);
-      if (ball.hot <= 0) cool(ball);
+      // 식는 것은 달아오름만 — 회오리 서브의 흔들림은 남긴다(몸·벽·네트에 닿아 식을 때만 함께 멈춘다).
+      if (ball.hot <= 0) { const wob = ball.wobble, wt = ball.wobT; cool(ball); ball.wobble = wob; ball.wobT = wt; }
     }
     // **탑스핀.** 앞으로 도는 강타는 중력의 1.45배로 떨어진다 — 포물선이 아니라 꺾여 꽂힌다.
     ball.vy += (GRAVITY * (ball.pace > 1 ? ball.pace * ball.pace : 1)
       + (ball.topspin ? TOPSPIN + (ball.dip ? DIP_SPIN : 0) : 0)) * dt;
-    // 회오리 서브(콩떡) — 가로 빠르기가 사인으로 흔들린다. 받는 쪽은 떨어질 자리를 끝까지 못 읽는다.
+    // 회오리 서브(콩떡) — **위아래로 흔들리며** 날아간다. 받는 쪽은 떨어질 자리를 끝까지 못 읽는다.
+    // 다 흔들리면 남은 덧셈 빠르기를 거둔다 — 안 거두면 끝난 자리의 흔들림이 그대로 남아 공이 떠오르거나 처진다.
     if (ball.wobble > 0) {
       const t0 = ball.wobT ?? 0;
       ball.wobT = t0 + dt;
-      ball.vx += WOBBLE_A * (Math.sin(WOBBLE_W * ball.wobT) - Math.sin(WOBBLE_W * t0));
       ball.wobble = Math.max(0, ball.wobble - dt);
+      if (ball.wobble > 0) ball.vy += wobbleV(ball.wobT) - wobbleV(t0);
+      else ball.vy -= wobbleV(t0);
     }
 
     // 공기 저항. **빠를수록 많이 깎인다** (제곱 저항).
