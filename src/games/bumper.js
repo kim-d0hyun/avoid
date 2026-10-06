@@ -33,7 +33,8 @@ const SHRINK_AT = 40;       // 이때부터 가장자리가 무너진다
 const SHRINK_TO = 0.4;      // 60초에 반지름이 이만큼까지
 const COUNT = 1.6;          // 판 시작 전 셋·둘·하나
 const END_WAIT = 1.8;       // 판이 끝나고 다음 판까지
-const FALL_T = 0.7;
+const FALL_T = 1.0;         // 떨어지는 데 걸리는 시간 — 짧으면 「사라졌다」로만 보인다
+const FALL_DROP = 230;      // 그동안 아래로 떨어지는 거리 (px, 점점 빨라진다)
 const SPIN = 4.2;           // 옆을 맞으면 도는 세기 (rad/s, 최고 빠르기로 받았을 때)
 const SPIN_DECAY = 3.2;
 const SPIN_MAX = 7;         // 가장 세게 돌 때 — 다 돌면 약 125°
@@ -291,6 +292,7 @@ function step(world, dt) {
   for (const car of b.cars) {
     if (!car.alive || Math.hypot(car.x, car.y) <= R) continue;
     car.alive = false; car.fallT = 0;
+    world.shake = Math.max(world.shake ?? 0, 0.45);          // 떨어지는 순간 쿵 — 화면이 한 번 흔들린다
     const by = car.lastHit && b.clock - car.lastHit.at < 2.5 ? car.lastHit.id : null;
     say(world, by !== null ? `${b.names.get(car.id)} 아웃! — ${b.names.get(by)}` : `${b.names.get(car.id)} 떨어졌다`,
         by !== null ? colorOf(by) : PENCIL);
@@ -344,14 +346,25 @@ function drawArena(ctx, A, Rk, time) {
 function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {}) {
   const fall = car.alive ? 0 : Math.min(1, car.fallT / FALL_T);
   if (fall >= 1) return;
-  const [sx, sy0] = scr(A, car.x, car.y);
-  const sy = sy0 + fall * 60;                               // 떨어지며 아래로
-  const k = 1 - fall * 0.5;
+  // **떨어진다** — 가장자리 너머로 조금 더 미끄러져 나가며 고꾸라지고, 점점 빨리 아래로 떨어진다.
+  // 끝 30% 에서만 옅어진다 (처음부터 옅어지면 떨어지는 게 아니라 사라지는 것으로 보인다).
+  const d = Math.hypot(car.x, car.y) || 1;
+  const out = 34 * Math.min(1, fall * 2.5);
+  const [sx, sy0] = scr(A, car.x + (car.x / d) * out, car.y + (car.y / d) * out);
+  const sy = sy0 + FALL_DROP * fall * fall;
+  const k = 1 - fall * 0.45;
   const r = CAR_R * k;
-  const alpha = 1 - fall;
+  const alpha = fall < 0.7 ? 1 : 1 - (fall - 0.7) / 0.3;
+  if (fall > 0) {
+    // 떨어지는 길 — 차 위로 속도선
+    for (let i = -1; i <= 1; i++) {
+      stroke(ctx, [[sx + i * 10, sy - r * SQ - 8], [sx + i * 10, sy - r * SQ - 8 - 40 * fall]],
+             { width: 2, color: PENCIL, seed: 40 + i, amp: 0.4, halo: false, alpha: alpha * 0.7 });
+    }
+  }
   ctx.save();
   ctx.globalAlpha = alpha;
-  if (fall > 0) { ctx.translate(sx, sy); ctx.rotate(fall * 0.9); ctx.translate(-sx, -sy); }
+  if (fall > 0) { ctx.translate(sx, sy); ctx.rotate(fall * 2.2 * (car.x >= 0 ? 1 : -1)); ctx.translate(-sx, -sy); }
   // 부딪혀 출렁 — 가로로 퍼졌다 세로로 섰다 하며 잦아든다
   if (car.wob > 0.01) {
     const q = car.wob * Math.sin((car.wobT ?? 0) * 30) * 0.2;
@@ -507,10 +520,26 @@ export default {
     const b = world.bag;
     if (!b?.cars) return;
     const A = arena(world);
+    const all = (world.mp.role === 'guest' ? b.cars.map((c) => predicted(world, c)) : b.cars);
+    const fallingBack = all.filter((c) => !c.alive && c.y < 0);
+    // **먼 쪽(위) 가장자리로 떨어진 차는 경기장 뒤로** 숨는다 — 바닥을 나중에 그려 가린다.
+    for (const car of fallingBack) drawCar(ctx, A, car, colorOf(car.id), { name: b.names.get(car.id) ?? '', time });
     drawArena(ctx, A, b.Rk ?? 1, time);
-    // 떨어지는 차는 경기장 뒤로, 나머지는 위에서 아래 순서로 (가까운 차가 앞에)
-    const cars = (world.mp.role === 'guest' ? b.cars.map((c) => predicted(world, c)) : b.cars)
-      .slice().sort((p, q) => (p.alive - q.alive) || (p.y - q.y));
+    // 떨어진 자리 — 가장자리에 흙먼지 고리 (어디서 떨어졌는지 남는다)
+    for (const car of all) {
+      if (car.alive || car.fallT > 0.6) continue;
+      const d = Math.hypot(car.x, car.y) || 1;
+      const R = A.R * (b.Rk ?? 1);
+      const [ex, ey] = scr(A, car.x / d * R, car.y / d * R);
+      const g = car.fallT / 0.6;
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2;
+        circle(ctx, ex + Math.cos(a) * (10 + 26 * g), ey + Math.sin(a) * (6 + 14 * g), 4 + 3 * g,
+               { width: 1.6, color: PENCIL, seed: 50 + i, amp: 0.4, halo: false, alpha: 0.8 * (1 - g) });
+      }
+    }
+    // 나머지는 위에서 아래 순서로 (가까운 차가 앞에). 가까운 쪽으로 떨어지는 차는 가장자리 앞으로 떨어진다.
+    const cars = all.filter((c) => !(fallingBack.includes(c))).sort((p, q) => (p.y - q.y));
     for (const car of cars) {
       drawCar(ctx, A, car, colorOf(car.id), { mine: car.id === world.mp.myId, name: b.names.get(car.id) ?? '', time });
     }
@@ -591,12 +620,15 @@ export default {
     if (!d || typeof d !== 'object') return;
     if (!b.cars) Object.assign(b, freshBag());
     if (Array.isArray(d.c)) {
+      const prev = b.cars ?? [];
       b.cars = d.c.filter((r) => Array.isArray(r) && r.length >= 12 && r.every(Number.isFinite)).map((r) => ({
         id: r[0], x: r[1], y: r[2], vx: r[3], vy: r[4], h: r[5], alive: !!r[6], fallT: r[7] / 100,
         boostT: r[8] / 100, braceT: r[9] / 100, boostCool: r[10] / 100, braceCool: r[11] / 100, lastHit: null, think: 0,
         wob: Number.isFinite(r[12]) ? r[12] / 100 : 0, spin: Number.isFinite(r[13]) ? r[13] / 100 : 0,
         wobT: b.cars.find((o) => o.id === r[0])?.wobT ?? 0,
       }));
+      // 방금 떨어진 차가 있다 — 손님 화면도 한 번 흔든다
+      if (prev.some((p) => p.alive && b.cars.find((c) => c.id === p.id && !c.alive))) world.shake = Math.max(world.shake ?? 0, 0.45);
       b.age = 0;
     }
     const pairs = (v) => (Array.isArray(v) ? v.filter((p) => Array.isArray(p) && p.length === 2) : null);
