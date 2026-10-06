@@ -97,6 +97,57 @@ say('돌진 > 그냥 차 · 버티기 > 돌진 · 옆구리 > 버티기');
   ok('돌진 · 쿨다운', B.boost(me2) && !B.boost(me2));
 }
 
+say('범퍼카 손맛 — 옆을 맞으면 빙글 · 출렁 · 쿵/쾅 · 화면 흔들림');
+{
+  const hitAt = (bh, speed) => {
+    const world = mk(); go(world); park(world);
+    const [a, c] = world.bag.cars.filter((x) => x.id < 0);
+    for (const o of world.bag.cars) if (o !== a && o !== c) { o.x = 0; o.y = 400; o.still = true; }
+    a.x = -60; a.y = 0; a.h = 0; a.vx = speed; a.vy = 0;
+    c.x = 0; c.y = 0; c.h = bh; c.vx = 0; c.vy = 0;
+    world.shake = 0;
+    let spin = 0, wob = 0, pop = null, shake = 0;
+    run(world, 10, () => { spin = Math.max(spin, Math.abs(c.spin ?? 0)); wob = Math.max(wob, c.wob ?? 0);
+      pop ??= world.bag.pops?.[0]?.word; shake = Math.max(shake, world.shake ?? 0); });
+    return { spin, wob, pop, shake };
+  };
+  const side = hitAt(Math.PI / 2, 300), front = hitAt(Math.PI, 300), soft = hitAt(Math.PI / 2, 90), hard = hitAt(Math.PI / 2, 560);
+  note(`도는 세기 — 옆구리 ${side.spin.toFixed(2)} · 정면 ${front.spin.toFixed(2)} rad/s`);
+  ok('옆구리를 맞으면 빙글 돈다', side.spin > 1);
+  ok('정면으로 맞으면 거의 안 돈다', front.spin < side.spin * 0.2);
+  ok('부딪히면 출렁인다', side.wob > 0.4);
+  check('살살 닿으면 글자는 없다', soft.pop ?? null, null);
+  check('보통으로 받으면 「쿵」', side.pop, '쿵');
+  check('세게 받으면 「쾅!」', hard.pop, '쾅!');
+  ok('세게 받으면 화면이 흔들린다', hard.shake > 0.4 && soft.shake === 0);
+  // 손님 화면에도 쿵 · 출렁 · 흔들림
+  const host = mk(); go(host); run(host, 1);
+  host.bag.popSeq = 3; host.bag.pops = [{ seq: 3, x: 0, y: 0, t: 0, word: '쾅!' }];
+  host.bag.cars[0].wob = 0.8;
+  const pk = JSON.parse(JSON.stringify(bumper.pack(host)));
+  const guest = mk(); guest.mp.role = 'guest'; guest.shake = 0;
+  bumper.unpack(guest, pk);
+  ok('손님 화면에도 「쾅!」 · 흔들림', guest.bag.pops?.[0]?.word === '쾅!' && guest.shake > 0.4);
+  ok('손님 화면에도 출렁임', guest.bag.cars[0].wob > 0.7);
+}
+
+say('누가 밀었나 — 들이받은 차만 적는다');
+{
+  const world = mk(); go(world); park(world);
+  const A = B.arena(world);
+  const [x] = world.bag.cars.filter((c) => c.id < 0);
+  const m = world.bag.cars.find((c) => c.id === world.mp.myId);
+  for (const o of world.bag.cars) if (o !== x && o !== m) { o.x = -A.R * 0.5; o.y = A.R * 0.4; }
+  // 내가 가장자리 차를 들이받고, 내 힘에 나도 판 밖으로 나간다
+  m.x = A.R - 200; m.y = 0; m.h = 0; x.x = A.R - 60; x.y = 0; x.h = Math.PI;
+  B.boost(m);
+  run(world, 40);
+  const words = world.bag.words.map((w) => w.word);
+  note(`외침 — ${words.join(' / ')}`);
+  ok('받힌 차 — 「아웃! — 나」', words.some((t) => t.startsWith(`${world.bag.names.get(x.id)} 아웃! — ${world.bag.names.get(m.id)}`)));
+  ok('제 힘에 나간 나 — 「떨어졌다」 (받힌 차가 민 걸로 안 나온다)', !m.alive ? words.some((t) => t === `${world.bag.names.get(m.id)} 떨어졌다`) : true);
+}
+
 say('떨어짐 · 한 판 · 좁아지기 · 5점');
 {
   const world = mk({ watch: true }); go(world);

@@ -34,6 +34,11 @@ const SHRINK_TO = 0.4;      // 60초에 반지름이 이만큼까지
 const COUNT = 1.6;          // 판 시작 전 셋·둘·하나
 const END_WAIT = 1.8;       // 판이 끝나고 다음 판까지
 const FALL_T = 0.7;
+const SPIN = 4.2;           // 옆을 맞으면 도는 세기 (rad/s, 최고 빠르기로 받았을 때)
+const SPIN_DECAY = 3.2;
+const SPIN_MAX = 7;         // 가장 세게 돌 때 — 다 돌면 약 125°
+const WOB_DECAY = 2.4;      // 부딪혀 출렁이는 것이 잦아드는 빠르기
+const POP_T = 0.55;         // 「쿵」·「쾅!」이 떠 있는 시간
 const CPU_COLORS = ['#c0392b', '#d9a21b', '#3f8f56'];
 const CPU_NAMES = ['빨강봇', '노랑봇', '초록봇'];
 
@@ -76,7 +81,8 @@ function newRound(world) {
     const a = (i / ids.length) * Math.PI * 2 + Math.PI / 2 + b.round * 0.7;
     const r = A.R * 0.55;
     return { id, x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0, h: a + Math.PI,
-             boostT: 0, boostCool: 0, braceT: 0, braceCool: 0, alive: true, fallT: 0, lastHit: null, think: 0 };
+             boostT: 0, boostCool: 0, braceT: 0, braceCool: 0, alive: true, fallT: 0, lastHit: null, think: 0,
+             spin: 0, wob: 0, wobT: 0 };
   });
   for (const id of ids) { if (!b.score.has(id)) b.score.set(id, 0); b.names.set(id, nameOf(world, id)); }
   b.phase = 'count'; b.timer = COUNT; b.clock = 0; b.Rk = 1;
@@ -115,6 +121,8 @@ function brace(car) {
 export function drive(car, input, dt) {
   car.boostCool = Math.max(0, car.boostCool - dt);
   car.braceCool = Math.max(0, car.braceCool - dt);
+  // 옆을 맞아 빙글 — 돌진 중이든 버티는 중이든 돈다 (범퍼카다)
+  if (car.spin) { car.h += car.spin * dt; car.spin *= Math.exp(-SPIN_DECAY * dt); if (Math.abs(car.spin) < 0.02) car.spin = 0; }
   const fx = Math.cos(car.h), fy = Math.sin(car.h);
   if (car.braceT > 0) {
     // 버티기 — 바퀴를 박고 선다. 키를 안 듣는다.
@@ -165,6 +173,8 @@ function bump(world, a, c) {
   c.x += nx * push * (ma / (ma + mc)); c.y += ny * push * (ma / (ma + mc));
   const rel = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
   if (rel >= 0) return false;                                   // 이미 멀어지는 중
+  // 누가 들이받았나 — 상대 쪽으로 더 빨리 가던 차. 받힌 차에만 적는다 (떨어지면 「아웃! — 민 사람」).
+  const aIn = a.vx * nx + a.vy * ny, cIn = -(c.vx * nx + c.vy * ny);
   const j = -(1 + BOUNCE) * rel / (1 / ma + 1 / mc);
   a.vx -= (j / ma) * nx; a.vy -= (j / ma) * ny;
   c.vx += (j / mc) * nx; c.vy += (j / mc) * ny;
@@ -175,9 +185,28 @@ function bump(world, a, c) {
       x.vx -= nx * s * MAX * 0.6; x.vy -= ny * s * MAX * 0.6;
     }
   }
-  // 세게 부딪혔으면 마지막으로 민 차를 적어 둔다 (떨어지면 「○○이 밀었다!」)
-  if (-rel > 120) { a.lastHit = { id: c.id, at: world.bag.clock }; c.lastHit = { id: a.id, at: world.bag.clock }; }
-  if (-rel > 260) (world.bag.sparks ??= []).push({ x: (a.x + c.x) / 2, y: (a.y + c.y) / 2, t: 0 });
+  // **범퍼카의 손맛** — 옆을 맞으면 빙글 돌고, 몸통이 출렁이고, 「쿵」.
+  // 맞은 방향이 차가 보는 쪽과 어긋날수록(옆구리) 많이 돈다. 정면·뒤로 맞으면 거의 안 돈다.
+  const hit = -rel;
+  const sideOf = (car, mx, my) => Math.cos(car.h) * my - Math.sin(car.h) * mx;   // 앞 방향 × 맞은 방향
+  const capSpin = (v) => Math.max(-SPIN_MAX, Math.min(SPIN_MAX, v));   // 돌진에 받혀도 한 바퀴씩 돌지는 않게
+  c.spin = capSpin((c.spin ?? 0) + SPIN * ((j / mc) / MAX) * sideOf(c, nx, ny));
+  a.spin = capSpin((a.spin ?? 0) + SPIN * ((j / ma) / MAX) * sideOf(a, -nx, -ny));
+  for (const car of [a, c]) { car.wob = Math.max(car.wob ?? 0, Math.min(1, hit / 420)); car.wobT = 0; }
+  const b = world.bag;
+  const mx = (a.x + c.x) / 2, my = (a.y + c.y) / 2;
+  if (hit > 150) {
+    b.popSeq = ((b.popSeq ?? 0) + 1) % 1000;
+    (b.pops ??= []).push({ x: mx, y: my, t: 0, word: hit > 380 ? '쾅!' : '쿵', seq: b.popSeq });
+  }
+  if (hit > 300) world.shake = Math.max(world.shake ?? 0, Math.min(0.8, hit / 700));
+  // 세게 부딪혔으면 **받힌 차에** 민 차를 적어 둔다. 둘 다에 적었더니, 들이받고 제 힘에 판 밖으로 나간 차가
+  // 「받힌 차가 밀었다」로 나왔다.
+  if (hit > 120) {
+    if (aIn >= cIn) c.lastHit = { id: a.id, at: b.clock };
+    else a.lastHit = { id: c.id, at: b.clock };
+  }
+  if (hit > 260) (b.sparks ??= []).push({ x: mx, y: my, t: 0 });
   return true;
 }
 
@@ -263,7 +292,8 @@ function step(world, dt) {
     if (!car.alive || Math.hypot(car.x, car.y) <= R) continue;
     car.alive = false; car.fallT = 0;
     const by = car.lastHit && b.clock - car.lastHit.at < 2.5 ? car.lastHit.id : null;
-    say(world, by !== null ? `${b.names.get(by)}이(가) 밀었다!` : `${b.names.get(car.id)} 떨어졌다`, by !== null ? colorOf(by) : PENCIL);
+    say(world, by !== null ? `${b.names.get(car.id)} 아웃! — ${b.names.get(by)}` : `${b.names.get(car.id)} 떨어졌다`,
+        by !== null ? colorOf(by) : PENCIL);
   }
   for (const sp of b.sparks ?? []) sp.t += dt;
   b.sparks = (b.sparks ?? []).filter((sp) => sp.t < 0.3);
@@ -273,7 +303,7 @@ function step(world, dt) {
     const win = alive[0];
     if (win) {
       b.score.set(win.id, (b.score.get(win.id) ?? 0) + 1);
-      say(world, `${b.names.get(win.id)} 이 판을 땄다`, colorOf(win.id));
+      say(world, `이번 판 — ${b.names.get(win.id)}`, colorOf(win.id));
       if (b.score.get(win.id) >= WIN_AT) { b.over = true; b.winner = win.id; }
     } else say(world, '모두 떨어졌다 — 무승부', PENCIL);
   }
@@ -322,6 +352,11 @@ function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {})
   ctx.save();
   ctx.globalAlpha = alpha;
   if (fall > 0) { ctx.translate(sx, sy); ctx.rotate(fall * 0.9); ctx.translate(-sx, -sy); }
+  // 부딪혀 출렁 — 가로로 퍼졌다 세로로 섰다 하며 잦아든다
+  if (car.wob > 0.01) {
+    const q = car.wob * Math.sin((car.wobT ?? 0) * 30) * 0.2;
+    ctx.translate(sx, sy); ctx.scale(1 + q, 1 - q); ctx.translate(-sx, -sy);
+  }
   ctx.fillStyle = 'rgba(20,18,16,0.18)'; ctx.beginPath(); ctx.ellipse(sx + 3, sy + 9, r * 1.05, r * SQ + 4, 0, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = color; ctx.globalAlpha = alpha * 0.75;
   ctx.beginPath(); ctx.ellipse(sx, sy + 7, r, r * SQ + 3, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = alpha;
@@ -360,6 +395,20 @@ function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {})
     };
     bar(sy + 24, car.boostCool, BOOST_COOL, INK, '돌진');
     bar(sy + 30, car.braceCool, BRACE_COOL, RED, '버팀');
+  }
+}
+
+/// 「쿵」·「쾅!」 — 부딪힌 자리에서 톡 튀어나와 떠오르며 옅어진다.
+function drawPops(ctx, world) {
+  const b = world.bag;
+  if (!b?.pops?.length) return;
+  const A = arena(world);
+  for (const p of b.pops) {
+    const [x, y] = scr(A, p.x, p.y);
+    const g = p.t / POP_T;
+    const pop = 1 + 0.5 * Math.max(0, 1 - p.t / 0.08);
+    text(ctx, p.word, x, y - 30 - g * 18, { font: `800 ${Math.round((p.word === '쾅!' ? 22 : 16) * pop)}px ${HAN}`,
+      color: p.word === '쾅!' ? RED : INK, align: 'center', halo: 4, alpha: 1 - g * g });
   }
 }
 
@@ -415,6 +464,10 @@ export default {
     if (!b.cars) Object.assign(b, freshBag());
     for (const w of b.words) w.t += dt;
     b.words = b.words.filter((w) => w.t < 2.2);
+    // 출렁임 · 「쿵」은 누구 화면에서나 제 시간으로 잦아든다
+    for (const car of b.cars ?? []) { car.wobT = (car.wobT ?? 0) + dt; car.wob = Math.max(0, (car.wob ?? 0) - WOB_DECAY * dt); }
+    for (const p of b.pops ?? []) p.t += dt;
+    b.pops = (b.pops ?? []).filter((p) => p.t < POP_T);
     if (world.mp.role === 'guest') {
       b.age = (b.age ?? 0) + dt;
       sendKeys(world);
@@ -469,6 +522,7 @@ export default {
                { width: 2.2, color: RED, seed: 30 + i, amp: 0.3, halo: false, alpha: 1 - sp.t / 0.3 });
       }
     }
+    drawPops(ctx, world);
   },
 
   hud(ctx, world) {
@@ -522,7 +576,9 @@ export default {
     return {
       c: b.cars.map((c) => [c.id, r(c.x), r(c.y), Math.round(c.vx), Math.round(c.vy), Math.round(c.h * 1000) / 1000,
         c.alive ? 1 : 0, Math.round(c.fallT * 100), Math.round(c.boostT * 100), Math.round(c.braceT * 100),
-        Math.round(c.boostCool * 100), Math.round(c.braceCool * 100)]),
+        Math.round(c.boostCool * 100), Math.round(c.braceCool * 100),
+        Math.round((c.wob ?? 0) * 100), Math.round((c.spin ?? 0) * 100)]),
+      po: (b.pops ?? []).map((p) => [p.seq, Math.round(p.x), Math.round(p.y), p.word]),
       s: [...b.score.entries()], n: [...b.names.entries()], ph: b.phase, tm: Math.round(b.timer * 100),
       ck: Math.round(b.clock * 100), rk: Math.round(b.Rk * 1000), rd: b.round,
       w: b.words.map((w) => [w.seq, w.word, w.color]), sp: (b.sparks ?? []).map((s) => [Math.round(s.x), Math.round(s.y), Math.round(s.t * 100)]),
@@ -538,6 +594,8 @@ export default {
       b.cars = d.c.filter((r) => Array.isArray(r) && r.length >= 12 && r.every(Number.isFinite)).map((r) => ({
         id: r[0], x: r[1], y: r[2], vx: r[3], vy: r[4], h: r[5], alive: !!r[6], fallT: r[7] / 100,
         boostT: r[8] / 100, braceT: r[9] / 100, boostCool: r[10] / 100, braceCool: r[11] / 100, lastHit: null, think: 0,
+        wob: Number.isFinite(r[12]) ? r[12] / 100 : 0, spin: Number.isFinite(r[13]) ? r[13] / 100 : 0,
+        wobT: b.cars.find((o) => o.id === r[0])?.wobT ?? 0,
       }));
       b.age = 0;
     }
@@ -553,6 +611,15 @@ export default {
       const seen = new Set(b.words.map((w) => w.seq));
       for (const r of d.w) if (Array.isArray(r) && r.length === 3 && !seen.has(r[0])) b.words.push({ seq: r[0], word: String(r[1]), color: String(r[2]), t: 0 });
       if (b.words.length > 4) b.words.splice(0, b.words.length - 4);
+    }
+    // 「쿵」·「쾅!」 — 새 것만 받아 제 화면에서 띄우고, 「쾅!」이면 화면도 흔든다
+    if (Array.isArray(d.po)) {
+      const seen = new Set((b.pops ?? []).map((p) => p.seq));
+      for (const r of d.po) {
+        if (!Array.isArray(r) || r.length !== 4 || seen.has(r[0])) continue;
+        (b.pops ??= []).push({ seq: r[0], x: r[1], y: r[2], word: String(r[3]), t: 0 });
+        if (r[3] === '쾅!') world.shake = Math.max(world.shake ?? 0, 0.6);
+      }
     }
     if (Array.isArray(d.sp)) b.sparks = d.sp.filter((r) => Array.isArray(r) && r.length === 3).map(([x, y, t]) => ({ x, y, t: t / 100 }));
     b.over = !!d.ov; b.winner = d.wn ?? null;
