@@ -392,6 +392,55 @@ say('줄 키 — 손 높이가 바뀌고, 상대 화면에도 보인다 · 걸�
   check('찌른 뒤 키를 놓았으면 가운데', seen.line, 0);
 }
 
+say('뒤로 빠른 스텝 — 뒤쪽 방향키 두 번');
+{
+  const world = mk(); fighting(world); freeze(world);
+  const me = world.player;
+  const tapBack = () => { w.press(world, 'left', true); w.press(world, 'left', false); };
+  const x0 = me.x;
+  tapBack(); run(world, 5); tapBack();
+  check('빨강이 ⌥← 두 번 — 스텝', me.fence.act, 'hop');
+  run(world, 30);
+  note(`빠진 거리 ${(x0 - me.x).toFixed(0)}px`);
+  ok('70px 넘게 뒤로 빠졌다', x0 - me.x > 70);
+  ok('내려앉으면 끝난다', !me.fence.act);
+  // 한 번만 누르거나 너무 느리게 두 번이면 스텝이 아니다
+  tapBack(); run(world, 25); tapBack();
+  ok('0.4초 간격 두 번은 스텝이 아니다', me.fence.act !== 'hop');
+  run(world, 30);
+  w.press(world, 'right', true); w.press(world, 'right', false); run(world, 3);
+  w.press(world, 'right', true); w.press(world, 'right', false);
+  ok('앞쪽 두 번은 스텝이 아니다', me.fence.act !== 'hop');
+  run(world, 30);
+  // 스텝은 칼 수가 아니다 — 닿아도 점수가 안 난다
+  {
+    const world2 = mk({ watch: true }); fighting(world2); freeze(world2); place(world2, 40);
+    F.start(F.body(world2, 0).fence, 'hop', 0); F.start(F.body(world2, 1).fence, 'hop', 0);
+    run(world2, 30);
+    check('스텝끼리 — 점수 없음', world2.bag.score, [0, 0]);
+  }
+  // 런지를 보고 스텝으로 빠지면 칼끝이 모자란다
+  let dodged = 0, hit = 0;
+  for (const delay of [0, 3, 6, 9]) {
+    const world3 = mk({ watch: true }); fighting(world3); freeze(world3); place(world3, 140);
+    F.start(F.body(world3, 0).fence, 'lunge', 0);
+    run(world3, 90, (i) => { if (i === delay) F.start(F.body(world3, 1).fence, 'hop', 0); });
+    world3.bag.score[0] ? hit++ : dodged++;
+  }
+  note(`140px 에서 런지를 보고 0~9프레임 안에 스텝 — 피함 ${dodged} · 맞음 ${hit}`);
+  ok('런지 준비 동안 빠지면 피한다', dodged >= 3);
+  // 손님 스텝도 방장이 받는다
+  const r = room('fence');
+  const g = r.join();
+  r.advance(30); r.again(); r.advance(120);
+  const gx = g.player.x;
+  w.press(g, 'right', true); w.press(g, 'right', false); r.advance(4);
+  w.press(g, 'right', true); w.press(g, 'right', false); r.advance(5);
+  check('초록 손님은 ⌥→ 두 번 — 방장 화면에서도 스텝', r.host.mp.others.get(g.mp.myId).fence.act, 'hop');
+  r.advance(30);
+  ok('손님이 뒤(오른쪽)로 빠졌다', g.player.x - gx > 70);
+}
+
 say('셋이 오면 한 사람은 구경');
 {
   const r = room('fence');

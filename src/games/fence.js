@@ -23,15 +23,21 @@ export const MOVES = {
   lunge:  { wind: 14, act: 8, rec: 30 },
   cut:    { wind: 13, act: 8, rec: 21 },
   parry:  { wind: 1, act: 14, rec: 18 },
+  // 뒤로 빠른 스텝 — 뒤쪽 방향키 두 번. 떠 있는 동안 HOP_STEP 만큼 빠지고, 내려앉는 동안은 아무것도 못 한다.
+  // 칼 수가 아니라 발 수다 — 판정에 안 들어간다. 런지 끝을 피하는 데 쓰라고 둔다.
+  hop:    { wind: 1, act: 10, rec: 8 },
 };
+/// 칼로 치는 수 (판정이 보는 것). 막기·스텝은 아니다.
+const ATTACKS = new Set(['thrust', 'lunge', 'cut']);
 /// 그림(stickman fencePose)의 진행 k 와 맞춘다 — 준비 동안 0→뻗음, 맞는 때 내내 뻗은 채, 돌아옴에 풀린다.
-const POSE = { thrust: [0.3, 0.3], lunge: [0.32, 0.32], cut: [0.45, 0.62], parry: [0.25, 0.25] };
+const POSE = { thrust: [0.3, 0.3], lunge: [0.32, 0.32], cut: [0.45, 0.62], parry: [0.25, 0.25], hop: [0.05, 0.75] };
 const total = (m) => (m.wind + m.act + m.rec) * FR;
 
 const WALK = 210;          // 걷는 빠르기 (px/s)
 const ACCEL = 1500;        // 걸음이 붙는 빠르기 — 0.14초에 다 붙는다
 const BRAKE = 2800;        // 서는 빠르기 — 0.075초
 const LUNGE_STEP = 85;     // 런지로 뛰어드는 거리 — 준비+맞는 때 동안
+const HOP_STEP = 72;       // 뒤로 스텝 한 번에 빠지는 거리 — 런지 끝(~170px)에서 벗어날 만큼
 const STUN = 0.3;          // 막혔을 때 · 막기가 깨졌을 때 굳는 시간
 const KEEP = 34;           // 둘이 이보다 가까이 못 붙는다 (몸이 겹친다)
 const DOUBLE = 4 * FR;     // 이 안에 둘 다 닿으면 무효
@@ -164,7 +170,7 @@ function judge(world, dt) {
   const F = [A[0].fence, A[1].fence];
   for (const s of [0, 1]) {
     const att = A[s], def = A[1 - s], fa = F[s], fd = F[1 - s];
-    if (!fa.act || fa.act === 'parry' || phaseOf(fa) !== 'act' || fa.hit || fa.parried) continue;
+    if (!ATTACKS.has(fa.act) || phaseOf(fa) !== 'act' || fa.hit || fa.parried) continue;
     const sweep = fa.act === 'cut';
     // ① 막기 — 막는 창 안이고 칼끝이 막을 자리까지 왔다
     if (fd.act === 'parry' && phaseOf(fd) === 'act' && reaches(att, def)) {
@@ -297,13 +303,13 @@ function cpuThink(world, side, dt) {
   const poke = gap < 80, leap = gap < 150;
   const anyLine = () => Math.floor(Math.random() * 3) - 1;
   // 상대가 수를 내고 있다 — 읽어서 받아친다
-  if (ff.act && ff.act !== 'parry' && phaseOf(ff) === 'wind') {
+  if (ATTACKS.has(ff.act) && phaseOf(ff) === 'wind') {
     if (Math.random() < READ) {
       if (ff.act === 'cut' && leap) { start(f, poke ? 'thrust' : 'lunge', 0); return; }  // 베기 준비를 찌른다
       if (ff.act !== 'cut') { start(f, 'parry', ff.line); return; }                     // 그 줄을 막는다
     }
-    // 못 읽었으면 반쯤은 물러난다 — 베기는 짧고, 런지도 한 걸음 물러나면 칼끝이 모자란다
-    if (ff.act !== 'thrust' && Math.random() < 0.3 && room > P.m * 1.2) { me.aim = -dir * WALK; me.back = 0.3; return; }
+    // 못 읽었으면 가끔은 뒤로 뛰어 빠진다 — 베기는 짧고, 런지도 한 스텝 빠지면 칼끝이 모자란다
+    if (ff.act !== 'thrust' && Math.random() < 0.3 && room > P.m * 1.6) { start(f, 'hop', f.line); return; }
   }
   // 상대가 굳었다 — 리포스트
   if (ff.stun > 0 && leap) { start(f, poke ? 'thrust' : 'lunge', anyLine()); return; }
@@ -340,6 +346,12 @@ function walkBody(world, p, side, vx, dt) {
     const m = MOVES.lunge;
     const n = f.t / FR;
     v = n < m.wind + m.act ? dir * LUNGE_STEP / ((m.wind + m.act) * FR) : 0;
+  }
+  // 뒤로 스텝 — 떠 있는 동안 뒤로, 내려앉으면 선다
+  if (f.act === 'hop') {
+    const m = MOVES.hop;
+    const n = f.t / FR;
+    v = n < m.wind + m.act ? -dir * HOP_STEP / ((m.wind + m.act) * FR) : 0;
   }
   p.vx = v;
   const was = p.x;
@@ -382,6 +394,7 @@ const KEY_ROWS = [
   ['⌥ Space', '찌르기 · 걸으며 누르면 런지'],
   ['⌥ X', '베기 — 막기를 깬다, 준비가 길다'],
   ['⌥ C', '막기 — 같은 줄 찌르기를 쳐낸다'],
+  ['뒤로 두 번', '뒤로 빠른 스텝 — 런지 끝을 피한다'],
 ];
 
 export default {
@@ -428,7 +441,15 @@ export default {
   release() {},
   drop(world) { act(world, 'cut'); },
   guard(world) { act(world, 'parry'); },
-  tap() {},
+  /// 뒤쪽 방향키를 0.28초 안에 두 번 — 뒤로 빠른 스텝.
+  tap(world, action) {
+    const back = sideOf(world, world.mp.myId) === 0 ? 'left' : 'right';
+    const p = world.player;
+    if (action !== back) { p.backTap = null; return; }
+    const now = world.elapsed ?? 0;
+    if (p.backTap !== null && p.backTap !== undefined && now - p.backTap < 0.28) { p.backTap = null; act(world, 'hop'); return; }
+    p.backTap = now;
+  },
 
   /// 내 사람의 걸음. 엔진의 달리기·점프 대신 펜싱 걸음(앞뒤로만, 줄 키는 점프가 아니다).
   move(world, dt) {
@@ -640,7 +661,7 @@ export default {
     const other = world.mp.others.get(from);
     if (!other) return;
     other.fence ??= idle();
-    const a = ['thrust', 'lunge', 'cut', 'parry'].includes(msg.a) ? msg.a : null;
+    const a = ['thrust', 'lunge', 'cut', 'parry', 'hop'].includes(msg.a) ? msg.a : null;
     if (!a) return;
     // 손님 화면에서는 앞 수가 이미 끝났다 — 여기서 끝나기 직전이면 마저 끝낸다. 안 그러면 와이파이가
     // 조금만 늦어도 「끝나자마자 다시 찌른」 수를 방장이 씹는다.

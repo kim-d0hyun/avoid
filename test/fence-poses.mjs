@@ -21,6 +21,7 @@ const poses = [
   ['베기 · 치는 중', { act: 'cut', k: 0.56, line: 0 }],
   ['베기 · 내리벤 끝', { act: 'cut', k: 0.62, line: 0 }],
   ['막힘 (굳음)', { act: null, line: 0, stun: 0.25 }],
+  ['뒤로 스텝', { act: 'hop', k: 0.38, line: 0 }],
   ['막기 · 위', { act: 'parry', k: 0.25, line: 1 }],
   ['막기 · 가운데', { act: 'parry', k: 0.25, line: 0 }],
   ['막기 · 아래', { act: 'parry', k: 0.25, line: -1 }],

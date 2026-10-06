@@ -479,6 +479,13 @@ function fencePose(p, base, time) {
       return { ...guard, lean: lerp(0.22, guard.lean, e), arms: mixLimbs(endArms, guard.arms, e),
                blade: lerp(end - 0.15, guard.blade, e) };
     }
+    case 'hop': {
+      // 뒤로 빠른 스텝 — 두 발을 모으며 살짝 떠서 뒤로 빠지고, 무릎을 굽혀 내려앉는다. 칼은 앙가르드 그대로.
+      const e = Math.sin(Math.PI * Math.min(1, k / 0.75));
+      const land = k > 0.75 ? Math.sin(Math.PI * (k - 0.75) / 0.25) : 0;
+      return { ...guard, hipY: guard.hipY - 7 * e + 2.5 * land, lean: guard.lean - 0.06 * e,
+               legs: mixLimbs(guard.legs, [[0.55, -0.15], [-0.45, -0.95]], e) };
+    }
     case 'parry': {
       const e = out(0.25);
       const P = PARRY[li];
