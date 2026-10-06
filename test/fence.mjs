@@ -27,7 +27,7 @@ function mk({ watch = false } = {}) {
 }
 const run = (world, n, each) => { for (let i = 0; i < n; i++) { each?.(i); w.update(world, FR); } };
 /// 컴퓨터를 멈춰 세운다 — 판정만 보려고. 생각할 틈을 안 준다.
-const freeze = (world) => { for (const c of world.bag.cpu) c.still = true; };
+const freeze = (world) => { for (const c of world.bag.cpu) { c.still = true; c.vx = 0; } };
 const fighting = (world) => { run(world, 60); check('알레 뒤 싸움', world.bag.phase, 'fight'); };
 /// 두 사람을 gap 만큼 떨어뜨려 세운다 (빨강이 왼쪽).
 function place(world, gap) {
@@ -350,6 +350,46 @@ say('늦게 온 연속 찌르기 · 판 도중 창 크기');
   run(world, 3);
   check('창이 줄어도 점수가 안 난다', world.bag.score, [0, 0]);
   ok('검객이 새 시작선에', Math.abs(world.bag.cpu[1].x - P1.start[1]) < 1 && Math.abs(world.player.x - P1.start[0]) < 1);
+}
+
+say('줄 키 — 손 높이가 바뀌고, 상대 화면에도 보인다 · 걸음은 붙었다 멎는다');
+{
+  const world = mk(); fighting(world); freeze(world);
+  const me = world.player;
+  const hand = () => bladeTip(me).handY;
+  const mid = hand();
+  w.press(world, 'jump', true); run(world, 12);
+  const up = hand();
+  w.press(world, 'jump', false); w.press(world, 'duck', true); run(world, 12);
+  const down = hand();
+  w.press(world, 'duck', false);
+  note(`손 높이 — 위 ${(up - mid).toFixed(1)} · 아래 ${(down - mid).toFixed(1)} (px, 가운데 기준)`);
+  ok('⌥↑ 면 손이 6px 넘게 오른다', mid - up > 6);
+  ok('⌥↓ 면 손이 4px 넘게 내려간다', down - mid > 4);
+  run(world, 1);
+  ok('줄은 한 번에 안 뛴다 (부드럽게 옮긴다)', Math.abs(me.fence.lv) > 0.05 && Math.abs(me.fence.lv) < 0.95);
+  // 걸음
+  const x0 = me.x;
+  w.press(world, 'right', true); run(world, 1);
+  ok('첫 프레임은 아직 천천히', Math.abs(me.vx) < 60);
+  run(world, 14);
+  ok('0.25초면 다 붙는다', Math.abs(me.vx - 210) < 1);
+  w.press(world, 'right', false); run(world, 6);
+  ok('놓으면 0.1초 안에 선다', me.vx === 0 && me.x > x0);
+
+  const r = room('fence');
+  const g = r.join(), g2 = r.join();
+  r.advance(30); r.again(); r.advance(120);
+  w.press(g, 'jump', true); r.advance(10);
+  const seen = r.host.mp.others.get(g.mp.myId).fence;
+  check('손님이 ⌥↑ — 방장 화면의 그 사람 줄', seen.line, 1);
+  check('다른 손님 화면에도', g2.mp.others.get(g.mp.myId)?.fence?.line, 1);
+  w.press(g, 'jump', false); r.advance(10);
+  check('놓으면 가운데로', seen.line, 0);
+  // 찌르고 난 뒤에도 줄이 맞는다 (찌른 줄이 남아 있으면 안 된다)
+  w.press(g, 'duck', true); w.press(g, 'grab', true); w.press(g, 'grab', false); r.advance(3); w.press(g, 'duck', false);
+  r.advance(60);
+  check('찌른 뒤 키를 놓았으면 가운데', seen.line, 0);
 }
 
 say('셋이 오면 한 사람은 구경');

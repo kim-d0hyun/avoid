@@ -29,6 +29,8 @@ const POSE = { thrust: [0.3, 0.3], lunge: [0.32, 0.32], cut: [0.45, 0.62], parry
 const total = (m) => (m.wind + m.act + m.rec) * FR;
 
 const WALK = 210;          // 걷는 빠르기 (px/s)
+const ACCEL = 1500;        // 걸음이 붙는 빠르기 — 0.14초에 다 붙는다
+const BRAKE = 2800;        // 서는 빠르기 — 0.075초
 const LUNGE_STEP = 85;     // 런지로 뛰어드는 거리 — 준비+맞는 때 동안
 const STUN = 0.3;          // 막혔을 때 · 막기가 깨졌을 때 굳는 시간
 const KEEP = 34;           // 둘이 이보다 가까이 못 붙는다 (몸이 겹친다)
@@ -120,6 +122,9 @@ function phaseOf(f) {
 /// 시간을 한 걸음. 그림의 k 도 여기서 맞춘다.
 function step(f, dt) {
   f.stun = Math.max(0, f.stun - dt);
+  // 그림이 쓰는 줄 — 줄을 바꾸면 손이 0.1초쯤에 걸쳐 옮겨 간다 (뚝 바뀌면 순간이동처럼 보인다)
+  const lv = Number.isFinite(f.lv) ? f.lv : f.line;
+  f.lv = lv + (f.line - lv) * Math.min(1, dt * 16);
   if (!f.act) { f.k = 0; return; }
   f.t += dt;
   const m = MOVES[f.act];
@@ -264,7 +269,7 @@ function cpuThink(world, side, dt) {
   const dir = side === 0 ? 1 : -1;
   const gap = (foe.x - me.x) * dir;
   me.think -= dt;
-  if (me.still) { me.vx = 0; return; }       // 시험·시연에서 세워 둔 컴퓨터
+  if (me.still) { me.aim = 0; return; }      // 시험·시연에서 세워 둔 컴퓨터
   // 걷기 — **런지 거리 밖**(160~210px)에서 재다가, 들어갈 때는 걸어 들어간다. 그 걸음이 곧 예고다 —
   // 사람은 그걸 보고 물러나거나, 들어오는 발에 먼저 뛰어들 수 있다.
   let want = 0;
@@ -283,7 +288,9 @@ function cpuThink(world, side, dt) {
   const room = side === 0 ? me.x - P.L : P.R - me.x;
   if (want < 0 && room < P.m * 1.2) want = gap < KEEP + 8 ? 0 : 1;
   me.back = Math.max(0, (me.back ?? 0) - dt);
-  me.vx = me.back > 0 && !f.act && f.stun <= 0 ? -dir * WALK : want * dir * WALK * (me.plan ? 1 : 0.55);
+  me.aim = me.back > 0 && !f.act && f.stun <= 0 ? -dir * WALK : want * dir * WALK * (me.plan ? 1 : 0.55);
+  // 재는 동안 칼끝을 위아래로 옮긴다 — 줄을 읽히지 않으려고, 그리고 사람이 「줄」을 눈으로 배운다.
+  if (!f.act && f.stun <= 0 && Math.random() < dt * 0.7) f.line = Math.floor(Math.random() * 3) - 1;
   if (me.think > 0 || f.act || f.stun > 0) return;
   me.think = REACT * (0.7 + Math.random() * 0.6);
   // 칼이 닿는 거리 — 그냥 찌르기·베기는 ~80px, 런지는 ~150px. 안 닿는 데서 휘두르면 빈틈만 준다.
@@ -296,7 +303,7 @@ function cpuThink(world, side, dt) {
       if (ff.act !== 'cut') { start(f, 'parry', ff.line); return; }                     // 그 줄을 막는다
     }
     // 못 읽었으면 반쯤은 물러난다 — 베기는 짧고, 런지도 한 걸음 물러나면 칼끝이 모자란다
-    if (ff.act !== 'thrust' && Math.random() < 0.3 && room > P.m * 1.2) { me.vx = -dir * WALK; me.back = 0.3; return; }
+    if (ff.act !== 'thrust' && Math.random() < 0.3 && room > P.m * 1.2) { me.aim = -dir * WALK; me.back = 0.3; return; }
   }
   // 상대가 굳었다 — 리포스트
   if (ff.stun > 0 && leap) { start(f, poke ? 'thrust' : 'lunge', anyLine()); return; }
@@ -322,7 +329,12 @@ function walkBody(world, p, side, vx, dt) {
   const foe = body(world, 1 - side);
   const dir = side === 0 ? 1 : -1;
   const f = p.fence;
-  let v = f.stun > 0 || (f.act && f.act !== 'lunge') ? 0 : vx;
+  // 걸음은 붙었다 멎는다 — 한 번에 최고 빠르기가 되면 미끄러지듯 보인다. 서는 건 걷기보다 빠르다.
+  const want = f.stun > 0 || (f.act && f.act !== 'lunge') ? 0 : vx;
+  const cur = Number.isFinite(p.vx) ? p.vx : 0;
+  const speeding = Math.abs(want) > Math.abs(cur) && Math.sign(want) === Math.sign(cur || want);
+  const rate = (speeding ? ACCEL : BRAKE) * dt;
+  let v = cur + Math.max(-rate, Math.min(rate, want - cur));
   // 런지 — 준비와 맞는 때 동안 앞으로 뛰어든다
   if (f.act === 'lunge') {
     const m = MOVES.lunge;
@@ -343,6 +355,9 @@ function walkBody(world, p, side, vx, dt) {
   p.air = 0; p.vy = 0; p.groundY = world.groundY;
 }
 
+/// 사람마다 칼끝이 지나온 자리 (그림만 — 꾸러미에 안 싣는다).
+const TRAILS = new WeakMap();
+
 const lineOf = (world) => (world.input.jump ? 1 : world.input.duck ? -1 : 0);
 const iFence = (world) => world.bag.fencers[sideOf(world, world.mp.myId)] === world.mp.myId;
 
@@ -357,7 +372,7 @@ function act(world, kind) {
   const real = moving ? 'lunge' : kind;
   const f = (world.player.fence ??= idle());
   if (!start(f, real, line)) return false;
-  if (world.mp.role === 'guest') world.send?.({ t: 'gm', k: 'act', a: real, l: line });
+  if (world.mp.role === 'guest') { world.send?.({ t: 'gm', k: 'act', a: real, l: line }); world.player.sentLine = line; }
   return true;
 }
 
@@ -430,6 +445,11 @@ export default {
     const go = world.state === 'play' && b.phase === 'fight' && !b.over;
     walkBody(world, p, s, go ? dir * WALK : 0, dt);
     p.fence.line = p.fence.act ? p.fence.line : lineOf(world);
+    // 줄은 수를 안 내도 남에게 보여야 한다 — 상대가 내 칼끝 높이를 보고 막을 줄을 고른다.
+    if (world.mp.role === 'guest' && !p.fence.act && p.sentLine !== p.fence.line) {
+      p.sentLine = p.fence.line;
+      world.send?.({ t: 'gm', k: 'line', l: p.fence.line });
+    }
     if (world.mp.role === 'guest') step(p.fence, dt);       // 손님은 제 칼을 제가 굴린다 (방장이 고쳐 준다)
   },
 
@@ -477,8 +497,8 @@ export default {
       p.fence ??= idle();
       if (b.fencers[s] === -1) {
         if (b.phase === 'fight' && !b.over) cpuThink(world, s, dt);
-        else p.vx = 0;
-        walkBody(world, p, s, b.phase === 'fight' ? p.vx : 0, dt);
+        else p.aim = 0;
+        walkBody(world, p, s, b.phase === 'fight' ? p.aim ?? 0 : 0, dt);
       }
       step(p.fence, dt);
     }
@@ -534,6 +554,29 @@ export default {
         ctx.beginPath(); ctx.ellipse(p.x, g + 4, 44, 8, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
       }
     }
+    // 칼이 지나간 자리 — 찌르기는 곧은 한 줄, 베기는 휘는 호. 빠른 칼이 「빠르게」 읽힌다.
+    for (const s of [0, 1]) {
+      const p = body(world, s);
+      const f = p.fence;
+      let trail = TRAILS.get(p);
+      if (!trail) TRAILS.set(p, (trail = []));
+      const swinging = f?.act && f.act !== 'parry' && f.k > 0.02 && f.k < (f.act === 'cut' ? 0.66 : 0.36);
+      if (!swinging) { trail.length = 0; continue; }
+      const tip = bladeTip(p, time);
+      if (tip) trail.push([tip.x, tip.y, time]);
+      while (trail.length && time - trail[0][2] > 0.12) trail.shift();
+      if (trail.length < 2) continue;
+      ctx.save();
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (let i = 1; i < trail.length; i++) {
+        const u = i / trail.length;
+        ctx.globalAlpha = 0.45 * u;
+        ctx.strokeStyle = TEAM_INK[s];
+        ctx.lineWidth = 1 + u * (f.act === 'cut' ? 5 : 3);
+        ctx.beginPath(); ctx.moveTo(trail[i - 1][0], trail[i - 1][1]); ctx.lineTo(trail[i][0], trail[i][1]); ctx.stroke();
+      }
+      ctx.restore();
+    }
     // 컴퓨터 — 남·나는 main.js 가 그린다. 컴퓨터는 판의 것이라 여기서.
     for (const s of [0, 1]) {
       if (b.fencers[s] !== -1) continue;
@@ -586,6 +629,11 @@ export default {
     if (world.mp.role !== 'host') return;
     const b = world.bag;
     if (typeof msg.s === 'number') { picks(world).set(from, msg.s ? 1 : 0); return; }
+    if (msg.k === 'line') {
+      const o = world.mp.others.get(from);
+      if (o) { o.fence ??= idle(); if (!o.fence.act) o.fence.line = Math.max(-1, Math.min(1, msg.l | 0)); }
+      return;
+    }
     if (msg.k !== 'act' || world.state !== 'play' || b.phase !== 'fight' || b.over) return;
     const s = b.fencers.indexOf(from);
     if (s < 0) return;                               // 피스트에 안 선 사람

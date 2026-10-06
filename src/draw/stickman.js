@@ -121,30 +121,40 @@ const FIELD_READY = { lean: 0.16, legs: [[-0.40, -0.66], [0.38, 0.62]],
 //
 // 칼 길이: 몸(80px)이 1.75m 라 1m ≈ 46px. 플뢰레 칼날 0.9m ≈ 41px — 손잡이까지 44.
 export const BLADE_LEN = 44;
-/// 앙가르드. 무릎을 굽혀 낮게 앉고, 앞발을 내밀고, 칼 든 팔은 팔꿈치를 굽혀 가슴 앞에 둔다.
+/// 앙가르드. 무릎을 굽혀 낮게 앉고, 앞발을 내밀고, 칼 든 팔은 팔꿈치를 굽혀 몸 앞에 둔다.
 /// 뒷손은 손바닥을 위로 해서 머리 뒤에 든다 — 실루엣만 봐도 펜싱으로 읽히는 그 손이다.
-/// 칼끝은 줄 따라 위·가운데·아래를 겨눈다.
 /// 다리가 짧아서(28px) 각만 벌려서는 발이 안 벌어진다 — 정강이도 바깥으로 벌리고 허리를 낮춘다.
-/// 칼 든 팔은 **팔꿈치를 굽혀** 손을 몸 앞에 둔다 — 그래야 찌를 때 팔이 뻗는 것이 보인다
-/// (팔을 거의 편 채로 두었더니 찌르기 칼끝이 1px 밖에 안 나갔다).
+/// 칼 든 팔은 **팔꿈치를 굽혀** 손을 몸 앞에 둔다 — 그래야 찌를 때 팔이 뻗는 것이 보인다.
 const FENCE_GUARD = { hipY: HIP_Y + 10, lean: 0.06, legs: [[1.15, 0.35], [-1.00, -0.55]],
                       arms: [[0.62, 1.70], [-1.75, -3.05]] };
-const GUARD_BLADE = [1.36, 1.68, 2.02];       // 아래 · 가운데 · 위 줄의 칼끝 각
-/// 찌르기 — 팔을 곧게 뻗어 칼과 한 줄로. 뒷손은 그대로.
-const THRUST_ARMS = (blade) => [[blade - 0.04, blade], [-1.75, -3.05]];
-/// 런지 — 앞발을 크게 내딛고 뒷다리를 곧게 편다. 뒷손은 뒤로 떨어뜨린다(균형을 잡는 손).
+/// 줄마다의 앙가르드 — **손 높이째 바뀐다.** 칼끝 각만 바꿨더니 19° 라 눈에 안 띄었다.
+/// 위: 손을 어깨 높이로 올려 칼끝이 상대 가슴 위·어깨를, 아래: 손을 허리로 내리고 무릎을 더 굽혀
+/// 칼끝이 상대 허벅지를 겨눈다. hip 은 허리를 얼마나 더 낮추나.
+const GUARD_LINES = [
+  { arm: [0.42, 1.25], blade: 1.30, hip: 3.5, lean: 0.12 },    // 아래
+  { arm: [0.62, 1.70], blade: 1.62, hip: 0, lean: 0.06 },      // 가운데
+  { arm: [1.00, 2.30], blade: 1.82, hip: -1, lean: 0.02 },     // 위
+];
+/// 찌르기 — 「손이 먼저, 발은 나중」. 어깨에서 칼끝까지 **팔과 칼이 한 줄**로 상대 몸을 겨눈다.
+/// 줄마다 겨누는 높이(상대 가슴 위 · 명치 · 허벅지)로 각이 다르다.
+const THRUST_AIM = [1.28, 1.48, 1.69];
+const THRUST_ARMS = (aim) => [[aim - 0.03, aim], [-1.75, -3.05]];
+/// 런지 — 팔이 다 뻗은 뒤에 앞발을 크게 내딛고 뒷다리를 곧게 편다. 뒷손은 뒷다리를 따라 떨어뜨린다.
 const LUNGE = { hipY: HIP_Y + 13.5, lean: 0.24, legs: [[1.45, 0.20], [-0.99, -0.99]],
-                offArm: [-1.45, -1.40] };
-/// 베기 — 칼을 머리 뒤로 젖혔다가(준비) 앞 아래로 크게 내리벤다. 줄 따라 끝나는 높이가 다르다.
-const CUT_UP = { lean: -0.12, arms: [[3.05, 3.55], [-1.20, -1.55]], blade: 3.95 };
-const CUT_END = [0.85, 1.05, 1.30];           // 아래 · 가운데 · 위 줄로 벨 때 칼끝이 멈추는 각
-/// 막기 — 손목을 틀어 칼을 세운다. 위 줄은 칼을 머리 위에 가로로, 가운데는 몸 앞에 곧게 세워,
+                offArm: [-1.25, -1.15] };
+/// 베기 — 머리 위로 크게 젖히지 않는다. 손을 앞 위로 들며 칼을 어깨 위로 세웠다가(준비),
+/// 팔을 뻗으며 칼날로 앞 아래를 친다. 줄 따라 치는 높이(머리 · 옆구리 · 허벅지)가 다르다.
+const CUT_UP = { lean: -0.06, arms: [[2.45, 3.25], [-1.35, -1.75]], blade: 3.55 };
+const CUT_END = [1.00, 1.22, 1.45];           // 아래 · 가운데 · 위 줄로 벨 때 칼날이 멈추는 각
+/// 막기 — 손목과 팔꿈치로 **작게** 칼을 옮긴다. 위는 칼을 세워 얼굴·어깨 앞을, 가운데는 몸 앞에 곧게,
 /// 아래는 칼끝을 앞 아래로 내려 쓸어 막는다.
 const PARRY = [
-  { arms: [[0.95, 1.40], [-1.75, -3.05]], blade: 0.60 },   // 아래 — 칼끝을 앞 아래로 쓸어
-  { arms: [[0.85, 2.10], [-1.75, -3.05]], blade: 2.95 },   // 가운데 — 몸 앞에 곧게 세워
-  { arms: [[2.30, 2.75], [-1.75, -3.05]], blade: 2.05 },   // 위 — 손을 머리 위로, 칼은 앞 위로 비스듬히
+  { arms: [[0.80, 1.35], [-1.75, -3.05]], blade: 0.70 },   // 아래 — 칼끝을 앞 아래로 쓸어
+  { arms: [[0.85, 2.05], [-1.75, -3.05]], blade: 2.85 },   // 가운데 — 몸 앞에 곧게 세워
+  { arms: [[1.40, 2.45], [-1.75, -3.05]], blade: 2.55 },   // 위 — 손을 얼굴 앞으로, 칼은 앞 위로 세워
 ];
+/// 막혔다 · 막기가 깨졌다 — 칼이 바깥 위로 튕겨 나가고 몸이 뒤로 젖는다. 굳은 동안 이 자세다.
+const KNOCKED = { lean: -0.14, arms: [[1.55, 2.75], [-1.95, -2.70]], blade: 3.05 };
 
 const lerp = (a, b, t) => a + (b - a) * t;
 /// 각도를 짧은 쪽으로 잇는다. 그냥 섞으면 머리 위로 올라가야 할 팔이 발밑을 지나 돈다.
@@ -407,48 +417,67 @@ function fencePose(p, base, time) {
   const line = Math.max(-1, Math.min(1, Math.round(f.line ?? 0)));
   const li = line + 1;
   const k = Math.max(0, Math.min(1, f.k ?? 0));
-  // 걸음 — 앞발 · 뒷발이 번갈아 조금씩. 달리기 다리를 쓰면 펜싱이 아니라 달리기가 된다.
-  const step = Math.min(1, Math.abs(p.vx ?? 0) / 200);
-  const sway = Math.sin(p.walk ?? 0) * 0.16 * step;
+  // 줄은 부드럽게 옮긴다 (lv 는 게임이 줄을 따라 굴리는 값). 없으면 줄 그대로.
+  const lv = Math.max(-1, Math.min(1, Number.isFinite(f.lv) ? f.lv : line));
+  const lo = lv < 0 ? GUARD_LINES[0] : GUARD_LINES[1], hi = lv < 0 ? GUARD_LINES[1] : GUARD_LINES[2];
+  const lt = lv < 0 ? lv + 1 : lv;
+  const g = { arm: [lerp(lo.arm[0], hi.arm[0], lt), lerp(lo.arm[1], hi.arm[1], lt)],
+              blade: lerp(lo.blade, hi.blade, lt), hip: lerp(lo.hip, hi.hip, lt), lean: lerp(lo.lean, hi.lean, lt) };
+  // 걸음 — 앞발이 먼저 나가고 뒷발이 따라붙는다 (펜싱의 전진 · 후퇴). 두 발이 같이 흔들리면 미끄러져 보인다.
+  const step = Math.min(1, Math.abs(p.vx ?? 0) / 180);
+  const ph = p.walk ?? 0;
+  const front = Math.max(0, Math.sin(ph)) * step, rear = Math.max(0, -Math.sin(ph)) * step;
   const guard = {
-    hipY: FENCE_GUARD.hipY + Math.abs(Math.sin(p.walk ?? 0)) * 1.5 * step, lean: FENCE_GUARD.lean,
+    hipY: FENCE_GUARD.hipY + g.hip - (front + rear) * 1.6, lean: g.lean,
     bob: base.bob * 0.5,
-    legs: [[FENCE_GUARD.legs[0][0] + sway, FENCE_GUARD.legs[0][1] + sway],
-           [FENCE_GUARD.legs[1][0] + sway, FENCE_GUARD.legs[1][1] + sway]],
-    arms: FENCE_GUARD.arms, blade: GUARD_BLADE[li],
+    legs: [[FENCE_GUARD.legs[0][0] + front * 0.30, FENCE_GUARD.legs[0][1] + front * 0.55],
+           [FENCE_GUARD.legs[1][0] - rear * 0.22, FENCE_GUARD.legs[1][1] + rear * 0.60]],
+    arms: [g.arm, FENCE_GUARD.arms[1]], blade: g.blade,
   };
-  // 한 수의 앞쪽 35% 는 뻗고(내딛고), 나머지는 돌아온다.
-  const out = (k0 = 0.35) => (k < k0 ? smooth(k / k0) : 1 - smooth((k - k0) / (1 - k0)));
+  // 굳었다 — 칼이 튕겨 나갔다. 굳음이 풀리며 앙가르드로 돌아온다.
+  if (!f.act && f.stun > 0) {
+    const w = smooth(Math.min(1, f.stun / 0.12));
+    return { ...guard, lean: lerp(guard.lean, KNOCKED.lean, w), arms: mixLimbs(guard.arms, KNOCKED.arms, w),
+             blade: lerp(guard.blade, KNOCKED.blade, w) };
+  }
+  // 한 수의 앞쪽 k0 까지 뻗고(내딛고), 나머지는 돌아온다.
+  const out = (k0) => (k < k0 ? smooth(k / k0) : 1 - smooth((k - k0) / (1 - k0)));
   switch (f.act) {
     case 'thrust': {
       const e = out(0.3);
-      return { ...guard, lean: lerp(guard.lean, 0.20, e),
-               arms: mixLimbs(guard.arms, THRUST_ARMS(GUARD_BLADE[li]), e), blade: guard.blade };
+      const aim = THRUST_AIM[li];
+      return { ...guard, lean: lerp(guard.lean, 0.18, e), hipY: guard.hipY + 1.5 * e,
+               arms: mixLimbs(guard.arms, THRUST_ARMS(aim), e), blade: lerp(guard.blade, aim, e) };
     }
     case 'lunge': {
-      const e = out(0.32);
-      return { ...guard, hipY: lerp(guard.hipY, LUNGE.hipY, e), lean: lerp(guard.lean, LUNGE.lean, e),
-               legs: mixLimbs(guard.legs, LUNGE.legs, e),
-               arms: mixLimbs(guard.arms, [THRUST_ARMS(GUARD_BLADE[li])[0], LUNGE.offArm], e),
-               blade: guard.blade };
+      // 팔이 먼저 다 뻗고(앞 40%), 그다음 발이 나간다. 돌아올 때는 발이 먼저 들어온다.
+      const peak = 0.32;
+      const armE = k < peak ? smooth(Math.min(1, k / (peak * 0.4))) : 1 - smooth(Math.max(0, (k - peak - 0.25) / (0.75 - peak)));
+      const legE = k < peak ? smooth(Math.max(0, (k - peak * 0.25) / (peak * 0.75))) : 1 - smooth((k - peak) / (0.8 - peak));
+      const aim = THRUST_AIM[li];
+      return { ...guard, hipY: lerp(guard.hipY, LUNGE.hipY + g.hip * 0.5, legE), lean: lerp(guard.lean, LUNGE.lean, legE),
+               legs: mixLimbs(guard.legs, LUNGE.legs, legE),
+               arms: [mixLimbs([guard.arms[0]], [THRUST_ARMS(aim)[0]], armE)[0],
+                      mixLimbs([guard.arms[1]], [LUNGE.offArm], legE)[0]],
+               blade: lerp(guard.blade, aim, armE) };
     }
     case 'cut': {
-      // 준비(앞 45%) — 칼을 머리 뒤로. 그다음 한 번에 내리베고, 끝에서 앙가르드로 풀린다.
+      // 준비(앞 45%) — 손을 앞 위로 들며 칼을 어깨 위로 세운다. 그다음 팔을 뻗으며 한 번에 친다.
       if (k < 0.45) {
         const e = smooth(k / 0.45);
         return { ...guard, lean: lerp(guard.lean, CUT_UP.lean, e), arms: mixLimbs(guard.arms, CUT_UP.arms, e),
                  blade: lerp(guard.blade, CUT_UP.blade, e) };
       }
       const end = CUT_END[li];
-      const endArms = [[end + 0.15, end], [-1.30, -1.60]];
+      const endArms = [[end + 0.12, end + 0.05], [-1.30, -1.60]];
       if (k < 0.62) {
         const e = ((k - 0.45) / 0.17) ** 1.6;               // 가속하며 내려온다
-        return { ...guard, lean: lerp(CUT_UP.lean, 0.24, e), arms: mixLimbs(CUT_UP.arms, endArms, e),
-                 blade: lerp(CUT_UP.blade, end - 0.2, e) };  // 칼은 곧이곧대로 앞으로 돈다 (짧은 쪽으로 안 잇는다)
+        return { ...guard, lean: lerp(CUT_UP.lean, 0.22, e), arms: mixLimbs(CUT_UP.arms, endArms, e),
+                 blade: lerp(CUT_UP.blade, end - 0.15, e) };  // 칼은 곧이곧대로 앞으로 돈다 (짧은 쪽으로 안 잇는다)
       }
       const e = smooth((k - 0.62) / 0.38);
-      return { ...guard, lean: lerp(0.24, guard.lean, e), arms: mixLimbs(endArms, guard.arms, e),
-               blade: lerp(end - 0.2, guard.blade, e) };
+      return { ...guard, lean: lerp(0.22, guard.lean, e), arms: mixLimbs(endArms, guard.arms, e),
+               blade: lerp(end - 0.15, guard.blade, e) };
     }
     case 'parry': {
       const e = out(0.25);
