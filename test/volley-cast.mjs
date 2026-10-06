@@ -438,8 +438,29 @@ say('정타 · 드롭 · 스파이크 — 감각(나비) · 네트 인(나비) �
   ok('가짜 공이 떴다', g.b.ghost?.t > 0);
   const realDive = g.b.ball.vy, fakeDive = g.b.ghost.vy;
   ok('가짜는 진짜와 다른 각으로 간다', Math.abs(realDive - fakeDive) > 300);
-  run(g.world, 30);
+  // 진짜가 히트스톱에 멈춘 동안 가짜도 기다린다 — 따로 먼저 날아가면 가짜인 게 티 난다
+  const gx0 = g.b.ghost.x;
+  g.world.bag.stop > 0 && volley.update(g.world, FR);
+  ok('멈춘 동안 가짜도 그 자리', Math.abs(g.b.ghost.x - gx0) < 0.5);
+  // **제 코트 바닥에 박히지 않는다** — 네트를 넘어 상대 코트 쪽으로 간다 (예전엔 6프레임 만에 바닥에 박혀 굴렀다)
+  const netX = g.world.w / 2;
+  let lowMine = false, crossed = false;
+  run(g.world, 30, () => {
+    const gh = g.b.ghost;
+    if (!(gh?.t > 0)) return;
+    if (gh.x < netX && gh.y > g.world.groundY - 60) lowMine = true;
+    if (gh.x > netX) crossed = true;
+  });
+  ok('가짜가 내 코트 바닥 쪽으로 안 꽂힌다', !lowMine);
+  ok('가짜도 네트를 넘는다', crossed);
   ok('0.35초 뒤 사라진다', !(g.b.ghost.t > 0));
+  // 꽂는 스파이크(↓)일 때도
+  const g2 = rig('meari', { off: [30, 30], keys: { duck: true } });
+  g2.b.gauge.set(g2.world.mp.myId, 4); tap(g2.world, 'guard'); spike(g2.world);
+  let low2 = false, cross2 = false;
+  run(g2.world, 30, () => { const gh = g2.b.ghost; if (!(gh?.t > 0)) return;
+    if (gh.x < netX && gh.y > g2.world.groundY - 60) low2 = true; if (gh.x > netX) cross2 = true; });
+  ok('내리꽂기 때도 가짜가 네트를 넘는다', cross2 && !low2);
 }
 
 say('같이 할 때 — 새 스킬도 방장이 판정 · 가짜 공은 손님 화면에도');
@@ -462,6 +483,29 @@ say('같이 할 때 — 새 스킬도 방장이 판정 · 가짜 공은 손님 �
   const other = h.mp.others.get(g.mp.myId);
   volley.message(h, g.mp.myId, { t: 'gm', k: 'block', h: -1 });
   ok('터치아웃 방향이 방장에게 (블로킹을 못 세운 자리면 무시)', other.blockAim === -1 || !(other.block > 0));
+}
+
+say('스킬 표시 — 지금 쓸 수 있나');
+{
+  const { skillState } = await import(R + 'games/volley.js');
+  const world = mk('kkang'); const b = rally(world); run(world, 2);
+  const me = world.mp.myId;
+  check('기세가 모자라면', skillState(world).why, '기세 0/4');
+  b.gauge.set(me, 4);
+  check('두 번 뛰기는 땅에서는', skillState(world).why, '뛰어서');
+  world.input.jump = true; run(world, 1); world.input.jump = false; run(world, 4);
+  ok('뜨면 쓸 수 있다', skillState(world).ready);
+  tap(world, 'guard');
+  ok('쓰고 나면 못 쓴다', !skillState(world).ready);
+  const w2 = mk('mangchi'); const b2 = rally(w2); run(w2, 2);
+  b2.gauge.set(w2.mp.myId, 4);
+  ok('벼락 — 기세가 차면 바로', skillState(w2).ready);
+  tap(w2, 'guard');
+  check('켜 두면 「켬」', skillState(w2).why, '켬');
+  const s3 = serving('kongtteok'); s3.b.gauge.set(s3.world.mp.myId, 4);
+  ok('회오리 — 내 서브 때는 된다', skillState(s3.world).ready);
+  const w4 = mk('kongtteok'); const b4 = rally(w4); run(w4, 2); b4.gauge.set(w4.mp.myId, 4);
+  check('회오리 — 랠리 중에는', skillState(w4).why, '내 서브 때');
 }
 
 say('그림 — 열 명 모두 그린다 (덧그림 · 긴 팔)');

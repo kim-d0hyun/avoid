@@ -402,19 +402,36 @@ const FAKE_WINDOW = 0.14;  // 시간차 — 뜬 뒤 이 안에 ⌥↓
 const NETIN_LAND = 34;     // 네트 인(나비) — 네트에서 이만큼 너머에 떨어진다
 const GHOST_TIME = 0.35;   // 그림자 스파이크(메아리) — 가짜 공이 보이는 시간
 
-/// 가짜 공 — 진짜가 꽂히면 가짜는 수평으로, 진짜가 수평이면 가짜는 꽂힌다. 모두의 화면에 같이 뜬다.
-function launchGhost(b, ball, vx, vy) {
-  const dive = vy > Math.abs(vx) * 0.35;
-  const g = dive ? { vx: vx * 1.15, vy: -Math.abs(vy) * 0.15 } : { vx: vx * 0.7, vy: Math.abs(vx) * 0.65 };
-  b.ghost = { x: ball.x, y: ball.y, vx: g.vx, vy: g.vy, t: GHOST_TIME, seq: ((b.ghost?.seq ?? 0) + 1) % 1000 };
+/// 가짜 공 — 진짜와 **같은 세기로 각만 비틀어** 같이 띄운다. 둘 다 상대 코트로 가는 그럴듯한 강타여야
+/// 헷갈린다 — 처음엔 「진짜가 수평이면 가짜는 꽂힌다」로 했더니 가짜가 제 코트 바닥에 박혀 굴러갔다.
+/// 비튼 길이 네트를 못 넘으면 반대로 비튼다(flies — 실제 셈대로 날려 본다). 둘 다 안 되면 안 띄운다.
+/// 진짜 공이 히트스톱에 멈춰 있는 동안은 가짜도 기다린다(wait). 바닥에 닿으면 그 자리에서 사라진다.
+const GHOST_TURN = [0.36, -0.36, 0.24, -0.24];
+function launchGhost(world, b, ball, vx, vy, away) {
+  const sp = Math.hypot(vx, vy), a = Math.atan2(vy, vx);
+  for (const d of GHOST_TURN) {
+    const gvx = sp * Math.cos(a + d), gvy = sp * Math.sin(a + d);
+    if (Math.sign(gvx) !== away) continue;
+    if (!flies(world, ball.x, ball.y, gvx, gvy, true, false, false, away)) continue;
+    b.ghost = { x: ball.x, y: ball.y, vx: gvx, vy: gvy, t: GHOST_TIME, wait: b.stop ?? 0,
+                seq: ((b.ghost?.seq ?? 0) + 1) % 1000 };
+    return true;
+  }
+  return false;
 }
+/// 가짜 공을 굴린다 — 진짜 강타와 같은 셈(중력 + 탑스핀 · 달아오른 공의 공기 저항 · 옆벽).
 function stepGhost(world, b, dt) {
   const g = b.ghost;
   if (!g || g.t <= 0) return;
+  if (g.wait > 0) { g.wait -= dt; return; }
   g.t -= dt;
-  g.vy += GRAVITY * dt;
+  g.vy += (GRAVITY + TOPSPIN) * dt;
+  const sp = Math.hypot(g.vx, g.vy);
+  const lose = Math.min(0.5, DRAG * sp * dt * HOT_DRAG);
+  g.vx -= g.vx * lose; g.vy -= g.vy * lose;
   g.x += g.vx * dt; g.y += g.vy * dt;
-  if (g.y > world.groundY - BALL_R) g.y = world.groundY - BALL_R;
+  if (g.x < BALL_R || g.x > world.w - BALL_R) { g.vx = -g.vx; g.x = Math.max(BALL_R, Math.min(world.w - BALL_R, g.x)); }
+  if (g.y + BALL_R >= world.groundY) g.t = 0;          // 바닥 — 사라진다
 }
 /// 점프 서브의 실패 선 — 보통 서브는 꽉 찬 뒤 SERVE_BURST 까지 버티지만, 점프 서브는 그 절반만.
 /// 서브 능력치가 높으면 조금 더 버틴다.
@@ -446,26 +463,37 @@ function spendSkill(world, id) {
 }
 
 /// ⌥C — 내 스킬. 두 번 뛰기·대시는 내 몸에 바로 걸고(내 몸은 내가 굴린다), 켜 두는 스킬은 방장이 켠다.
+/// 내 스킬을 **지금** 쓸 수 있나 — 쓸 때(useSkill)와 발밑 표시(drawCastMarks)가 같은 규칙을 본다.
+/// 돌려주는 것: { sk, ready, why } — why 는 못 쓰는 까닭 한 마디 (켜 둔 것이면 '켬').
+export function skillState(world) {
+  const b = world.bag;
+  const p = world.player;
+  const id = world.mp.myId;
+  const sk = castOf(activeOf(world, id)).skill;
+  if (world.state !== 'play' || p.dead || world.mp.waiting || !b?.ball) return { sk, ready: false, why: '' };
+  if (sk.kind === 'arm' && b.armed?.has(id)) return { sk, ready: false, why: '켬' };
+  const have = gaugeOf(world, id);
+  if (have < GAUGE_FULL) return { sk, ready: false, why: `기세 ${have}/${GAUGE_FULL}` };
+  if ((sk.id === 'double' && p.doubled) || (sk.id === 'hover' && p.hovered)) return { sk, ready: false, why: '한 번만' };
+  if ((sk.id === 'double' || sk.id === 'hover') && (p.air ?? 0) <= 0) return { sk, ready: false, why: '뛰어서' };
+  if (sk.id === 'spin' && !myServe(world)) return { sk, ready: false, why: '내 서브 때' };
+  return { sk, ready: true, why: '' };
+}
+
 function useSkill(world) {
   const b = world.bag;
   const p = world.player;
   const id = world.mp.myId;
-  if (world.state !== 'play' || p.dead || world.mp.waiting || !b?.ball) return false;
-  const sk = castOf(activeOf(world, id)).skill;
-  const have = gaugeOf(world, id);
-  if (have < GAUGE_FULL) { missWord(world, p, `기세 ${have}/${GAUGE_FULL}`); return false; }
-  if (sk.kind === 'arm' && b.armed?.has(id)) return false;
+  const state = skillState(world);
+  const sk = state.sk;
+  if (!state.ready) { if (state.why && state.why !== '켬') missWord(world, p, state.why); return false; }
   if (sk.id === 'double') {
-    if ((p.air ?? 0) <= 0 || p.doubled) { missWord(world, p, '공중에서'); return false; }
     p.vy = JUMP_V * (p.jumpMul ?? 1) * DOUBLE_JUMP;
     p.doubled = true;
     addFx(b, { k: 'puff', x: p.x, y: p.groundY - p.air + 2, t: 0, life: 0.45 });
   } else if (sk.id === 'hover') {
-    if ((p.air ?? 0) <= 0 || p.hovered) { missWord(world, p, '공중에서'); return false; }
     p.hover = HOVER; p.hovered = true;
     addFx(b, { k: 'puff', x: p.x, y: p.groundY - p.air + 2, t: 0, life: 0.6 });
-  } else if (sk.id === 'spin' && !myServe(world)) {
-    missWord(world, p, '내 서브 때'); return false;
   } else if (sk.id === 'dash') {
     const held = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
     const dir = held || p.facing || 1;
@@ -543,8 +571,8 @@ function rescue(world, ball) {
     ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y;
     spawnDig(world, ball.x, ball.y);
     netEvent(world, [2, Math.round(ball.x), Math.round(ball.y), 0]);
-    const who = id === world.mp.myId ? world.player : world.mp.others.get(id);
-    skillWord(world, who, '건졌다!');
+    // 「건졌다!」는 **공을 건진 자리**에 — 문어 머리 위에 뜨면 어디서 무슨 일이 났는지 안 보인다.
+    addFx(b, { k: 'miss', x: ball.x, y: ball.y - 30, t: 0, life: 0.9, word: '건졌다!', tint: SKILL_INK });
     b.used = [((b.used?.[0] ?? 0) + 1) % 1000, id, 'rescued'];
     b.seenUse = b.used[0];
     return true;
@@ -597,9 +625,10 @@ function unpackCast(world, d) {
   }
   if (b.ball) b.ball.fire = d?.bf ? FIRE_TIME : 0;
   // 가짜 공 — 새 것이면 받아서 제 화면에서 굴린다.
-  if (Array.isArray(d?.gh) && d.gh.length === 5 && d.gh.every(Number.isFinite) && d.gh[4] !== b.ghostSeq) {
+  if (Array.isArray(d?.gh) && d.gh.length >= 5 && d.gh.every(Number.isFinite) && d.gh[4] !== b.ghostSeq) {
     b.ghostSeq = d.gh[4];
-    b.ghost = { x: d.gh[0], y: d.gh[1], vx: d.gh[2], vy: d.gh[3], t: GHOST_TIME, seq: d.gh[4] };
+    b.ghost = { x: d.gh[0], y: d.gh[1], vx: d.gh[2], vy: d.gh[3], seq: d.gh[4],
+                wait: (d.gh[5] ?? 0) / 1000, t: d.gh[6] ? d.gh[6] / 1000 : GHOST_TIME };
   }
 }
 
@@ -1012,7 +1041,7 @@ function applyHit(world, at, want, body = null, who = -1) {
       ball.pace = 0;
       if (armed === 'thunder' && !lob) { b.armed.delete(who); ball.fire = FIRE_TIME; }
       // 그림자 스파이크(메아리) — 진짜와 다른 길로 가짜 공을 하나 더 띄운다.
-      if (armed === 'ghost' && !lob) { b.armed.delete(who); launchGhost(b, ball, vx, vy); }
+      if (armed === 'ghost' && !lob) { b.armed.delete(who); launchGhost(world, b, ball, vx, vy, away); }
     } else {
       cool(ball);
       if (kind === 3) ball.pace = TIP_PACE;
@@ -1877,8 +1906,30 @@ function drawCastMarks(ctx, world, upright, time) {
       ctx.fillRect(p.x - 17 + k * 9, gy, 7, 4);
     }
     ctx.globalAlpha = 1;
-    if (full && p === world.player && !b.armed?.has(id)) {
-      text(ctx, '⌥C', p.x + 22, gy + 5, { font: `700 10px ${HAN}`, color: SKILL_INK, halo: 2, alpha: blink });
+    // **내 스킬을 지금 쓸 수 있나** — 발밑 칸 밑에 스킬 이름. 쓸 수 있으면 「⌥C 벼락」이 진하게 반짝이고,
+    // 못 쓰면 옅게 까닭을 붙인다(기세 2/4 · 뛰어서 · 내 서브 때 · 켬).
+    if (p === world.player) {
+      const st = skillState(world);
+      const word = st.ready ? `⌥C ${st.sk.name}` : `${st.sk.name} · ${st.why}`;
+      // 칸 오른쪽 같은 줄 — 칸 밑은 화면 아래 끝이라 작은 창에서 잘린다.
+      text(ctx, word, p.x + 22, gy + 6, {
+        font: `${st.ready ? 800 : 600} ${st.ready ? 11 : 10}px ${HAN}`, halo: 3,
+        color: st.ready ? SKILL_INK : st.why === '켬' ? SKILL_INK : PENCIL,
+        alpha: st.ready ? 0.65 + 0.35 * Math.sin(time * 9) : st.why === '켬' ? 0.9 : 0.75,
+      });
+    }
+    // 만리장성(벽돌)을 켠 채 벽을 세웠다 — 넓어진 벽을 벽돌색 판으로 보여 준다 (blocks() 와 같은 크기).
+    if (p.block > 0 && b.armed?.get(id) === 'wall') {
+      const netX = world.w / 2, toward = Math.sign(netX - p.x) || 1, m = (p.blockMul ?? 1) * 1.6;
+      const x0 = Math.min(p.x, p.x + toward * 26 * m) - 15 * m, x1 = Math.max(p.x, p.x + toward * 26 * m) + 15 * m;
+      const feet = p.groundY - p.air, top = feet - BODY_H - BLOCK_UP * (p.blockMul ?? 1) * 1.4;
+      const bottom = feet - BODY_H * 0.55;
+      ctx.save();
+      ctx.globalAlpha = 0.22 * Math.min(1, p.block / 0.1); ctx.fillStyle = SKILL_INK;
+      ctx.fillRect(x0, top, x1 - x0, bottom - top);
+      ctx.globalAlpha = 0.7 * Math.min(1, p.block / 0.1); ctx.strokeStyle = SKILL_INK; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+      ctx.strokeRect(x0, top, x1 - x0, bottom - top);
+      ctx.restore();
     }
     // 켜 둔 스킬 — 몸 둘레 점선. 상대도 보고 대비한다.
     if (b.armed?.has(id)) {
@@ -2623,7 +2674,8 @@ export default {
       cu: b.used ?? undefined,
       bf: b.ball.fire > 0 ? 1 : 0,
       gh: b.ghost && b.ghost.t > 0 ? [Math.round(b.ghost.x), Math.round(b.ghost.y), Math.round(b.ghost.vx),
-                                      Math.round(b.ghost.vy), b.ghost.seq] : undefined,
+                                      Math.round(b.ghost.vy), b.ghost.seq, Math.round((b.ghost.wait ?? 0) * 1000),
+                                      Math.round(b.ghost.t * 1000)] : undefined,
     };
   },
 
