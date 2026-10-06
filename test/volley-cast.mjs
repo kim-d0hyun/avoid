@@ -39,16 +39,18 @@ function rally(world) {
 const run = (world, n, each) => { for (let i = 0; i < n; i++) { each?.(i); w.update(world, FR); } };
 const tap = (world, a) => { w.press(world, a, true); w.press(world, a, false); };
 
-say('표 — 다섯 명, 능력치 합은 모두 12, 스파이크는 2 이상(1:1 이라 누구나 때려야 한다)');
+say('표 — 열 명, 능력치 여섯의 합은 모두 18, 스파이크는 2 이상(1:1 이라 누구나 때려야 한다)');
 {
-  check('다섯 명', C.CAST.map((c) => c.name), ['두부', '깡총', '망치', '번개', '문어']);
+  check('열 명', C.CAST.map((c) => c.name), ['두부', '깡총', '망치', '번개', '문어', '콩떡', '벽돌', '풍선', '나비', '메아리']);
   for (const c of C.CAST) {
     const sum = Object.values(c.st).reduce((a, v) => a + v, 0);
-    ok(`${c.name} — 합 12 (${Object.values(c.st).join('/')})`, sum === 12);
+    ok(`${c.name} — 능력치 여섯 · 합 18 (${Object.values(c.st).join('/')})`, sum === 18 && Object.keys(c.st).length === 6);
     ok(`${c.name} — 스파이크 ${c.st.spike} ≥ 2`, c.st.spike >= 2);
     ok(`${c.name} — 스킬 ${c.skill.name}`, ['arm', 'now'].includes(c.skill.kind));
   }
-  check('두부는 지금 게임 그대로 (전부 3)', C.statsOf('dubu'), { run: 1, jumpH: 65, jump: 1, spike: 1, reach: 1 });
+  check('두부는 지금 게임 그대로 (전부 3)', C.statsOf('dubu'),
+        { run: 1, jumpH: 65, jump: 1, spike: 1, reach: 1, serve: 1, block: 1, fall: 1, sense: 1 });
+  ok('스킬 아이디가 다 다르다', new Set(C.CAST.map((c) => c.skill.id)).size === C.CAST.length);
   check('모르는 이름은 두부', C.castOf('없는애').id, 'dubu');
 }
 
@@ -282,7 +284,187 @@ say('같이 할 때 — 손님 캐릭터를 방장이 안다 · 스킬은 방장
   check('모르는 이름은 안 받는다', h.mp.volleyCast.get(g.mp.myId), 'beongae');
 }
 
-say('그림 — 다섯 명 모두 그린다 (덧그림 · 긴 팔)');
+/// 내 서브 차례로 만든다 (대기 끝).
+function serving(cast, side = 0) {
+  const world = mk(cast); world.state = 'play';
+  volley.update(world, FR);
+  const b = world.bag;
+  b.started = true; b.serving = true; b.serveBy = side; b.wait = 0; b.charge = -1; b.mustCross = null;
+  world.player.x = 200;
+  run(world, 2);
+  return { world, b, p: world.player };
+}
+/// ⌥Space 를 secs 초 잡았다 놓는다. 그 사이 each 를 부른다.
+function holdServe(world, secs, each) {
+  w.press(world, 'grab', true);
+  run(world, Math.round(secs * 60), each);
+  w.press(world, 'grab', false);
+}
+
+say('서브 — 능력치 · 점프 서브 · 회오리 서브(콩떡)');
+{
+  const speed = (cast) => { const { world, b } = serving(cast); holdServe(world, 0.7); return Math.abs(b.ball.vx); };
+  const strong = speed('kongtteok'), mid = speed('dubu'), weak = speed('kkang');
+  note(`서브 가로 빠르기 — 콩떡 ${strong.toFixed(0)} · 두부 ${mid.toFixed(0)} · 깡총 ${weak.toFixed(0)}`);
+  ok('콩떡(5)이 두부보다 빠르다', strong > mid * 1.05);
+  ok('깡총(2)이 두부보다 느리다', weak < mid * 0.97);
+  // 점프 서브 — 잡은 채 뛰어서 놓는다
+  {
+    const { world, b, p } = serving('dubu');
+    w.press(world, 'grab', true);
+    run(world, 28);
+    world.input.jump = true; run(world, 1); world.input.jump = false;
+    run(world, 12);
+    ok('떠 있다', p.air > 12);
+    w.press(world, 'grab', false);
+    ok('점프 서브가 나갔다', !b.serving && Math.abs(b.ball.vx) > mid * 1.1);
+    let crossed = false; run(world, 120, () => { crossed ||= b.ball.x > world.w / 2; });
+    ok('점프 서브도 네트를 넘는다', crossed);
+  }
+  {
+    const { world, b, p } = serving('dubu');
+    w.press(world, 'grab', true);
+    run(world, 44);
+    world.input.jump = true; run(world, 1); world.input.jump = false;
+    run(world, 12);
+    w.press(world, 'grab', false);
+    ok('너무 오래 잡은 점프 서브는 실패 (보통 서브라면 아직 괜찮을 시간)', b.score[1] === 1);
+  }
+  // 회오리 서브
+  {
+    const { world, b } = serving('kongtteok');
+    b.gauge.set(world.mp.myId, 4);
+    tap(world, 'guard');
+    check('켜 두었다', b.armed.get(world.mp.myId), 'spin');
+    holdServe(world, 0.5);
+    ok('흔들리는 공', b.ball.wobble > 0);
+    const vxs = []; let crossed = false;
+    run(world, 70, () => { vxs.push(b.ball.vx); crossed ||= b.ball.x > world.w / 2; });
+    const swing = Math.max(...vxs.slice(0, 40)) - Math.min(...vxs.slice(0, 40));
+    note(`회오리 — 가로 빠르기가 ${swing.toFixed(0)}px/s 폭으로 흔들린다`);
+    ok('가로 빠르기가 크게 흔들린다', swing > 300);
+    ok('그래도 네트는 넘는다', crossed);
+    const w2 = rally(mk('kongtteok')); const world2 = mk('kongtteok'); const b2 = rally(world2); void w2;
+    b2.gauge.set(world2.mp.myId, 4); tap(world2, 'guard');
+    ok('내 서브가 아니면 못 켠다', !b2.armed.has(world2.mp.myId) && b2.gauge.get(world2.mp.myId) === 4);
+  }
+}
+
+say('블로킹 — 능력치(폭·다시 막기) · 만리장성(벽돌) · 터치아웃');
+{
+  // 네트 앞에서 뛰어 벽을 세운 사람에게 공을 쏜다
+  const wallRig = (cast, { arm = false, aim = 0, dy = 0, dx = 0 } = {}) => {
+    const world = mk(cast); const b = rally(world); run(world, 2);
+    const p = world.player, netX = world.w / 2;
+    p.x = netX - 40; p.air = 50; p.vy = 0;
+    if (arm) { b.gauge.set(world.mp.myId, 4); tap(world, 'guard'); }
+    world.input.left = aim < 0; world.input.right = aim > 0;
+    b.ball.x = netX + 60; b.ball.y = p.groundY - p.air - BODY_H - 10 + dy; b.ball.vx = 0; b.ball.vy = 0;
+    ok(`${cast} 벽을 세웠다`, spike(world));
+    world.input.left = false; world.input.right = false;
+    b.ball.x = netX + 30 + dx; b.ball.vx = -900; b.ball.vy = 0;
+    let back = null;
+    run(world, 6, () => { if (back === null && b.ball.vx > 0) back = { vx: b.ball.vx, vy: b.ball.vy }; });
+    return { world, b, p, back };
+  };
+  // 높이 — 벽 위쪽 끝을 스치는 공 (두부 벽보다 4px 위)
+  // 공이 벽 꼭대기에서 51px 위 — 두부 벽(30 + 공 반지름 28)은 못 닿고, 벽돌 벽(36 + 28)은 닿는다
+  const hi = (cast) => wallRig(cast, { dy: -51 }).back;
+  ok('두부 벽은 그 높이를 못 막는다', !hi('dubu'));
+  ok('벽돌(5) 벽은 막는다', !!hi('byeokdol'));
+  const plain = wallRig('dubu').back;
+  ok('보통 블로킹 — 되돌려 보냈다', !!plain);
+  const deep = wallRig('dubu', { aim: 1 }).back;      // 빨강(왼쪽) — 상대 쪽은 오른쪽
+  const short = wallRig('dubu', { aim: -1 }).back;
+  note(`터치아웃 — 보통 vx ${plain.vx.toFixed(0)} · 깊게 ${deep.vx.toFixed(0)} · 짧게 ${short.vx.toFixed(0)}`);
+  ok('상대 쪽 방향키 — 더 깊게', deep.vx > plain.vx * 1.15);
+  ok('내 쪽 방향키 — 네트 너머로 짧게 (가로를 덜고 아래로)', short.vx < plain.vx * 0.5 && short.vy > plain.vy);
+  const wall = wallRig('byeokdol', { arm: true });
+  ok('만리장성 — 그대로 꽂힌다 (아래로 빠르게)', wall.back && wall.back.vy > plain.vy * 1.8);
+  ok('한 번 쓰면 꺼진다', !wall.b.armed.has(wall.world.mp.myId));
+  // 다시 막기까지
+  const cool = (cast) => { const r = wallRig(cast); return r.p.blockCool; };
+  ok('벽돌(5)은 다시 막기까지 짧다', cool('byeokdol') < cool('dubu'));
+}
+
+say('공중 — 둥실(풍선) · 체공(풍선) · 시간차(누구나)');
+{
+  const air = (cast, during) => {
+    const world = mk(cast); const b = rally(world); run(world, 2);
+    const p = world.player; p.x = 300;
+    world.input.jump = true; run(world, 1); world.input.jump = false;
+    let n = 0, apex = 0;
+    while (n < 240) { during?.(world, b, p, n); w.update(world, FR); apex = Math.max(apex, p.air); n++; if (p.air <= 0) break; }
+    return { frames: n, apex };
+  };
+  const base = air('dubu');
+  const floaty = air('pungseon');
+  note(`뜬 시간 — 두부 ${base.frames}프레임 · 풍선 ${floaty.frames}프레임 (체공)`);
+  ok('풍선은 같은 높이를 더 오래 떠 있다', floaty.frames > base.frames * 1.15 && Math.abs(floaty.apex - base.apex) < 3);
+  const hov = air('pungseon', (world, b, p, n) => { if (n === 14) { b.gauge.set(world.mp.myId, 4); tap(world, 'guard'); } });
+  note(`둥실 — ${hov.frames}프레임`);
+  ok('둥실 — 0.6초쯤 더 떠 있다', hov.frames - floaty.frames > 30);
+  const fake = air('dubu', (world, b, p, n) => { if (n === 3) tap(world, 'duck'); });
+  note(`시간차 — 꼭대기 ${fake.apex.toFixed(0)}px (보통 ${base.apex.toFixed(0)}px)`);
+  ok('시간차는 반도 안 뜬다', fake.apex < base.apex * 0.5);
+  const late = air('dubu', (world, b, p, n) => { if (n === 15) tap(world, 'duck'); });
+  ok('늦게 누른 ⌥↓ 는 시간차가 아니다', Math.abs(late.apex - base.apex) < 2);
+}
+
+say('정타 · 드롭 · 스파이크 — 감각(나비) · 네트 인(나비) · 그림자 스파이크(메아리)');
+{
+  // 감각 — 손끝에서 60px 떨어진 공을 꼭대기에서 친다: 두부는 강타, 나비는 정타
+  const ace = (cast) => { const r = rig(cast, { air: 60, off: [40, -44], keys: { right: true } }); spike(r.world); return r.b.ball.ace; };
+  ok('두부 — 정타 원 밖이라 그냥 강타', !ace('dubu'));
+  ok('나비 — 감각으로 정타', ace('nabi'));
+  // 네트 인 — 드롭이 네트 바로 너머에 떨어진다
+  const landing = (arm) => {
+    const r = rig('nabi', { air: 50, off: [20, 10], x: 600 });
+    if (arm) { r.b.gauge.set(r.world.mp.myId, 4); tap(r.world, 'guard'); }
+    tap(r.world, 'drop');
+    // 점수가 나는 그 프레임에 공이 서브 자리로 돌아간다 — 바로 앞 프레임 자리를 떨어진 자리로 본다.
+    let x = null, last = r.b.ball.x;
+    run(r.world, 150, () => { if (x === null && r.b.score[1] + r.b.score[0] > 0) x = last; last = r.b.ball.x; });
+    return x - r.world.w / 2;
+  };
+  const tipX = landing(false), netIn = landing(true);
+  note(`드롭이 떨어진 자리 — 그냥 네트에서 ${tipX?.toFixed(0)}px · 네트 인 ${netIn?.toFixed(0)}px`);
+  ok('네트 인은 네트 바로 너머(15~70px)에 떨어진다', netIn > 15 && netIn < 70);
+  ok('그냥 드롭보다 짧다', netIn < tipX);
+  // 그림자 스파이크 — 가짜 공이 진짜와 다른 쪽으로
+  const g = rig('meari', { off: [30, 10], keys: { right: true } });
+  g.b.gauge.set(g.world.mp.myId, 4); tap(g.world, 'guard');
+  spike(g.world);
+  ok('가짜 공이 떴다', g.b.ghost?.t > 0);
+  const realDive = g.b.ball.vy, fakeDive = g.b.ghost.vy;
+  ok('가짜는 진짜와 다른 각으로 간다', Math.abs(realDive - fakeDive) > 300);
+  run(g.world, 30);
+  ok('0.35초 뒤 사라진다', !(g.b.ghost.t > 0));
+}
+
+say('같이 할 때 — 새 스킬도 방장이 판정 · 가짜 공은 손님 화면에도');
+{
+  const r = room('volley');
+  const g = r.join();
+  g.mp.myCast = 'meari';
+  r.advance(30); r.again(); r.advance(90);
+  const h = r.host;
+  check('손님은 메아리', h.mp.volleyActive.get(g.mp.myId), 'meari');
+  h.bag.gauge.set(g.mp.myId, 4);
+  r.advance(5);
+  tap(g, 'guard');
+  r.advance(8);
+  check('방장이 그림자 스파이크를 켰다', h.bag.armed.get(g.mp.myId), 'ghost');
+  h.bag.ghost = { x: 900, y: 400, vx: 800, vy: 0, t: 0.35, seq: 7 };
+  r.advance(4);
+  ok('손님 화면에도 가짜 공', g.bag.ghost?.t > 0 && g.bag.ghostSeq === 7);
+  // 손님의 블로킹 방향(터치아웃)이 방장에게 간다
+  const other = h.mp.others.get(g.mp.myId);
+  volley.message(h, g.mp.myId, { t: 'gm', k: 'block', h: -1 });
+  ok('터치아웃 방향이 방장에게 (블로킹을 못 세운 자리면 무시)', other.blockAim === -1 || !(other.block > 0));
+}
+
+say('그림 — 열 명 모두 그린다 (덧그림 · 긴 팔)');
 {
   const { createCanvas } = await import('canvas');
   const cv = createCanvas(200, 200); const ctx = cv.getContext('2d');
@@ -300,6 +482,7 @@ say('그림 — 다섯 명 모두 그린다 (덧그림 · 긴 팔)');
   try { drawMenu(createCanvas(1512, 944).getContext('2d'), world); } catch (e) { fine = false; note(e.message); }
   ok('캐릭터 메뉴 + 카드를 그린다', fine);
   check('지금 캐릭터에 「지금」', w.menuItems(world).findIndex((i) => i.note.startsWith('지금')), 2);
+  check('메뉴에 열 명', w.menuItems(world).length, 10);
 }
 
 done('배구 캐릭터');

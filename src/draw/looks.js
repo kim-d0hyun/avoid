@@ -4,7 +4,7 @@
 // drawStickman 의 opts.decor 로 들어간다. 뒤집힌 공간(+x 가 앞)이고, 머리 가운데·어깨·엉덩이 자리를 받는다.
 //   phase 'under' — 몸통보다 먼저 (몸집)   'over' — 얼굴까지 그린 뒤 (머리에 얹는 것)
 
-import { INK, PENCIL, PAPER_SOLID, stroke } from './ink.js';
+import { INK, PENCIL, PAPER_SOLID, stroke, circle } from './ink.js';
 
 const GOLD = '#d9a21b';
 
@@ -66,6 +66,57 @@ const LOOKS = {
   },
   /// 문어 — 팔이 길다(drawStickman opts.arms). 머리엔 아무것도 없다 — 긴 팔이 곧 얼굴이다.
   muneo: {},
+  /// 콩떡 — 머리 위에 콩 세 알 (떡 위의 콩).
+  kongtteok: {
+    over(ctx, g) {
+      const { headX: x, headY: y } = g;
+      [[-5, -8], [1, -10], [6, -7]].forEach(([dx, dy], i) => circle(ctx, x + dx, y + dy, 2.2,
+        { width: 1.4, color: INK, fill: '#7a4a2a', halo: false, seed: g.seed + 90 + i }));
+    },
+  },
+  /// 벽돌 — 각진 넓은 어깨 (벽돌 쌓은 네모 덩어리).
+  byeokdol: {
+    under(ctx, g) {
+      ctx.save();
+      ctx.translate(g.shldX * 0.5, (g.hipY + g.shldY) / 2 + 1);
+      ctx.rotate(g.lean);
+      ctx.lineWidth = 6; ctx.strokeStyle = PAPER_SOLID; ctx.strokeRect(-16, -16, 33, 30);
+      ctx.fillStyle = g.color ?? '#c9c3b6'; ctx.globalAlpha = 0.85; ctx.fillRect(-16, -16, 33, 30); ctx.globalAlpha = 1;
+      ctx.lineWidth = 2; ctx.strokeStyle = INK; ctx.strokeRect(-16, -16, 33, 30);
+      ctx.beginPath(); ctx.moveTo(-16, -6); ctx.lineTo(17, -6); ctx.moveTo(-16, 4); ctx.lineTo(17, 4); ctx.stroke();
+      ctx.restore();
+    },
+  },
+  /// 풍선 — 등 뒤에 매단 풍선 하나.
+  pungseon: {
+    over(ctx, g) {
+      const { headX: x, headY: y } = g;
+      // 등 뒤로 비스듬히 — 머리 위 이름표와 안 겹치게
+      stroke(ctx, [[x - 6, y + 16], [x - 16, y], [x - 25, y - 14]],
+             { width: 1.2, color: PENCIL, seed: g.seed + 95, amp: 0.5, halo: false });
+      circle(ctx, x - 29, y - 22, 9, { width: 2, color: INK, fill: '#f2c94c', seed: g.seed + 96, amp: 0.5, halo: true });
+    },
+  },
+  /// 나비 — 더듬이 둘.
+  nabi: {
+    over(ctx, g) {
+      const { headX: x, headY: y } = g;
+      stroke(ctx, [[x - 2, y - 9], [x - 6, y - 19], [x - 9, y - 21]], { width: 1.6, color: INK, seed: g.seed + 97, amp: 0.3, halo: false });
+      stroke(ctx, [[x + 3, y - 9], [x + 8, y - 18], [x + 12, y - 19]], { width: 1.6, color: INK, seed: g.seed + 98, amp: 0.3, halo: false });
+      circle(ctx, x - 9.5, y - 21.5, 1.8, { width: 1.4, color: INK, fill: INK, halo: false });
+      circle(ctx, x + 12.5, y - 19.5, 1.8, { width: 1.4, color: INK, fill: INK, halo: false });
+    },
+  },
+  /// 메아리 — 눈가리개 가면.
+  meari: {
+    over(ctx, g) {
+      const { headX: x, headY: y } = g;
+      ctx.save(); ctx.fillStyle = INK; ctx.globalAlpha = 0.85;
+      ctx.beginPath(); ctx.ellipse(x + 1, y - 1.5, 9.5, 3.4, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      circle(ctx, x - 2.5, y - 1.5, 1.4, { width: 1, color: '#fff', fill: '#fff', halo: false });
+      circle(ctx, x + 4, y - 1.5, 1.4, { width: 1, color: '#fff', fill: '#fff', halo: false });
+    },
+  },
 };
 
 /// 그 캐릭터의 덧그림 함수 (없으면 undefined).

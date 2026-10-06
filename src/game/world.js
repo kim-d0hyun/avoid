@@ -359,7 +359,10 @@ function movePlayer(world, dt) {
     p.air = 0.01;
   }
   if (p.air > 0) {
-    p.vy -= GRAVITY * dt;
+    // 공중에 멈춰 있기(p.hover — 배구 풍선의 「둥실」) · 내려올 때만 천천히(p.fallMul — 「체공」).
+    // 둘 다 없으면 그대로다.
+    if (p.hover > 0) { p.hover -= dt; p.vy = 0; }
+    else p.vy -= GRAVITY * dt * (p.vy < 0 ? (p.fallMul ?? 1) : 1);
     p.air += p.vy * dt;
     if (p.air <= 0) { p.air = 0; p.vy = 0; }
   }

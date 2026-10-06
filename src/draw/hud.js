@@ -561,7 +561,7 @@ export function drawMenu(ctx, world) {
   // 캐릭터를 고르는 중이면 오른쪽에 카드를 한 장 더 편다 (게임이 그린다). 둘을 합쳐 가운데에 둔다.
   const game = gameOf(world);
   const card = at === 'cast' && game.castCard ? 256 : 0;
-  const h = Math.max(62 + items.length * 34 + foot, card ? 330 : 0);
+  const h = Math.max(62 + items.length * 34 + foot, card ? 340 : 0);
   const x = (world.w - w - card) / 2;
   const y = (world.h - h) / 2 - 40;
 

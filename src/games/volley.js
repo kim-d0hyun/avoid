@@ -368,10 +368,16 @@ function wearCast(world) {
   const mine = activeOf(world, world.mp.myId);
   const st = statsOf(mine);
   me.look = mine; me.runMul = st.run; me.jumpMul = st.jump; me.reachMul = st.reach;
-  if ((me.air ?? 0) <= 0) me.doubled = false;
+  me.blockMul = st.block; me.fallMul = st.fall;
+  // 뜬 순간을 적어 둔다 (시간차 — 뜨자마자 ⌥↓ 면 반만 뛴다). 내려오면 한 번씩 쓰는 공중 스킬을 되돌린다.
+  const up = (me.air ?? 0) > 0;
+  if (up && !me.wasUp) me.jumpAt = world.elapsed ?? 0;
+  me.wasUp = up;
+  if (!up) { me.doubled = false; me.hovered = false; me.faked = false; }
   for (const o of world.mp.others.values()) {
     o.look = activeOf(world, o.id);
-    o.reachMul = statsOf(o.look).reach;
+    const os = statsOf(o.look);
+    o.reachMul = os.reach; o.blockMul = os.block;
   }
 }
 
@@ -387,6 +393,34 @@ function chargeGauge(world, toSide) {
 }
 
 const DASH = 120;          // 번개 — 잔상 대시 거리
+const JUMP_SERVE = 1.25;   // 점프 서브 — 그만큼 빠르게
+const WOBBLE_TIME = 1.4;   // 회오리 서브(콩떡) — 흔들리는 시간
+const WOBBLE_A = 300;      //   흔들리는 가로 빠르기 폭 (px/s)
+const WOBBLE_W = 11;       //   흔들리는 빠르기 (rad/s)
+const HOVER = 0.6;         // 둥실(풍선) — 공중에 멈추는 시간
+const FAKE_WINDOW = 0.14;  // 시간차 — 뜬 뒤 이 안에 ⌥↓
+const NETIN_LAND = 34;     // 네트 인(나비) — 네트에서 이만큼 너머에 떨어진다
+const GHOST_TIME = 0.35;   // 그림자 스파이크(메아리) — 가짜 공이 보이는 시간
+
+/// 가짜 공 — 진짜가 꽂히면 가짜는 수평으로, 진짜가 수평이면 가짜는 꽂힌다. 모두의 화면에 같이 뜬다.
+function launchGhost(b, ball, vx, vy) {
+  const dive = vy > Math.abs(vx) * 0.35;
+  const g = dive ? { vx: vx * 1.15, vy: -Math.abs(vy) * 0.15 } : { vx: vx * 0.7, vy: Math.abs(vx) * 0.65 };
+  b.ghost = { x: ball.x, y: ball.y, vx: g.vx, vy: g.vy, t: GHOST_TIME, seq: ((b.ghost?.seq ?? 0) + 1) % 1000 };
+}
+function stepGhost(world, b, dt) {
+  const g = b.ghost;
+  if (!g || g.t <= 0) return;
+  g.t -= dt;
+  g.vy += GRAVITY * dt;
+  g.x += g.vx * dt; g.y += g.vy * dt;
+  if (g.y > world.groundY - BALL_R) g.y = world.groundY - BALL_R;
+}
+/// 점프 서브의 실패 선 — 보통 서브는 꽉 찬 뒤 SERVE_BURST 까지 버티지만, 점프 서브는 그 절반만.
+/// 서브 능력치가 높으면 조금 더 버틴다.
+function jumpBurst(world, id) {
+  return SERVE_FULL + (SERVE_BURST - SERVE_FULL) * 0.5 * statsOf(activeOf(world, id)).serve;
+}
 const DOUBLE_JUMP = 0.8;   // 깡총 — 두 번째 점프 세기 (첫 점프의)
 const THUNDER = 1.35;      // 망치 — 벼락 세기
 const FIRE_TIME = 1.2;     // 벼락 공의 불꽃이 남는 시간 (몸·벽·바닥에 닿으면 꺼진다)
@@ -426,6 +460,12 @@ function useSkill(world) {
     p.vy = JUMP_V * (p.jumpMul ?? 1) * DOUBLE_JUMP;
     p.doubled = true;
     addFx(b, { k: 'puff', x: p.x, y: p.groundY - p.air + 2, t: 0, life: 0.45 });
+  } else if (sk.id === 'hover') {
+    if ((p.air ?? 0) <= 0 || p.hovered) { missWord(world, p, '공중에서'); return false; }
+    p.hover = HOVER; p.hovered = true;
+    addFx(b, { k: 'puff', x: p.x, y: p.groundY - p.air + 2, t: 0, life: 0.6 });
+  } else if (sk.id === 'spin' && !myServe(world)) {
+    missWord(world, p, '내 서브 때'); return false;
   } else if (sk.id === 'dash') {
     const held = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
     const dir = held || p.facing || 1;
@@ -556,6 +596,11 @@ function unpackCast(world, d) {
     }
   }
   if (b.ball) b.ball.fire = d?.bf ? FIRE_TIME : 0;
+  // 가짜 공 — 새 것이면 받아서 제 화면에서 굴린다.
+  if (Array.isArray(d?.gh) && d.gh.length === 5 && d.gh.every(Number.isFinite) && d.gh[4] !== b.ghostSeq) {
+    b.ghostSeq = d.gh[4];
+    b.ghost = { x: d.gh[0], y: d.gh[1], vx: d.gh[2], vy: d.gh[3], t: GHOST_TIME, seq: d.gh[4] };
+  }
 }
 
 /// 캐릭터를 고른다 — 내 화면에서 먼저, 방장에게 알리고, 다음에도 쓰게 셸에 적어 둔다.
@@ -617,8 +662,8 @@ export function myServe(world) {
   return serverOf(world, b.serveBy) === world.player;
 }
 
-/// 서브를 때린다. power 0~1, dir 은 누른 방향(−1·0·1).
-export function hitServe(world, power, dir) {
+/// 서브를 때린다. power 0~1, dir 은 누른 방향(−1·0·1). jump — 뛰어서 넣었나(점프 서브).
+export function hitServe(world, power, dir, jump = false) {
   const b = world.bag;
   // 점수 난 뒤 쉬는 동안(RESET_WAIT)은 못 넣는다. 공이 아직 손으로 내려오는 중이라
   // 높은 데서, 선 자리가 아닌 데서 나가고 — 받는 쪽은 준비도 안 됐다.
@@ -631,8 +676,18 @@ export function hitServe(world, power, dir) {
   // 서브 전에 공에 남은 것을 지운다 — 기다리는 동안 들어온 타격이 달아오름을 남겨 두면
   // 살살 넣은 서브가 탑스핀을 물려받는다.
   cool(ball);
-  ball.vx = across * (SERVE_SLOW + (SERVE_FAST - SERVE_SLOW) * k) + dir * across * SERVE_AIM;
-  ball.vy = -(SERVE_LIFT - SERVE_FLAT * k);
+  // 넣는 사람 — 서브 능력치 · 켜 둔 회오리 서브(콩떡).
+  const server = serverOf(world, b.serveBy);
+  const sid = server ? bodyId(world, server) : -1;
+  const sst = statsOf(activeOf(world, sid));
+  // **점프 서브** — 뛰어서 넣으면 1.25배 빠르고 낮게 간다 (실패 구간이 두 배인 값은 release 가 본다).
+  const jumpK = jump ? JUMP_SERVE : 1;
+  ball.vx = across * (SERVE_SLOW + (SERVE_FAST * sst.serve * jumpK - SERVE_SLOW) * k) + dir * across * SERVE_AIM;
+  ball.vy = -(SERVE_LIFT - SERVE_FLAT * k) * (jump ? 0.55 : 1);
+  if (world.mp.role !== 'guest' && b.armed?.get(sid) === 'spin') {
+    b.armed.delete(sid);
+    ball.wobble = WOBBLE_TIME; ball.wobT = 0;
+  }
   ball.spinV = across * (2 + k * 4);
   // 강서브는 달아오른 채 앞으로 돌며 간다 — 중력의 1.45배로 떨어져 코트 안에 꽂힌다.
   // (달아오름은 꾸러미의 일곱째 칸으로 가고, 손님은 그걸 보고 같은 회전을 그린다.)
@@ -662,24 +717,24 @@ export function hitServe(world, power, dir) {
   // 올려 놓고 자기 편끼리 주고받다 넘기는 건 서브가 아니다.
   b.mustCross = b.serveBy;
   addFx(b, { k: 'dig', x: ball.x, y: ball.y, t: 0, life: 0.4,
-             word: k > SERVE_SPIN ? '강서브!' : null });
+             word: ball.wobble > 0 ? '회오리!' : jump ? '점프 서브!' : k > SERVE_SPIN ? '강서브!' : null });
   netEvent(world, [5, Math.round(ball.x), Math.round(ball.y), Math.round(k * 100)]);
   return true;
 }
 
 /// 너무 오래 잡고 있었다. 손에서 빠져 네트에 걸린다 — 상대 점수.
-function serveFault(world) {
+function serveFault(world, word = '서브 실패') {
   const b = world.bag;
   b.serving = false;
   b.charge = -1;
-  addFx(b, { k: 'miss', x: b.ball.x, y: b.ball.y - 26, t: 0, life: 0.9, word: '서브 실패' });
+  addFx(b, { k: 'miss', x: b.ball.x, y: b.ball.y - 26, t: 0, life: 0.9, word });
   point(world, 1 - b.serveBy);
 }
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 /// 달아오른 강타를 식힌다. 몸·벽·네트·바닥·서브 — 무엇이든 한 번 닿으면 보통 공이다.
 function cool(ball) {
-  ball.hot = 0; ball.ace = false; ball.topspin = false; ball.dip = false; ball.pace = 0; ball.fire = 0;
+  ball.hot = 0; ball.ace = false; ball.topspin = false; ball.dip = false; ball.pace = 0; ball.fire = 0; ball.wobble = 0;
 }
 
 /// 공이 사람 몸에 닿았나. 몸은 세로로 긴 알약이라 가로·세로를 따로 본다.
@@ -743,18 +798,20 @@ const handY = (at) => at.groundY - at.air - BODY_H * 0.86;
 
 /// 공이 내 손끝 원 안인가 — 정타의 두 조건 가운데 **자리** 쪽.
 function inSweet(ball, at) {
-  return Math.hypot(ball.x - at.x, ball.y - handY(at)) <= SWEET_R;
+  return Math.hypot(ball.x - at.x, ball.y - handY(at)) <= SWEET_R * (at.sense ?? 1);   // 감각(나비)
 }
 
 /// 벽에 닿았나. 머리 위로 뻗은 손이 네트 쪽으로 한 뼘 나간 넓적한 칸이다.
-function blocks(ball, p, netX) {
+function blocks(ball, p, netX, wide = 1) {
   if (!(p.block > 0)) return false;
   if (Math.abs(ball.x - netX) > BLOCK_NEAR * 1.6) return false;   // 벽은 네트에서만 선다
   const feet = p.groundY - p.air;
   const toward = Math.sign(netX - p.x) || 1;
-  const x0 = Math.min(p.x, p.x + toward * 26) - 15;
-  const x1 = Math.max(p.x, p.x + toward * 26) + 15;
-  const top = feet - BODY_H - BLOCK_UP;
+  // 블로킹 능력치(blockMul)와 만리장성(wide) — 벽이 넓고 높다.
+  const m = (p.blockMul ?? 1) * wide;
+  const x0 = Math.min(p.x, p.x + toward * 26 * m) - 15 * m;
+  const x1 = Math.max(p.x, p.x + toward * 26 * m) + 15 * m;
+  const top = feet - BODY_H - BLOCK_UP * (p.blockMul ?? 1) * (wide > 1 ? 1.4 : 1);
   const cx = Math.max(x0, Math.min(ball.x, x1));
   const cy = Math.max(top, Math.min(ball.y, feet - BODY_H * 0.55));
   const dx = ball.x - cx;
@@ -764,11 +821,17 @@ function blocks(ball, p, netX) {
 
 /// 막았다. **들어온 세기 그대로 상대 코트로 되돌린다** — 세게 친 쪽이 더 세게 돌려받는다.
 /// 그게 블로킹을 무서운 수로 만든다. 살살 온 공도 최소한 네트는 넘어간다.
-function blockBack(ball, p, netX) {
+function blockBack(ball, p, netX, wall = false) {
   const away = Math.sign(netX - p.x) || 1;
   const back = Math.max(BLOCK_MIN, Math.hypot(ball.vx, ball.vy) * BLOCK_KEEP);
   ball.vx = clamp(away * back * 0.82, MAX_SPEED);
   ball.vy = Math.min(MAX_SPEED, Math.max(150, back * 0.34));     // 네트 너머로 꽂힌다
+  // **터치아웃** — 벽을 세울 때 잡은 방향키(blockAim). 상대 쪽이면 깊게, 내 쪽이면 네트 바로 너머로 짧게 떨군다.
+  const aim = p.blockAim | 0;
+  if (aim === away) { ball.vx *= 1.25; ball.vy *= 0.6; }
+  else if (aim === -away) { ball.vx *= 0.35; ball.vy = Math.max(ball.vy, back * 0.6); }
+  // 만리장성(벽돌) — 막은 공이 그대로 꽂힌다.
+  if (wall) { ball.vy = Math.min(MAX_SPEED, Math.max(ball.vy, back * 0.85)); ball.vx *= 0.7; }
   ball.spinV = clamp(away * 9, 12);
   ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y;
   ball.smash = 0.7;
@@ -827,11 +890,14 @@ function applyHit(world, at, want, body = null, who = -1) {
     // 손에 닿는 그 순간 상대 쪽 방향키를 잡고 있으면 긴 드롭. 미리 잡았다가 마지막에 떼면 짧은 드롭 —
     // 그 속임까지 수다.
     const long = held === away;
-    const goal = (world.w / 2 + away * (long ? TIP_LONG : TIP_LAND) - ball.x) * away;
+    // 네트 인(나비) — 네트 테이프에 걸려 툭 넘어가 바로 떨어진다 (드롭의 가장 짧은 꼴).
+    const netin = armed === 'netin';
+    const goal = (world.w / 2 + away * (netin ? NETIN_LAND : long ? TIP_LONG : TIP_LAND) - ball.x) * away;
     vx = away * clamp2(goal / fall, 60, long ? TIP_LONG_SIDE : TIP_SIDE);
     // 같은 길을 TIP_PACE 배 빠르게 (중력은 update 가 pace² 로 건다).
     vx *= TIP_PACE; vy *= TIP_PACE;
     kind = 3;
+    if (netin && world.mp.role !== 'guest') { b.armed.delete(who); ball.netin = 1; }
   } else if (at.air <= 12) {
     // 토스. 위로 올려 주고 옆으로는 살짝만.
     vx = clamp((ball.x - at.x) * OFF_CENTER * 0.6 + held * 240, MAX_SPEED);
@@ -945,6 +1011,8 @@ function applyHit(world, at, want, body = null, who = -1) {
       // 중력 2.25배로 떨어져 63% 가 제 코트로 갔다 (몸·벽에 닿아야만 지워졌다).
       ball.pace = 0;
       if (armed === 'thunder' && !lob) { b.armed.delete(who); ball.fire = FIRE_TIME; }
+      // 그림자 스파이크(메아리) — 진짜와 다른 길로 가짜 공을 하나 더 띄운다.
+      if (armed === 'ghost' && !lob) { b.armed.delete(who); launchGhost(b, ball, vx, vy); }
     } else {
       cool(ball);
       if (kind === 3) ball.pace = TIP_PACE;
@@ -1149,7 +1217,7 @@ function attempt(world, want, first) {
   const b = world.bag;
   const p = world.player;
   const st = statsOf(activeOf(world, world.mp.myId));
-  const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0, reach: st.reach, power: st.spike };
+  const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0, reach: st.reach, power: st.spike, sense: st.sense };
 
   // ① 지금 누가 치는 중인가 (히트스톱). 여기서 버리면 랠리 중에 입력이 한 번씩 씹힌다 —
   //    **버리지 말고 기억했다가** 풀리는 프레임에 대신 친다.
@@ -1207,10 +1275,12 @@ function canBlock(world, p) {
 /// 모른 채 결과만 본다. 그래서 세 길로 간다: 누른 사람은 제 화면에서 바로(손맛), 손님이면
 /// 방장에게 부탁하고, 방장은 판정한 뒤 **한 줄로 모두에게** 알린다.
 /// mine — 내가 누른 것인가. who — 누가 세웠나 (모두에게 알릴 때 쓴다).
-function doBlock(world, p, mine, who) {
+function doBlock(world, p, mine, who, aim) {
   p.block = BLOCK_TIME;
-  p.blockCool = BLOCK_TIME + BLOCK_COOL;
-  if (mine && world.mp.role === 'guest') world.send?.({ t: 'gm', k: 'block' });
+  p.blockCool = BLOCK_TIME + BLOCK_COOL / (p.blockMul ?? 1);     // 블로킹 능력치 — 다시 막기까지 짧게
+  // 터치아웃 — 벽을 세우는 그 순간 잡은 방향키. 내 것은 내 키에서, 손님 것은 손님이 보낸 값.
+  p.blockAim = mine ? (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0) : Math.sign(aim | 0);
+  if (mine && world.mp.role === 'guest') world.send?.({ t: 'gm', k: 'block', h: p.blockAim });
   if (world.mp.role !== 'guest') netEvent(world, [4, 0, 0, Number.isFinite(who) ? who : -1]);
   return true;
 }
@@ -1236,6 +1306,7 @@ export const KEY_ROWS = [
 export const SERVE_ROWS = [
   ['⌥ Space 길게', '서브 — 잡은 만큼 세게'],
   ['⌥ ← →', '깊게 / 짧게'],
+  ['잡은 채 ⌥ ↑', '점프 서브 — 세지만 잘 터진다'],
 ];
 function drawKeys(ctx, world, b) {
   if (world.state !== 'play') return;
@@ -1418,7 +1489,7 @@ function guestHit(world, from, at, want) {
   // 능력치는 손님이 보낸 값이 아니라 **방장이 아는 그 사람 캐릭터**로 — 남의 화면 값을 믿지 않는다.
   const gst = statsOf(activeOf(world, from));
   const ok = applyHit(world, { x: other.x, air: other.air, groundY: world.groundY, side: gside,
-                               reach: gst.reach, power: gst.spike },
+                               reach: gst.reach, power: gst.spike, sense: gst.sense },
                       want, other, from);
   if (ok) startSwing(other, ok);
   world.debug && world.log?.(`손님타격 ${from} ${ok ? '먹힘' : '안닿음'}`);
@@ -1836,7 +1907,7 @@ function drawCastCard(ctx, world, id, x, y, h) {
          { width: 1.6, color: INK, seed: 31, amp: 1.1, close: true, sharp: true, halo: false });
   // 모습 — 내 편 옷을 입혀 크게
   const side = world.team ?? 0;
-  const fx = x + w / 2, fy = y + 128;
+  const fx = x + w / 2, fy = y + 142;   // 풍선이 카드 위로 안 삐져나오게 조금 내린다
   ctx.save();
   ctx.translate(fx, fy); ctx.scale(1.35, 1.35); ctx.translate(-fx, -fy);
   drawStickman(ctx, { x: fx, groundY: fy, air: 0, vx: 0, vy: 0, crouch: 0, facing: side === 0 ? 1 : -1,
@@ -1847,15 +1918,20 @@ function drawCastCard(ctx, world, id, x, y, h) {
   text(ctx, c.name, fx, fy + 30, { font: `800 20px ${HAN}`, color: INK, align: 'center', halo: 0 });
   text(ctx, c.line, fx, fy + 49, { font: `600 10.5px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
   Object.keys(STAT_NAMES).forEach((k, i) => {
-    const sx = x + 26 + (i % 2) * 106, sy = fy + 76 + Math.floor(i / 2) * 18;
+    const sx = x + 26 + (i % 2) * 106, sy = fy + 72 + Math.floor(i / 2) * 17;
     text(ctx, STAT_NAMES[k], sx, sy, { font: `700 10px ${HAN}`, color: INK, halo: 0 });
     for (let n = 0; n < 5; n++) {
       circle(ctx, sx + 46 + n * 10, sy - 4, 3.2, { width: 1.3, color: INK, fill: n < c.st[k] ? INK : null,
                                                    halo: false, seed: 80 + n + i * 5, amp: 0.25 });
     }
   });
-  text(ctx, `⌥C  ${c.skill.name}`, fx, fy + 126, { font: `800 12px ${HAN}`, color: SKILL_INK, align: 'center', halo: 0 });
-  text(ctx, c.skill.line, fx, fy + 143, { font: `600 10px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
+  // 특성 — 숫자로 못 적는 것 (있는 사람만)
+  if (c.trait) {
+    text(ctx, `특성 ${c.trait.name} — ${c.trait.line}`, fx, fy + 132,
+         { font: `700 10px ${HAN}`, color: INK, align: 'center', halo: 0, alpha: 0.8 });
+  }
+  text(ctx, `⌥C  ${c.skill.name}`, fx, fy + 154, { font: `800 12px ${HAN}`, color: SKILL_INK, align: 'center', halo: 0 });
+  text(ctx, c.skill.line, fx, fy + 171, { font: `600 10px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
 }
 
 export default {
@@ -1874,7 +1950,10 @@ export default {
          ['⌥ Space (네트 앞 공중)', '블로킹 — 손을 넘겨 벽을 세운다'],
          ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 쪽으로, 머리 위 막대가 차면'],
          ['⌥ C', '캐릭터 스킬 — 발밑 기세 4칸이 차면 (점수를 내주면 2칸, 따면 1칸)'],
-         ['⌥ M → 캐릭터', '두부·깡총·망치·번개·문어 — 다음 점수부터 바뀐다']],
+         ['⌥ Space 잡고 ⌥ ↑ (서브)', '점프 서브 — 빠르고 낮지만 실패 구간이 두 배'],
+         ['⌥ ↑ 뒤 곧바로 ⌥ ↓', '시간차 — 반만 뛰는 가짜 점프'],
+         ['⌥ ← → (블로킹)', '터치아웃 — 상대 쪽이면 깊게, 내 쪽이면 네트 너머로 짧게'],
+         ['⌥ M → 캐릭터', '열 명 — 다음 점수부터 바뀐다']],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
   noGrab: true,
@@ -1935,12 +2014,15 @@ export default {
     if (!(held >= 0)) return;
     const power = clamp01((held - SERVE_HOLD) / (SERVE_FULL - SERVE_HOLD));
     const dir = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
+    // 뛰어 있으면 점프 서브. 너무 오래 잡았으면(점프는 실패 구간이 두 배) 실패다.
+    const jump = (world.player.air ?? 0) > 12;
     if (world.mp.role === 'guest') {
       b.myCharge = -1;
-      world.send?.({ t: 'gm', k: 'serve', p: Math.round(power * 100), d: dir });
+      world.send?.({ t: 'gm', k: 'serve', p: Math.round(power * 100), d: dir, j: jump ? 1 : 0 });
       return;
     }
-    hitServe(world, power, dir);
+    if (jump && held > jumpBurst(world, world.mp.myId)) { serveFault(world, '점프 서브 실패'); return; }
+    hitServe(world, power, dir, jump);
   },
   /// 방향키를 누른 순간 — **공중의 ⌥↑ 는 페인트다.** 나머지는 흘린다.
   ///
@@ -1955,7 +2037,14 @@ export default {
   ///
   /// **v3.30 — 페인트는 ⌥X 로 옮겼다(drop).** 공중 ⌥↑ 는 넘겨 주기(⌥Space + ↑)와 키를 나눠 쓰느라
   /// 늘 겹쳤다. 이제 ⌥↑ 는 점프만 한다.
-  tap: () => {},
+  /// **시간차** — 뜨자마자(0.14초 안) ⌥↓ 를 누르면 반만 뛰다 내려온다. 블로커가 따라 뛴 사이 진짜로 뛴다.
+  tap(world, action) {
+    const p = world.player;
+    if (action !== 'duck' || p.faked || !((p.air ?? 0) > 0) || !(p.vy > 0)) return;
+    if ((world.elapsed ?? 0) - (p.jumpAt ?? -9) > FAKE_WINDOW) return;
+    p.vy *= 0.3; p.faked = true;
+    missWord(world, p, '시간차');
+  },
   /// ⌥X — 드롭. ⌥X 만이면 네트 바로 너머로 짧게, 상대 쪽 방향키를 같이 잡으면 코트 뒤쪽으로 길게.
   drop: (world) => { if (!world.bag.serving) tipHit(world); },
   /// ⌥C — 캐릭터 스킬 (기세가 다 차면).
@@ -2049,6 +2138,7 @@ export default {
     // 캐릭터 — 방장이 누가 무엇을 입었는지 정하고, 모두가 몸에 붙인다.
     if (world.mp.role !== 'guest') syncCast(world);
     wearCast(world);
+    stepGhost(world, b, dt);
     visuals(world, b, dt);
     arms(world, b, dt);
     setsOf(world);                    // 편이 바뀌었으면 세트 스코어를 0:0 으로
@@ -2150,6 +2240,13 @@ export default {
     // **탑스핀.** 앞으로 도는 강타는 중력의 1.45배로 떨어진다 — 포물선이 아니라 꺾여 꽂힌다.
     ball.vy += (GRAVITY * (ball.pace > 1 ? ball.pace * ball.pace : 1)
       + (ball.topspin ? TOPSPIN + (ball.dip ? DIP_SPIN : 0) : 0)) * dt;
+    // 회오리 서브(콩떡) — 가로 빠르기가 사인으로 흔들린다. 받는 쪽은 떨어질 자리를 끝까지 못 읽는다.
+    if (ball.wobble > 0) {
+      const t0 = ball.wobT ?? 0;
+      ball.wobT = t0 + dt;
+      ball.vx += WOBBLE_A * (Math.sin(WOBBLE_W * ball.wobT) - Math.sin(WOBBLE_W * t0));
+      ball.wobble = Math.max(0, ball.wobble - dt);
+    }
 
     // 공기 저항. **빠를수록 많이 깎인다** (제곱 저항).
     //
@@ -2191,6 +2288,11 @@ export default {
     // 네트. 꼭대기는 넘어가고, 몸통에 맞으면 되돌아온다.
     const netX = world.w / 2;
     const netTop = world.groundY - NET_H;
+    // 네트 인(나비) — 테이프를 스치는 순간 「톡」.
+    if (ball.netin && Math.abs(ball.x - netX) < BALL_R) {
+      ball.netin = 0;
+      addFx(b, { k: 'miss', x: netX, y: netTop - 14, t: 0, life: 0.8, word: '톡!', tint: SKILL_INK });
+    }
     if (Math.abs(ball.x - netX) < BALL_R + NET_FACE && ball.y > netTop) {
       ball.x = netX + Math.sign(ball.x - netX || 1) * (BALL_R + NET_FACE);
       ball.vx = -ball.vx * 0.55;
@@ -2205,8 +2307,10 @@ export default {
     // **벽이 먼저다.** 손이 몸보다 위에 있으니, 벽에 맞을 공이 몸에 먼저 맞으면 안 된다.
     let walled = false;
     for (const p of bodies) {
-      if (p === ball.skip || !blocks(ball, p, netX)) continue;
-      blockBack(ball, p, netX);
+      const wall = b.armed?.get(bodyId(world, p)) === 'wall';
+      if (p === ball.skip || !blocks(ball, p, netX, wall ? 1.6 : 1)) continue;
+      if (wall) { b.armed.delete(bodyId(world, p)); skillWord(world, p, '만리장성!'); }
+      blockBack(ball, p, netX, wall);
       spawnBlock(world, ball.x, ball.y);
       walled = true;
       break;
@@ -2317,6 +2421,12 @@ export default {
     // 타격 자국 — 고리·파편·먼지·금은 공 뒤에 깔린다.
     drawFx(ctx, b, upright, false);
 
+    // 그림자 스파이크(메아리)의 가짜 공 — 진짜와 똑같이 그린다. 0.35초 뒤 사라진다.
+    if (b.ghost?.t > 0) {
+      const g = b.ghost;
+      upright(g.x, g.y, () => circle(ctx, g.x, g.y, BALL_R, { width: 3, color: INK, seed: 91, amp: 0.4,
+        fill: PAPER, alpha: Math.min(1, g.t / 0.08) }));
+    }
     // 공이 그려지는 자리. 맞은 두 프레임 동안 손끝으로 미끄러져 온다.
     const [bx, by] = shownBall(b);
     const sp = Math.hypot(b.ball.vx, b.ball.vy);
@@ -2441,13 +2551,16 @@ export default {
       // 잡기 시작했다 — 방장이 센다. 실패(SERVE_BURST)도 여기서 난다.
       if (msg.k === 'hold') { b.charge = 0; return; }
       // 옛 손님은 hold 를 안 보낸다. 그때는 b.charge 가 −1 인 채로 온다 — 보내온 세기를 쓴다.
-      hitServe(world, clamp01((+msg.p || 0) / 100), Math.sign(+msg.d || 0));
+      // 점프 서브 — 방장이 아는 그 사람이 정말 떠 있어야, 그리고 방장이 센 시간으로 실패를 본다.
+      const jump = !!msg.j && (other.air ?? 0) > 12;
+      if (jump && b.charge > jumpBurst(world, from)) { serveFault(world, '점프 서브 실패'); return; }
+      hitServe(world, clamp01((+msg.p || 0) / 100), Math.sign(+msg.d || 0), jump);
       return;
     }
     if (msg.k === 'block') {
       const other = world.mp.others.get(from);
       if (!inRally(world)) return;
-      if (other && !other.dead && canBlock(world, other)) doBlock(world, other, false, from);
+      if (other && !other.dead && canBlock(world, other)) doBlock(world, other, false, from, msg.h);
       return;
     }
     if (typeof msg.s === 'number') picks(world).set(from, msg.s ? 1 : 0);
@@ -2509,6 +2622,8 @@ export default {
       cs: [...(b.armed ?? new Map()).entries()],
       cu: b.used ?? undefined,
       bf: b.ball.fire > 0 ? 1 : 0,
+      gh: b.ghost && b.ghost.t > 0 ? [Math.round(b.ghost.x), Math.round(b.ghost.y), Math.round(b.ghost.vx),
+                                      Math.round(b.ghost.vy), b.ghost.seq] : undefined,
     };
   },
 
