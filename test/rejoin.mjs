@@ -142,7 +142,7 @@ const inPlay = (world) => world.state === 'play' && !world.mp.waiting && !world.
 const state = (world) => `${world.state}${world.mp.waiting ? '·구경' : ''}${world.player.dead ? '·죽음' : ''}`;
 
 // 판 도중에 들어오면 **바로 끼는** 게임과, 다음 판까지 구경하는 게임(똥피하기 — 안 보이던 똥에 맞는다).
-const ANYTIME = ['volley', 'ball', 'omok', 'alk', 'yut', 'fence'];
+const ANYTIME = ['volley', 'ball', 'omok', 'alk', 'yut', 'fence', 'bumper'];
 const ALL = [...ANYTIME, 'dodge'];
 const wait = (r, test, max = 300) => { for (let i = 0; i < max && !test(); i++) r.advance(1); return test(); };
 
