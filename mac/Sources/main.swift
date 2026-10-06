@@ -374,6 +374,24 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         if index > (dict[gameId] ?? 0) { dict[gameId] = index; store.set(dict, forKey: progressKey) }
     }
 
+    /// 작은 설정 몇 개(배구 캐릭터 등). 이름(키)마다 글자 하나 — **덮어쓴다**(판 기록과 다르다).
+    private let prefsKey = "prefs"
+    private func loadPrefs() -> [String: String] {
+        guard let raw = store.dictionary(forKey: prefsKey) else { return [:] }
+        return raw.compactMapValues { $0 as? String }
+    }
+    private func prefsJSON() -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: loadPrefs()),
+              let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }
+    private func savePref(key: String, value: String) {
+        guard !key.isEmpty, key.count <= 40, value.count <= 200 else { return }
+        var dict = loadPrefs()
+        dict[key] = value
+        store.set(dict, forKey: prefsKey)
+    }
+
     // MARK: 시작
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -660,6 +678,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
         window.ddong = {
           debug: \(ProcessInfo.processInfo.environment["DDONG_DEBUG"] != nil),
           bot: \(ProcessInfo.processInfo.environment["DDONG_BOT"] != nil),
+          version: "\(Net.escape(appVersion))",
           best: { ms: \(bestMs), dodged: \(bestDodged) },
           saveBest: (b) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'best', ms: b.ms, dodged: b.dodged,
@@ -668,6 +687,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
           progress: \(progressJSON()),
           saveProgress: (gameId, index) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'progress', gameId, index,
+          }),
+          // 작은 설정(배구 캐릭터) — 앱을 껐다 켜도 남는다.
+          prefs: \(prefsJSON()),
+          savePref: (key, value) => window.webkit.messageHandlers.ddong.postMessage({
+            type: 'pref', key: String(key), value: String(value),
           }),
           log: (text) => window.webkit.messageHandlers.ddong.postMessage({
             type: 'log', text: String(text),
@@ -1875,6 +1899,10 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavi
             // 판을 깼다. 게임마다 제일 높은 판 번호만 남긴다 (올리기만).
             if let gameId = body["gameId"] as? String, let index = body["index"] as? Int {
                 saveProgress(gameId: gameId, index: index)
+            }
+        case "pref":
+            if let key = body["key"] as? String, let value = body["value"] as? String {
+                savePref(key: key, value: value)
             }
         default:
             break

@@ -8,7 +8,7 @@ const MAX_SPEED = 620;
 const CROUCH_SPEED = 230;
 const FRICTION = 4600;
 const AIR_CONTROL = 0.62;
-const JUMP_V = 480;
+export const JUMP_V = 480;
 const GRAVITY = 1760;
 const HALF_W = 9;
 
@@ -174,7 +174,7 @@ export function startSlide(world, dir) {
   p.slide = SLIDE_TIME;
   p.slideDir = dir || p.facing || 1;
   p.facing = p.slideDir;
-  p.vx = p.slideDir * SLIDE_SPEED;
+  p.vx = p.slideDir * SLIDE_SPEED * (p.runMul ?? 1);
   if (world.debug) world.log?.(`슬라이딩 f${String(world.shot ?? 0).padStart(5, '0')} ${p.slideDir > 0 ? '→' : '←'} x=${Math.round(p.x)}`);
   return true;
 }
@@ -289,7 +289,7 @@ function movePlayer(world, dt) {
   if (p.slide > 0) {
     // 미끄러지는 동안은 방향키도 점프도 안 듣는다. 던진 몸은 되돌릴 수 없다.
     p.slide -= dt;
-    p.vx = p.slideDir * SLIDE_SPEED * (SLIDE_END + (1 - SLIDE_END) * Math.max(0, p.slide / SLIDE_TIME));
+    p.vx = p.slideDir * SLIDE_SPEED * (p.runMul ?? 1) * (SLIDE_END + (1 - SLIDE_END) * Math.max(0, p.slide / SLIDE_TIME));
     p.x += p.vx * dt;
     const lo = HALF_W + 9;
     const hi = world.w - HALF_W - 9;
@@ -319,7 +319,8 @@ function movePlayer(world, dt) {
   // 게임마다 발이 다르다. 똥피하기는 피하는 게임이라 조금 느려야 손에 잡히고,
   // 배구는 넓은 코트를 지켜야 해서 그대로 둔다.
   const pace = gameOf(world).pace ?? 1;
-  let top = (MAX_SPEED - (MAX_SPEED - CROUCH_SPEED) * p.crouch) * pace;
+  // 사람마다 발이 다를 수 있다 (배구 캐릭터의 달리기·점프). 없으면 1 — 다른 게임은 그대로다.
+  let top = (MAX_SPEED - (MAX_SPEED - CROUCH_SPEED) * p.crouch) * pace * (p.runMul ?? 1);
   top *= Math.max(SQUEEZE_FLOOR, 1 - SQUEEZE_TOP * p.squeeze);
   // 잡은 쪽은 무겁고, 잡힌 쪽은 거의 못 간다.
   if (p.heldBy >= 0) top *= HELD_SPEED;
@@ -354,7 +355,7 @@ function movePlayer(world, dt) {
   gameOf(world).confine?.(world, p);
 
   if (input.jump && grounded && !getting && p.crouch < 0.3 && p.heldBy < 0) {
-    p.vy = JUMP_V * (gameOf(world).hop ?? 1);
+    p.vy = JUMP_V * (gameOf(world).hop ?? 1) * (p.jumpMul ?? 1);
     p.air = 0.01;
   }
   if (p.air > 0) {
@@ -506,6 +507,12 @@ function rootItems(world) {
     items.push({ id: 'team', into: 'team', label: '편 고르기',
                  note: game.teamNames[world.team ?? 0] });
   }
+  // 캐릭터 고르기 (배구). 편 고르기 바로 밑 — 둘 다 판에서 하는 일이다.
+  if (!home && game.cast) {
+    const now = game.castNow?.(world);
+    items.push({ id: 'cast', into: 'cast', label: '캐릭터',
+                 note: game.cast.find((c) => c.id === now)?.name ?? '' });
+  }
   items.push({
     id: 'together', into: 'together', label: '같이 하기',
     note: world.mp.on ? `방 ${world.mp.code ?? ''} · ${world.mp.others.size + 1}명` : '혼자 하는 중',
@@ -651,6 +658,13 @@ export function menuItems(world) {
         mark: side === (world.team ?? 0),
       }));
     }
+    case 'cast': {
+      const game = gameById(world.gameId);
+      const now = game.castNow?.(world);
+      // 지금 입은 것은 「지금」으로 적는다 (점 표시는 긴 스킬 이름과 겹친다).
+      return (game.cast ?? []).map((c) => ({ id: `cast:${c.id}`, label: c.name,
+                                             note: c.id === now ? `지금 · ${c.skill.name}` : c.skill.name }));
+    }
     case 'together': return togetherItems(world);
     // **같은 와이파이에 열려 있는 방들.** 코드를 받아 적지 않아도 골라서 들어간다.
     case 'together/rooms': {
@@ -792,6 +806,10 @@ function openMenu(world, open) {
 /// 한 겹 들어갈 때 처음 짚을 줄. 지금 쓰고 있는 값에 손가락을 올려 준다.
 function firstIndex(world, at) {
   if (at === 'team') return world.team ?? 0;
+  if (at === 'cast') {
+    const game = gameById(world.gameId);
+    return Math.max(0, (game.cast ?? []).findIndex((c) => c.id === game.castNow?.(world)));
+  }
   if (at === 'together/game') return Math.max(0, games.findIndex((g) => g.id === world.gameId));
   if (at === 'settings/size') {
     return Math.max(0, SIZES.findIndex(([v]) => Math.abs(v - (world.size ?? 1)) < 0.02));
@@ -823,7 +841,7 @@ export function menuBack(world) {
 
 /// 고르고도 메뉴를 열어 두는 것들. 바뀐 걸 눈으로 보고 다시 고를 수 있어야 한다 —
 /// 창이 그 모니터에 뜨는 걸 보고 아니다 싶으면 바로 다른 걸 고른다.
-const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:', 'peek:', 'bare:', 'capture:', 'kick:'];
+const STAYS = ['screen:', 'fade:', 'size:', 'spot:', 'team:', 'cast:', 'peek:', 'bare:', 'capture:', 'kick:'];
 
 function chooseMenu(world) {
   const items = menuItems(world);

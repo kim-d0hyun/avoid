@@ -694,6 +694,8 @@ export function roleChanged(world, role, code, myId, myName) {
   mp.round = 0;
   // 방에 매인 기록은 방이 바뀌면 지운다 — 배구의 세트 스코어.
   mp.volleySets = null;
+  // 배구 캐릭터 — 번호에 매인 것이라 방이 바뀌면 지운다 (내가 고른 것 mp.myCast 는 남는다).
+  mp.volleyCast = null; mp.volleyActive = null;
   mp.role = role;
   mp.code = code;
   mp.myId = myId;

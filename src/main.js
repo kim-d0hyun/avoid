@@ -17,6 +17,9 @@ const shell = window.ddong ?? {
   // 게임마다 열린 판. 셸이 없으면(브라우저·시험) 전부 0 — 처음부터 차례로만 연다.
   progress: {},
   saveProgress() {},
+  // 작은 설정 몇 개(배구 캐릭터)를 셸에 적어 둔다. 셸이 없으면(브라우저·시험) 안 남는다.
+  prefs: {},
+  savePref() {},
   onInput() {},
   onVisible() {},
   screens: [],
@@ -144,6 +147,11 @@ world.onMenu = (action) => {
     shell.setCapture?.(action.slice(8) === '1');
     return;
   }
+  // 캐릭터 고르기 (배구). 다음 점수부터 바뀐다.
+  if (action.startsWith('cast:')) {
+    gameOf(world).pickCast?.(world, shell, action.slice(5));
+    return;
+  }
   if (action.startsWith('team:')) {
     const game = gameOf(world);
     game.swap?.(world, shell, Number(action.slice(5)));
@@ -193,6 +201,12 @@ world.onGameOver = (result) => {
 };
 
 world.debug = !!shell.debug;
+// 셸에 적어 둔 설정 — 배구 캐릭터는 앱을 껐다 켜도 남는다.
+world.prefs = shell.prefs && typeof shell.prefs === 'object' ? shell.prefs : {};
+world.savePref = (key, value) => { world.prefs[key] = value; shell.savePref?.(key, value); };
+if (typeof world.prefs.volleyCast === 'string') world.mp.myCast = world.prefs.volleyCast;
+// 홈 화면 구석에 쓰는 지금 버전. 셸이 없으면(브라우저·시험) 비운다.
+world.version = typeof shell.version === 'string' ? shell.version : '';
 // 개발용. 판이 여럿인 게임을 특정 판에서 바로 열어 본다.
 if (shell.debug && typeof shell.stage === 'number' && shell.stage >= 0) window.__ddongStageAt = shell.stage;
 // 게임이 방장에게 직접 말을 걸어야 할 때 (배구에서 손님이 「내가 때렸다」고 알릴 때).

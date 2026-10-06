@@ -15,7 +15,9 @@
 import { INK, RED, PENCIL, stroke, circle, text, PAPER, paperScrap } from '../draw/ink.js';
 import { drawStickman } from '../draw/stickman.js';
 import { BODY_H, SWING_TIME, SWING_WHIP, TOSS_TIME, ARM_LEN, swingShoulder } from '../draw/stickman.js';
-import { startSlide, SLIDE_COOL } from '../game/world.js';
+import { startSlide, SLIDE_COOL, JUMP_V } from '../game/world.js';
+import { CAST, castOf, isCast, statsOf, GAUGE_FULL, WIN_GAIN, LOSE_GAIN, DEFAULT_CAST, STAT_NAMES } from './volley-cast.js';
+import { lookDecor } from '../draw/looks.js';
 
 // 편은 옷 색으로 가른다. 번호가 아니라 **보이는 것**으로 갈라야 한 눈에 읽힌다.
 //
@@ -323,6 +325,252 @@ function rosterSides(world) {
   return out;
 }
 
+// ── 캐릭터 (volley-cast.js) ──────────────────────────────────────────────
+//
+// 고른 것(picks)과 판에 선 것(active)을 따로 둔다. **고르는 건 언제든, 바뀌는 건 점수와 점수 사이**
+// (서브를 기다리는 동안 · 판 시작 전)다 — 랠리 중에 바꿔치기를 막는다. 둘 다 방(mp)에 둔다(편과 같은 까닭).
+// 기세(gauge)와 켜 둔 스킬(armed)은 판(bag)의 것이다. 방장이 정하고 꾸러미로 나눈다.
+const castPicks = (world) => (world.mp.volleyCast ??= new Map());
+const castActive = (world) => (world.mp.volleyActive ??= new Map());
+const myPick = (world) => (isCast(world.mp.myCast) ? world.mp.myCast : DEFAULT_CAST);
+function pickOf(world, id) {
+  return id === world.mp.myId ? myPick(world) : (castPicks(world).get(id) ?? DEFAULT_CAST);
+}
+function activeOf(world, id) { return castActive(world).get(id) ?? pickOf(world, id); }
+const bodyId = (world, p) => (p === world.player ? world.mp.myId : p.id);
+const gaugeOf = (world, id) => world.bag.gauge?.get(id) ?? 0;
+
+/// 방장 — 명단 사람마다 판에 설 캐릭터를 정한다. 점수와 점수 사이에만 갈아입는다.
+/// 갈아입으면 기세는 0 부터 (바꿔 가며 스킬을 쓰지 못하게).
+function syncCast(world) {
+  const b = world.bag;
+  const active = castActive(world);
+  b.gauge ??= new Map();
+  b.armed ??= new Map();
+  const ids = [...rosterSides(world).keys()];
+  const between = world.state !== 'play' || b.serving;
+  for (const id of ids) {
+    const want = pickOf(world, id);
+    if (!active.has(id)) { active.set(id, want); continue; }
+    if (between && active.get(id) !== want) {
+      active.set(id, want);
+      b.gauge.set(id, 0);
+      b.armed.delete(id);
+    }
+  }
+  for (const id of [...active.keys()]) if (!ids.includes(id)) active.delete(id);
+}
+
+/// 모두의 화면에서 — 사람마다 입은 캐릭터를 몸에 붙인다. 내 몸에는 달리기·점프 배율까지
+/// (내 몸은 내가 굴린다 — world.js movePlayer 가 runMul · jumpMul 을 읽는다).
+function wearCast(world) {
+  const me = world.player;
+  const mine = activeOf(world, world.mp.myId);
+  const st = statsOf(mine);
+  me.look = mine; me.runMul = st.run; me.jumpMul = st.jump; me.reachMul = st.reach;
+  if ((me.air ?? 0) <= 0) me.doubled = false;
+  for (const o of world.mp.others.values()) {
+    o.look = activeOf(world, o.id);
+    o.reachMul = statsOf(o.look).reach;
+  }
+}
+
+/// 점수가 났다 — 기세를 채운다. **지는 쪽이 더 빨리**: 내준 편은 LOSE_GAIN, 딴 편은 WIN_GAIN.
+/// 켜 두었던 스킬은 랠리가 끝났으니 사라진다.
+function chargeGauge(world, toSide) {
+  const b = world.bag;
+  b.gauge ??= new Map();
+  for (const [id, side] of rosterSides(world)) {
+    b.gauge.set(id, Math.min(GAUGE_FULL, gaugeOf(world, id) + (side === toSide ? WIN_GAIN : LOSE_GAIN)));
+  }
+  b.armed?.clear();
+}
+
+const DASH = 120;          // 번개 — 잔상 대시 거리
+const DOUBLE_JUMP = 0.8;   // 깡총 — 두 번째 점프 세기 (첫 점프의)
+const THUNDER = 1.35;      // 망치 — 벼락 세기
+const FIRE_TIME = 1.2;     // 벼락 공의 불꽃이 남는 시간 (몸·벽·바닥에 닿으면 꺼진다)
+const SKILL_INK = '#e2572b';
+
+/// 머리 위에 스킬 이름을 띄운다 (누구 화면에서나).
+function skillWord(world, p, word) {
+  if (!p) return;
+  addFx(world.bag, { k: 'miss', x: p.x, y: p.groundY - p.air - BODY_H - 22,
+                     t: 0, life: 0.9, word, tint: SKILL_INK });
+}
+
+/// 방장 — 그 사람의 기세를 쓴다. 켜 두는 스킬이면 켠다. 모두에게 알릴 한 줄(used)을 남긴다.
+function spendSkill(world, id) {
+  const b = world.bag;
+  const sk = castOf(activeOf(world, id)).skill;
+  if (gaugeOf(world, id) < GAUGE_FULL) return false;
+  if (sk.kind === 'arm' && b.armed?.has(id)) return false;
+  b.gauge.set(id, 0);
+  if (sk.kind === 'arm') (b.armed ??= new Map()).set(id, sk.id);
+  b.used = [((b.used?.[0] ?? 0) + 1) % 1000, id, sk.id];
+  return true;
+}
+
+/// ⌥C — 내 스킬. 두 번 뛰기·대시는 내 몸에 바로 걸고(내 몸은 내가 굴린다), 켜 두는 스킬은 방장이 켠다.
+function useSkill(world) {
+  const b = world.bag;
+  const p = world.player;
+  const id = world.mp.myId;
+  if (world.state !== 'play' || p.dead || world.mp.waiting || !b?.ball) return false;
+  const sk = castOf(activeOf(world, id)).skill;
+  const have = gaugeOf(world, id);
+  if (have < GAUGE_FULL) { missWord(world, p, `기세 ${have}/${GAUGE_FULL}`); return false; }
+  if (sk.kind === 'arm' && b.armed?.has(id)) return false;
+  if (sk.id === 'double') {
+    if ((p.air ?? 0) <= 0 || p.doubled) { missWord(world, p, '공중에서'); return false; }
+    p.vy = JUMP_V * (p.jumpMul ?? 1) * DOUBLE_JUMP;
+    p.doubled = true;
+    addFx(b, { k: 'puff', x: p.x, y: p.groundY - p.air + 2, t: 0, life: 0.45 });
+  } else if (sk.id === 'dash') {
+    const held = (world.input.right ? 1 : 0) - (world.input.left ? 1 : 0);
+    const dir = held || p.facing || 1;
+    const from = p.x;
+    p.x = Math.max(20, Math.min(world.w - 20, p.x + dir * DASH));
+    confineBody(world, p);
+    p.facing = dir;
+    addFx(b, { k: 'dash', x: from, x2: p.x, y: p.groundY - p.air, air: p.air, t: 0, life: 0.35 });
+  }
+  if (world.mp.role === 'guest') {
+    world.send?.({ t: 'gm', k: 'skill' });
+    // 꾸러미가 올 때까지 내 화면에서는 쓴 것으로 둔다 (안 그러면 칸이 다시 찼다 비는 게 보인다).
+    b.gauge.set(id, 0);
+    if (sk.kind === 'arm') (b.armed ??= new Map()).set(id, sk.id);
+    b.spentAt = world.elapsed;
+  } else if (!spendSkill(world, id)) return false;
+  skillWord(world, p, sk.name);
+  if (world.mp.role !== 'guest') b.seenUse = b.used?.[0];
+  return true;
+}
+
+/// 두부 — 말랑 받기. 공을 **그 사람이 네트 앞에서 뛰어 때리기 좋은 자리**로 올린다.
+/// 실제 토스처럼 높이 띄워(꼭대기는 때리는 자리보다 SET_OVER 위) 그 자리로 **떨어지게** 한다 —
+/// 때리는 자리로 곧장 쏘면 빠르고 낮아서 아무도 따라가 못 뛴다.
+/// 공기 저항이 있어 포물선 셈이 안 맞으니(flies 와 같은 까닭), 날려 보고 고치기를 몇 번 한다.
+const SET_OVER = 120;
+function softSet(world, ball, side, id) {
+  const netX = world.w / 2;
+  const st = statsOf(activeOf(world, id));
+  const toward = side === 0 ? 1 : -1;                    // 네트 쪽
+  const hitX = netX - toward * 72;
+  const hitY = world.groundY - st.jumpH - BODY_H * 0.86 - 6;
+  const ty = Math.min(hitY - SET_OVER, ball.y - 60);       // 꼭대기 높이
+  const rise = ball.y - ty;
+  let vy = -Math.sqrt(2 * GRAVITY * rise);
+  let vx = (hitX - ball.x) / (-2 * vy / GRAVITY);
+  // 날려 보고 고친다 — 꼭대기 높이는 vy 로, **내려오며 손끝 높이를 지나는 자리**는 vx 로.
+  for (let n = 0; n < 8; n++) {
+    let x = ball.x, y = ball.y, u = vx, v = vy, top = y, cross = null;
+    const dt = 1 / 240;
+    for (let i = 0; i < 2400 && cross === null; i++) {
+      v += GRAVITY * dt;
+      const sp = Math.hypot(u, v);
+      const lose = Math.min(0.5, DRAG * sp * dt);
+      u -= u * lose; v -= v * lose;
+      x += u * dt; y += v * dt;
+      top = Math.min(top, y);
+      if (v > 0 && y >= hitY) cross = x;
+    }
+    const got = ball.y - top;
+    if (got > 1) vy *= Math.sqrt(rise / got);
+    if (cross !== null && Math.abs(cross - ball.x) > 1) vx *= (hitX - ball.x) / (cross - ball.x);
+    vx = clamp(vx, MAX_SPEED * 0.6);
+  }
+  cool(ball);
+  ball.vx = vx; ball.vy = vy;
+  ball.spinV = clamp(vx * 0.004, 6);
+  ball.pace = 0;
+}
+
+/// 문어 — 건지기. 내 코트 바닥에 닿기 직전 공을 한 번 저절로 건져 올린다. 방장만.
+function rescue(world, ball) {
+  const b = world.bag;
+  if (!b.armed?.size) return false;
+  const netX = world.w / 2;
+  const side = ball.x < netX ? 0 : 1;
+  for (const [id, s] of rosterSides(world)) {
+    if (s !== side || b.armed.get(id) !== 'rescue') continue;
+    b.armed.delete(id);
+    cool(ball);
+    ball.y = world.groundY - BALL_R - 2;
+    ball.vy = -MAX_UP * 0.92;
+    const center = side === 0 ? netX * 0.55 : netX * 1.45;
+    ball.vx = clamp((center - ball.x) * 0.6, 320);
+    ball.hit = 1; ball.hitX = ball.x; ball.hitY = ball.y;
+    spawnDig(world, ball.x, ball.y);
+    netEvent(world, [2, Math.round(ball.x), Math.round(ball.y), 0]);
+    const who = id === world.mp.myId ? world.player : world.mp.others.get(id);
+    skillWord(world, who, '건졌다!');
+    b.used = [((b.used?.[0] ?? 0) + 1) % 1000, id, 'rescued'];
+    b.seenUse = b.used[0];
+    return true;
+  }
+  return false;
+}
+
+/// 손님 — 방장이 보낸 캐릭터 꾸러미를 받는다.
+function unpackCast(world, d) {
+  const b = world.bag;
+  const me = world.mp.myId;
+  const pairs = (v, ok) => (Array.isArray(v)
+    ? v.filter((r) => Array.isArray(r) && r.length === 2 && Number.isFinite(r[0]) && ok(r[1])) : null);
+  const cp = pairs(d?.cp, isCast);
+  if (cp) {
+    const m = castPicks(world);
+    m.clear();
+    for (const [id, c] of cp) if (id !== me) m.set(id, c);
+    // 방장이 아는 내 캐릭터가 내가 고른 것과 다르다 — 들어오기 전에 골랐거나 말이 샜다. 다시 알린다.
+    const told = cp.find(([id]) => id === me)?.[1];
+    if (told && told !== myPick(world) && (world.elapsed ?? 0) - (b.toldAt ?? -9) > 1) {
+      b.toldAt = world.elapsed ?? 0;
+      world.send?.({ t: 'gm', c: myPick(world) });
+    }
+  }
+  const ca = pairs(d?.ca, isCast);
+  if (ca) { const m = castActive(world); m.clear(); for (const [id, c] of ca) m.set(id, c); }
+  // 방금 내가 쓴 스킬은 꾸러미가 따라올 때까지 내 화면 값을 둔다 (칸이 다시 찼다 비는 깜박임).
+  const fresh = (world.elapsed ?? 0) - (b.spentAt ?? -9) < 0.6;
+  const cg = pairs(d?.cg, Number.isFinite);
+  if (cg) {
+    const mine = b.gauge?.get(me);
+    b.gauge = new Map(cg.map(([id, v]) => [id, Math.max(0, Math.min(GAUGE_FULL, v | 0))]));
+    if (fresh) b.gauge.set(me, mine ?? 0);
+  }
+  const cs = pairs(d?.cs, (v) => typeof v === 'string');
+  if (cs) {
+    const mine = b.armed?.get(me);
+    b.armed = new Map(cs);
+    if (fresh && mine) b.armed.set(me, mine);
+  }
+  if (Array.isArray(d?.cu) && d.cu.length === 3 && Number.isFinite(d.cu[0]) && d.cu[0] !== b.seenUse) {
+    const first = b.seenUse === undefined;
+    b.seenUse = d.cu[0];
+    const id = d.cu[1];
+    if (!first && id !== me) {
+      const who = world.mp.others.get(id);
+      skillWord(world, who, d.cu[2] === 'rescued' ? '건졌다!' : castOf(activeOf(world, id)).skill.name);
+    }
+  }
+  if (b.ball) b.ball.fire = d?.bf ? FIRE_TIME : 0;
+}
+
+/// 캐릭터를 고른다 — 내 화면에서 먼저, 방장에게 알리고, 다음에도 쓰게 셸에 적어 둔다.
+function pickCast(world, shell, id) {
+  if (!isCast(id)) return;
+  world.mp.myCast = id;
+  (world.savePref ?? shell?.savePref)?.('volleyCast', id);
+  if (world.mp.role === 'guest') (shell?.net?.send ?? world.send)?.({ t: 'gm', c: id });
+  else castPicks(world).set(world.mp.myId, id);
+  const b = world.bag;
+  if (b && world.state === 'play' && !b.serving && activeOf(world, world.mp.myId) !== id) {
+    missWord(world, world.player, `다음 점수부터 ${castOf(id).name}`);
+  }
+}
+
 /// 지금 살아 있는 사람들을 편 별로 모은다. 이름표에 쓸 이름까지 같이.
 export function teams(world) {
   const rows = [[], []];
@@ -431,7 +679,7 @@ const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 /// 달아오른 강타를 식힌다. 몸·벽·네트·바닥·서브 — 무엇이든 한 번 닿으면 보통 공이다.
 function cool(ball) {
-  ball.hot = 0; ball.ace = false; ball.topspin = false; ball.dip = false; ball.pace = 0;
+  ball.hot = 0; ball.ace = false; ball.topspin = false; ball.dip = false; ball.pace = 0; ball.fire = 0;
 }
 
 /// 공이 사람 몸에 닿았나. 몸은 세로로 긴 알약이라 가로·세로를 따로 본다.
@@ -440,7 +688,8 @@ function touches(ball, p) {
   // 미끄러지는 몸은 낮고 길다. 그래서 서서 못 받는 공을 받는다 — 그게 슬라이딩의 값이다.
   const sliding = (p.slide ?? 0) > 0;
   const top = feet - BODY_H * (sliding ? 0.42 : (1 - 0.44 * p.crouch));
-  const half = sliding ? 42 : 11;
+  // 받기 능력치(reachMul) — 팔이 긴 사람은 몸으로 받는 폭도 넓다.
+  const half = (sliding ? 42 : 11) * (p.reachMul ?? 1);
   const cx = Math.max(p.x - half, Math.min(ball.x, p.x + half));
   const cy = Math.max(top, Math.min(ball.y, feet));
   const dx = ball.x - cx;
@@ -478,7 +727,8 @@ function bounceOff(ball, p) {
 function inReach(ball, at) {
   const dx = ball.x - at.x;
   const dy = ball.y - (at.groundY - at.air - BODY_H * 0.7);
-  return dx * dx + dy * dy <= SPIKE_REACH * SPIKE_REACH;
+  const reach = SPIKE_REACH * (at.reach ?? 1);      // 받기 능력치
+  return dx * dx + dy * dy <= reach * reach;
 }
 
 /// 공이 내 코트 쪽인가 — **네트 너머의 공은 못 친다** (넘어가서 손을 대는 건 블로킹뿐).
@@ -557,6 +807,8 @@ function applyHit(world, at, want, body = null, who = -1) {
 
   const away = at.side === 1 ? -1 : 1;             // 상대 코트 쪽
   const held = want.held | 0;
+  // 켜 둔 스킬 (방장만 안다 — 손님 화면의 미리 보기는 보통 타격으로 그린다)
+  const armed = world.mp.role !== 'guest' && who >= 0 ? b.armed?.get(who) : null;
   let vx;
   let vy;
   let kind = 0;
@@ -612,8 +864,10 @@ function applyHit(world, at, want, body = null, who = -1) {
     dip = !lob && deep > 0;
     // 정타 — 꼭대기에서, 손끝으로.
     ace = !lob && at.air >= APEX_AIR && inSweet(ball, at);
-    const power = ace ? ACE_POWER : 1;
-    const cap = ace ? ACE_CAP : MAX_SPEED;
+    // 스파이크 능력치(at.power) · 벼락(망치 스킬). 상한도 같은 배로 — 안 그러면 센 사람이 상한에 막혀 같아진다.
+    const bolt = armed === 'thunder' && !lob ? THUNDER : 1;
+    const power = (ace ? ACE_POWER : 1) * (at.power ?? 1) * bolt;
+    const cap = (ace ? ACE_CAP : MAX_SPEED) * (at.power ?? 1) * bolt;
     const side = held !== 0 ? held : away;
     // 가파르게 꽂을수록 가로로는 덜 간다. 힘의 총량은 그대로 두고 방향만 아래로 돌린다.
     flat = Math.min(cap, (held !== 0 ? SMASH_SIDE : SMASH_FLAT) * lift * power);
@@ -690,9 +944,12 @@ function applyHit(world, at, want, body = null, who = -1) {
       // 드롭 공에 남아 있던 「빨리 가는 페인트」 배율을 지운다. 안 지우면 드롭을 받아 바로 때린 강타가
       // 중력 2.25배로 떨어져 63% 가 제 코트로 갔다 (몸·벽에 닿아야만 지워졌다).
       ball.pace = 0;
+      if (armed === 'thunder' && !lob) { b.armed.delete(who); ball.fire = FIRE_TIME; }
     } else {
       cool(ball);
       if (kind === 3) ball.pace = TIP_PACE;
+      // 두부 — 말랑 받기. 땅에서 받아 올린 공이면 때리기 좋은 자리로.
+      if (armed === 'set' && kind === 0) { b.armed.delete(who); softSet(world, ball, at.side, who); }
     }
     // 친 사람 몸은 잠깐 공을 안 받는다 (SELF_SKIP).
     ball.skip = body; ball.skipT = body ? SELF_SKIP : 0;
@@ -891,7 +1148,8 @@ function attempt(world, want, first) {
   }
   const b = world.bag;
   const p = world.player;
-  const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0 };
+  const st = statsOf(activeOf(world, world.mp.myId));
+  const at = { x: p.x, air: p.air, groundY: p.groundY, side: world.team ?? 0, reach: st.reach, power: st.spike };
 
   // ① 지금 누가 치는 중인가 (히트스톱). 여기서 버리면 랠리 중에 입력이 한 번씩 씹힌다 —
   //    **버리지 말고 기억했다가** 풀리는 프레임에 대신 친다.
@@ -963,8 +1221,9 @@ function doBlock(world, p, mine, who) {
 /// **판을 멈추고 메뉴를 여는 사람은 없다.** 그래서 대부분은 「달리고 때리기」만 하다 끝난다.
 /// 서브를 올리는 동안에는 서브 두 줄만 — 그때 쓸 수 없는 기술을 적어 두면 읽을 까닭이 없다.
 export const KEY_ROWS = [
-  ['⌥ ← →', '달리기'],
-  ['⌥ ↑', '점프'],
+  // 달리기·점프는 한 줄로 — 스킬 줄을 넣으려고 (종이 쪽지는 여덟 줄까지).
+  ['⌥ ← → / ↑', '달리기 / 점프'],
+  ['⌥ C', '캐릭터 스킬 — 발밑 기세 4칸이 차면'],
   ['⌥ Space', '때리기 · 공중이면 강타'],
   ['⌥ Space + ← →', '그쪽으로 세게 · 깊게'],
   // 위는 얹기, 아래는 꽂기. 한 줄에 같이 적는다 — 종이 쪽지는 여덟 줄까지만 들어간다.
@@ -1156,7 +1415,10 @@ function guestHit(world, from, at, want) {
     (b.guestHold ??= new Map()).set(from, { at, want, t: BUFFER });
     return null;
   }
-  const ok = applyHit(world, { x: other.x, air: other.air, groundY: world.groundY, side: gside },
+  // 능력치는 손님이 보낸 값이 아니라 **방장이 아는 그 사람 캐릭터**로 — 남의 화면 값을 믿지 않는다.
+  const gst = statsOf(activeOf(world, from));
+  const ok = applyHit(world, { x: other.x, air: other.air, groundY: world.groundY, side: gside,
+                               reach: gst.reach, power: gst.spike },
                       want, other, from);
   if (ok) startSwing(other, ok);
   world.debug && world.log?.(`손님타격 ${from} ${ok ? '먹힘' : '안닿음'}`);
@@ -1250,6 +1512,31 @@ function drawFx(ctx, b, upright, front) {
       upright(f.x, y, () => text(ctx, f.word, f.x, y, {
         font: `900 ${size}px ${HAN}`, color, align: 'center', halo: 4, alpha: Math.min(1, fade * 1.8),
       }));
+      continue;
+    }
+    // 스킬 자국 — 두 번 뛰기의 발밑 구름, 대시의 잔상.
+    if (f.k === 'puff') {
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        circle(ctx, f.x + Math.cos(a) * (8 + 10 * g), f.y + Math.sin(a) * (3 + 3 * g), 3.5 + 2 * g,
+               { width: 1.4, color: PENCIL, seed: 30 + i, amp: 0.3, halo: false, alpha: fade });
+      }
+      continue;
+    }
+    if (f.k === 'dash') {
+      for (let i = 0; i < 3; i++) {
+        const gx = f.x + (f.x2 - f.x) * (i / 3);
+        const feet = f.y;
+        ctx.globalAlpha = 0.35 * fade * (0.5 + i / 4);
+        circle(ctx, gx, feet - 70, 9.5, { width: 3, color: PENCIL, seed: 40 + i, amp: 0.5, halo: false, alpha: 0.35 * fade });
+        stroke(ctx, [[gx, feet - 60], [gx, feet - 29], [gx - 6, feet], [gx, feet - 29], [gx + 6, feet]],
+               { width: 3, color: PENCIL, seed: 44 + i, amp: 0.5, halo: false, alpha: 0.35 * fade });
+        ctx.globalAlpha = 1;
+      }
+      for (let i = 0; i < 3; i++) {
+        stroke(ctx, [[f.x, f.y - 30 - i * 12], [f.x2 - Math.sign(f.x2 - f.x) * 14, f.y - 30 - i * 12]],
+               { width: 1.6, color: '#d9a21b', seed: 50 + i, amp: 0.3, halo: false, alpha: 0.8 * fade });
+      }
       continue;
     }
     upright(f.x, f.y, () => {
@@ -1479,8 +1766,96 @@ function point(world, toSide) {
   const b = world.bag;
   b.score[toSide]++;
   b.lastPoint = { side: toSide, at: world.elapsed };
+  chargeGauge(world, toSide);
   serve(world, 1 - toSide);                        // 진 쪽에서 다시 올린다 (공을 치운다)
   if (matchOver(b.score)) finish(world, b);        // 끝은 **그 자리에서** 본다
+}
+
+/// **네트는 못 넘는다.** 이게 팀전을 팀전으로 만든다 — 넘어 다닐 수 있으면 편이
+/// 이름뿐이고, 결국 다 같이 공 하나를 쫓는 게임이 된다. 언제나 자기 구역 안이다.
+/// (번개의 대시도 여기에 걸린다 — 순간이동으로 네트를 못 넘는다.)
+function confineBody(world, p) {
+  if (world.mp.waiting) return;      // 관전 중에는 아무 데나 서 있어도 된다
+  const side = world.team ?? 0;
+  const half = world.w / 2;
+  if (side === 0 && p.x > half - NET_GAP) { p.x = half - NET_GAP; p.vx = Math.min(0, p.vx); }
+  if (side === 1 && p.x < half + NET_GAP) { p.x = half + NET_GAP; p.vx = Math.max(0, p.vx); }
+  // 서브를 올릴 차례면 **뒤쪽 절반 안에서만** 선다. 공이 내 자리를 따라오므로
+  // 이게 곧 서브 조준의 범위다 — 네트 코앞에서 넣는 서브는 없다.
+  if (myServe(world)) {
+    const line = serveLine(world, side);
+    if (side === 0 && p.x > line) { p.x = line; p.vx = Math.min(0, p.vx); }
+    if (side === 1 && p.x < line) { p.x = line; p.vx = Math.max(0, p.vx); }
+  }
+}
+
+/// 캐릭터 표시 — 발밑 기세 칸, 켜 둔 스킬 테두리, 「다음 점수부터 ○○」.
+function drawCastMarks(ctx, world, upright, time) {
+  const b = world.bag;
+  if (world.state !== 'play') return;
+  const rows = [[world.player, world.mp.myId], ...[...world.mp.others.values()].map((o) => [o, o.id])];
+  for (const [p, id] of rows) {
+    if (!p || p.dead || p.waiting || (p === world.player && world.mp.waiting)) continue;
+    const g = gaugeOf(world, id);
+    const full = g >= GAUGE_FULL;
+    const blink = full ? 0.55 + 0.45 * Math.sin(time * 9) : 1;
+    const gy = world.groundY + 7;
+    for (let k = 0; k < GAUGE_FULL; k++) {
+      ctx.globalAlpha = (k < g ? (full ? blink : 0.9) : 0.35);
+      ctx.fillStyle = k < g ? (full ? SKILL_INK : INK) : PENCIL;
+      ctx.fillRect(p.x - 17 + k * 9, gy, 7, 4);
+    }
+    ctx.globalAlpha = 1;
+    if (full && p === world.player && !b.armed?.has(id)) {
+      text(ctx, '⌥C', p.x + 22, gy + 5, { font: `700 10px ${HAN}`, color: SKILL_INK, halo: 2, alpha: blink });
+    }
+    // 켜 둔 스킬 — 몸 둘레 점선. 상대도 보고 대비한다.
+    if (b.armed?.has(id)) {
+      const cy = p.groundY - p.air - BODY_H * 0.5;
+      ctx.save();
+      ctx.setLineDash([5, 4]); ctx.lineDashOffset = -time * 30;
+      ctx.strokeStyle = SKILL_INK; ctx.globalAlpha = 0.7; ctx.lineWidth = 2.6;
+      ctx.beginPath(); ctx.ellipse(p.x, cy, 25, BODY_H * 0.62, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+    // 골랐지만 아직 안 갈아입었다 (점수와 점수 사이에 바뀐다).
+    const pick = pickOf(world, id);
+    if (pick !== activeOf(world, id)) {
+      upright(p.x, p.groundY, () => text(ctx, `다음 점수부터 ${castOf(pick).name}`, p.x, p.groundY - p.air - BODY_H - 36,
+        { font: `700 11px ${HAN}`, color: PENCIL, align: 'center', halo: 3 }));
+    }
+  }
+}
+
+/// 메뉴 「캐릭터」 옆에 펴는 카드 — 고르는 중인 캐릭터의 모습 · 한 줄 · 능력치 · 스킬.
+function drawCastCard(ctx, world, id, x, y, h) {
+  const c = castOf(id);
+  const w = 240;
+  paperScrap(ctx, x, y, w, h, 29);
+  stroke(ctx, [[x + 8, y + 8], [x + w - 8, y + 8], [x + w - 8, y + h - 8], [x + 8, y + h - 8]],
+         { width: 1.6, color: INK, seed: 31, amp: 1.1, close: true, sharp: true, halo: false });
+  // 모습 — 내 편 옷을 입혀 크게
+  const side = world.team ?? 0;
+  const fx = x + w / 2, fy = y + 128;
+  ctx.save();
+  ctx.translate(fx, fy); ctx.scale(1.35, 1.35); ctx.translate(-fx, -fy);
+  drawStickman(ctx, { x: fx, groundY: fy, air: 0, vx: 0, vy: 0, crouch: 0, facing: side === 0 ? 1 : -1,
+                      walk: 0, dead: false, swing: 0, toss: 0, block: 0, slide: 0 },
+               0, 13, { spike: true, color: TEAM_INK[side], decor: lookDecor(c.id), arms: c.arms });
+  ctx.restore();
+  stroke(ctx, [[x + 40, fy + 1], [x + w - 40, fy + 1]], { width: 1.6, color: INK, seed: 33, amp: 0.5, halo: false });
+  text(ctx, c.name, fx, fy + 30, { font: `800 20px ${HAN}`, color: INK, align: 'center', halo: 0 });
+  text(ctx, c.line, fx, fy + 49, { font: `600 10.5px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
+  Object.keys(STAT_NAMES).forEach((k, i) => {
+    const sx = x + 26 + (i % 2) * 106, sy = fy + 76 + Math.floor(i / 2) * 18;
+    text(ctx, STAT_NAMES[k], sx, sy, { font: `700 10px ${HAN}`, color: INK, halo: 0 });
+    for (let n = 0; n < 5; n++) {
+      circle(ctx, sx + 46 + n * 10, sy - 4, 3.2, { width: 1.3, color: INK, fill: n < c.st[k] ? INK : null,
+                                                   halo: false, seed: 80 + n + i * 5, amp: 0.25 });
+    }
+  });
+  text(ctx, `⌥C  ${c.skill.name}`, fx, fy + 126, { font: `800 12px ${HAN}`, color: SKILL_INK, align: 'center', halo: 0 });
+  text(ctx, c.skill.line, fx, fy + 143, { font: `600 10px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
 }
 
 export default {
@@ -1497,7 +1872,9 @@ export default {
          ['⌥ X + 상대 쪽 방향키', '긴 드롭 — 같은 동작으로 뒤쪽 깊숙이. 앞으로 붙은 수비 머리 위로'],
          ['⌥ ↓ (땅)', '디그 — 웅크려 받으면 높고 곧게 뜬다'],
          ['⌥ Space (네트 앞 공중)', '블로킹 — 손을 넘겨 벽을 세운다'],
-         ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 쪽으로, 머리 위 막대가 차면']],
+         ['⌥ Space (멀 때)', '슬라이딩 — ⌥←→ 쪽으로, 머리 위 막대가 차면'],
+         ['⌥ C', '캐릭터 스킬 — 발밑 기세 4칸이 차면 (점수를 내주면 2칸, 따면 1칸)'],
+         ['⌥ M → 캐릭터', '두부·깡총·망치·번개·문어 — 다음 점수부터 바뀐다']],
   tally: (world) => `${world.bag?.score?.[0] ?? 0} : ${world.bag?.score?.[1] ?? 0}`,
   /// 배구는 몸으로 공을 맞히는 게임이라 서로 붙잡으면 아무것도 안 된다.
   noGrab: true,
@@ -1581,30 +1958,31 @@ export default {
   tap: () => {},
   /// ⌥X — 드롭. ⌥X 만이면 네트 바로 너머로 짧게, 상대 쪽 방향키를 같이 잡으면 코트 뒤쪽으로 길게.
   drop: (world) => { if (!world.bag.serving) tipHit(world); },
+  /// ⌥C — 캐릭터 스킬 (기세가 다 차면).
+  guard: (world) => { useSkill(world); },
 
 
   /// 사람 그리는 법. 졸라맨 그대로인데 **치는 모션 스위치만 켠다.** 졸라맨은 다른 게임도
   /// 쓰니 p.swing·p.toss·p.cock 을 아무나 읽게 두면, 휘두르던 사람이 판을 갈아 끼운 뒤
   /// 다음 게임에서 그 자세로 굳는다. 켜고 끄는 자리를 여기 하나로 둔다.
-  figure: (ctx, p, time, seed, opts = {}) => drawStickman(ctx, p, time, seed, { ...opts, spike: true }),
+  figure: (ctx, p, time, seed, opts = {}) => drawStickman(ctx, p, time, seed, {
+    ...opts, spike: true,
+    // 캐릭터 생김새 — 머리 모양·소품·몸집(looks.js), 문어는 팔이 길다.
+    decor: p.look ? lookDecor(p.look) : undefined,
+    arms: p.look ? castOf(p.look).arms : undefined,
+  }),
 
   /// **네트는 못 넘는다.** 이게 팀전을 팀전으로 만든다 — 넘어 다닐 수 있으면 편이
   /// 이름뿐이고, 결국 다 같이 공 하나를 쫓는 게임이 된다. 언제나 자기 구역 안이다.
   /// 편을 바꾸려면 ⌥M → 편 바꾸기.
-  confine(world, p) {
-    if (world.mp.waiting) return;      // 관전 중에는 아무 데나 서 있어도 된다
-    const side = world.team ?? 0;
-    const half = world.w / 2;
-    if (side === 0 && p.x > half - NET_GAP) { p.x = half - NET_GAP; p.vx = Math.min(0, p.vx); }
-    if (side === 1 && p.x < half + NET_GAP) { p.x = half + NET_GAP; p.vx = Math.max(0, p.vx); }
-    // 서브를 올릴 차례면 **뒤쪽 절반 안에서만** 선다. 공이 내 자리를 따라오므로
-    // 이게 곧 서브 조준의 범위다 — 네트 코앞에서 넣는 서브는 없다.
-    if (myServe(world)) {
-      const line = serveLine(world, side);
-      if (side === 0 && p.x > line) { p.x = line; p.vx = Math.min(0, p.vx); }
-      if (side === 1 && p.x < line) { p.x = line; p.vx = Math.max(0, p.vx); }
-    }
-  },
+  confine(world, p) { confineBody(world, p); },
+
+  /// 캐릭터 — 다섯 명(volley-cast.js). 이게 있으면 메뉴에 「캐릭터」가 생긴다.
+  cast: CAST,
+  castNow: (world) => myPick(world),
+  pickCast,
+  castCard: (ctx, world, id, x, y, h) => drawCastCard(ctx, world, id, x, y, h),
+
 
   /// 자기 코트에 선다. 편을 아직 안 정했으면 번호 순으로 갈라 반씩 나눠 갖는다.
   stand(world, slot) {
@@ -1668,6 +2046,9 @@ export default {
     // 자국·팔 동작·파편은 **판이 도는 것과 상관없이** 사그라든다. 서브를 기다리는 동안에도,
     // 판이 끝난 뒤에도 돈다 — 안 그러면 마지막 점수를 낸 강타의 먼지와 「쿵!」이 끝난 판 위에
     // 얼어붙은 채로 우승 화면까지 따라온다.
+    // 캐릭터 — 방장이 누가 무엇을 입었는지 정하고, 모두가 몸에 붙인다.
+    if (world.mp.role !== 'guest') syncCast(world);
+    wearCast(world);
     visuals(world, b, dt);
     arms(world, b, dt);
     setsOf(world);                    // 편이 바뀌었으면 세트 스코어를 0:0 으로
@@ -1760,6 +2141,7 @@ export default {
     // 친 사람 몸은 잠깐 공을 안 받는다 (SELF_SKIP).
     ball.skipT = Math.max(0, (ball.skipT ?? 0) - dt);
     if (ball.skipT <= 0) ball.skip = null;
+    if (ball.fire > 0) ball.fire = Math.max(0, ball.fire - dt);
     // 달아오른 시간이 다 되면 그냥 공이다.
     if (ball.hot > 0) {
       ball.hot = Math.max(0, ball.hot - dt);
@@ -1849,6 +2231,9 @@ export default {
       // **디그** — 웅크린 채 받으면 높고 곧게 세워 올린다. 세게 온 공을 받아 냈어도 마찬가지다.
       const dug = bounceOff(ball, p);
       if (dug || hot) spawnDig(world, ball.x, ball.y);
+      // 두부 — 말랑 받기를 켠 채 몸으로 받았다.
+      const bid = bodyId(world, p);
+      if (b.armed?.get(bid) === 'set') { b.armed.delete(bid); softSet(world, ball, sideOfX(world, p.x), bid); }
       break;
     }
 
@@ -1856,6 +2241,8 @@ export default {
     if (ball.y + BALL_R >= world.groundY) {
       ball.hit = 1; ball.hitX = ball.x; ball.hitY = world.groundY - BALL_R * 0.3;
       // 달아오른 채 꽂혔다. 먼지가 양옆으로 일고 바닥에 금이 간다 — 점수보다 이게 먼저 보인다.
+      // 문어 — 건지기를 켜 두었으면 바닥 직전에 한 번 건진다.
+      if (rescue(world, ball)) return;
       if (ball.hot > 0) spawnSlam(world, ball.x, ball.ace);
       point(world, ball.x < netX ? 1 : 0);
       return;
@@ -1889,10 +2276,13 @@ export default {
     stroke(ctx, [[netX - half - 4, netTop], [netX + half + 4, netTop]], { width: 4.2, color: INK, seed: 62, amp: 0.8 });   // 윗줄(테이프)
 
     // 지나온 자리. 뒤로 갈수록 옅어지고 작아진다.
+    // 벼락(망치) 맞은 공은 지나온 자리가 불꽃이다.
+    const fire = b.ball.fire > 0;
     (b.tail ?? []).forEach(([tx, ty], i) => {
       const k = (i + 1) / TRAIL;
-      upright(tx, ty, () => circle(ctx, tx, ty, BALL_R * (0.3 + 0.6 * k), {
-        width: 1.6, color: PENCIL, seed: 70 + i, amp: 0.4, halo: false, alpha: 0.30 * k,
+      upright(tx, ty, () => circle(ctx, tx, ty, BALL_R * (fire ? 0.45 + 0.5 * k : 0.3 + 0.6 * k), {
+        width: 1.6, color: fire ? SKILL_INK : PENCIL, seed: 70 + i, amp: 0.4, halo: false,
+        alpha: (fire ? 0.75 : 0.30) * k, fill: fire ? (i % 2 ? '#f1a03a' : '#f7d36b') : null,
       }));
     });
 
@@ -1921,6 +2311,8 @@ export default {
 
     // 발밑 고리는 제일 밑에 — 사람과 공이 그 위에 온다.
     drawApexRing(ctx, world, upright);
+    // 캐릭터 — 발밑 기세 칸 · 켜 둔 스킬 테두리 · 「다음 점수부터」
+    drawCastMarks(ctx, world, upright, time);
 
     // 타격 자국 — 고리·파편·먼지·금은 공 뒤에 깔린다.
     drawFx(ctx, b, upright, false);
@@ -2059,6 +2451,13 @@ export default {
       return;
     }
     if (typeof msg.s === 'number') picks(world).set(from, msg.s ? 1 : 0);
+    // 캐릭터를 골랐다 / 스킬을 썼다
+    if (typeof msg.c === 'string' && isCast(msg.c)) castPicks(world).set(from, msg.c);
+    if (msg.k === 'skill' && world.state === 'play' && spendSkill(world, from)) {
+      const other = world.mp.others.get(from);
+      skillWord(world, other, castOf(activeOf(world, from)).skill.name);
+      world.bag.seenUse = world.bag.used?.[0];
+    }
   },
 
   /// 편을 고른다. 내 화면에서 먼저 옮기고 방장에게 알린다 —
@@ -2103,6 +2502,13 @@ export default {
       mc: b.mustCross === 0 || b.mustCross === 1 ? b.mustCross : -1,
       // 세트 스코어 — 이 방에서 몇 판을 이겼나.
       ss: setsOf(world)?.score ?? undefined,
+      // 캐릭터 — 고른 것 · 판에 선 것 · 기세 · 켜 둔 스킬 · 방금 쓴 스킬 [번호, 누구, 무엇] · 벼락 불꽃
+      cp: [...rosterSides(world).keys()].map((id) => [id, pickOf(world, id)]),
+      ca: [...castActive(world).entries()],
+      cg: [...(b.gauge ?? new Map()).entries()],
+      cs: [...(b.armed ?? new Map()).entries()],
+      cu: b.used ?? undefined,
+      bf: b.ball.fire > 0 ? 1 : 0,
     };
   },
 
@@ -2164,6 +2570,7 @@ export default {
         if (mine === 1 && world.player.x < half) world.player.x = half * 1.4;
       }
     }
+    unpackCast(world, data);
     // 여섯 칸짜리 숫자 배열이 아니면 손대지 않는다. 하나라도 이상하면 공이 NaN 이 되고,
     // 그 NaN 이 다음 꾸러미의 오차 계산에 되먹여져 영영 안 돌아온다.
     if (!Array.isArray(data?.b) || data.b.length < 6 || !data.b.every(Number.isFinite)) return;

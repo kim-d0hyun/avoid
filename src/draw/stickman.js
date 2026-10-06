@@ -682,8 +682,9 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   // 몸 전체가 facing 으로 이미 뒤집혀 있으므로, 반대쪽을 잡았으면 각도만 뒤집는다.
   const armFlip = p.grabAim && p.grabAim !== p.facing ? -1 : 1;
   // 공을 향해 뻗은 팔은 조금 늘어난다(reach). 배구에서 손끝이 공에 닿게 하는 몫이다.
+  // opts.arms — 팔 길이 배율 (배구 캐릭터 문어처럼 팔이 긴 사람). 그림만 바뀐다.
   const arm = (i) => {
-    const r = s.reach?.[i] ?? 1;
+    const r = (s.reach?.[i] ?? 1) * (opts.arms ?? 1);
     return limb(shldX, shldY, s.arms[i][0] * armFlip, UPPER * r, s.arms[i][1] * armFlip, FORE * r);
   };
   const armA = arm(0);
@@ -692,6 +693,10 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
   // 다리를 먼저 그려 몸통 뒤로 보낸다.
   stroke(ctx, limb(0, hipY, s.legs[0][0], THIGH, s.legs[0][1], SHIN), pen(1));
   stroke(ctx, limb(0, hipY, s.legs[1][0], THIGH, s.legs[1][1], SHIN), pen(2));
+
+  // 캐릭터 덧그림(opts.decor) — 몸 밑에 까는 것(몸집). 뒤집힌 공간이라 +x 가 앞이다.
+  const geo = { headX, headY, hipY, shldX, shldY, lean, color: opts.color ?? null, seed };
+  opts.decor?.(ctx, 'under', geo);
 
   // 색연필로 슥 칠한 셔츠. **잉크 밑에 깔고** 위에 검은 선을 그대로 얹는다 —
   // 색이 낙서를 덮어 버리면 이 게임의 그림체가 아니게 된다. 소매는 어깨에서 팔꿈치까지만.
@@ -738,6 +743,8 @@ export function drawStickman(ctx, p, time, seed, opts = {}) {
 
   drawMark(ctx, headX, headY, opts.mark, opts.color ?? INK, seed);
   drawFace(ctx, headX, headY, p, time, seed);
+  // 캐릭터 덧그림 — 머리에 얹는 것(귀·앞머리·머리 모양).
+  opts.decor?.(ctx, 'over', geo);
   ctx.restore();
 
   if (p.slide > 0) {

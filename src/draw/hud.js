@@ -296,6 +296,11 @@ export function drawPick(ctx, world, time) {
     });
   });
 
+  // 지금 버전 — 「업데이트 받았나?」를 홈에서 바로 본다.
+  if (world.version) {
+    text(ctx, `v${world.version}`, x + w - 18, y + 26,
+         { font: `600 10px ${KEYS}`, color: PENCIL, align: 'right', halo: 0, alpha: 0.8 });
+  }
   text(ctx, '⌥↑↓ 고르기   ⌥→ 시작', mid, y + h - 22,
        { font: `700 11.5px ${KEYS}`, color: RED, align: 'center', halo: 0,
          alpha: 0.72 + 0.28 * Math.sin(time * 3.4) });
@@ -526,6 +531,7 @@ function clip(ctx, value, font, room) {
 /// 한 겹 안으로 들어갔을 때의 제목. 무엇을 고르는 중인지 제목이 말해 줘야 한다.
 const MENU_TITLES = {
   'team': '어느 편으로?',
+  'cast': '누구로 뛸까?',
   'together': '같이 하기',
   'together/host': '무슨 게임으로 방을 열까?',
   'together/stage': '어느 판부터?',
@@ -552,8 +558,11 @@ export function drawMenu(ctx, world) {
   // 모니터 이름은 「DELL U2723QE」처럼 길다. 그 화면에서만 종이를 넓게 쓴다.
   const w = picking ? 400 : 300;
   const foot = world.mp.on ? 52 : 34;
-  const h = 62 + items.length * 34 + foot;
-  const x = (world.w - w) / 2;
+  // 캐릭터를 고르는 중이면 오른쪽에 카드를 한 장 더 편다 (게임이 그린다). 둘을 합쳐 가운데에 둔다.
+  const game = gameOf(world);
+  const card = at === 'cast' && game.castCard ? 256 : 0;
+  const h = Math.max(62 + items.length * 34 + foot, card ? 330 : 0);
+  const x = (world.w - w - card) / 2;
   const y = (world.h - h) / 2 - 40;
 
   // 뒤를 살짝 눌러 둔다. 메뉴가 떠 있는 동안은 이게 앞이라는 표시다.
@@ -561,8 +570,12 @@ export function drawMenu(ctx, world) {
   ctx.fillRect(0, 0, world.w, world.h);
 
   ctx.save();
-  fitCenter(ctx, world, w, h + 80);
+  fitCenter(ctx, world, w + card, h + 80);
   paperScrap(ctx, x, y, w, h, 17);
+  if (card) {
+    const item = items[Math.max(0, Math.min(items.length - 1, world.menu.index))];
+    game.castCard(ctx, world, item?.id?.slice(5), x + w + 16, y, h);
+  }
   stroke(ctx, [[x + 8, y + 8], [x + w - 8, y + 8], [x + w - 8, y + h - 8], [x + 8, y + h - 8]],
          { width: 2, color: INK, seed: 19, amp: 1.4, close: true, sharp: true, halo: false });
 
