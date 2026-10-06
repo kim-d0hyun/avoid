@@ -1795,7 +1795,9 @@ say('세트 스코어 — 판이 끝날 때마다 이긴 편에 하나 · 편이
     world.state = 'play';
     const b = world.bag; b.serving = false; b.wait = 0; b.stop = 0;
     b.score = side === 0 ? [4, 0] : [0, 4];
-    b.ball.x = side === 0 ? 1300 : 200; b.ball.y = world.groundY - 25; b.ball.vx = 0; b.ball.vy = 400;
+    // 사람 자리(코트 30~70%)에서 먼 구석에 떨어뜨린다 — 가까우면 서 있던 사람이 받아 버린다
+    b.ball.x = side === 0 ? 1460 : 50; world.player.x = side === 0 ? 300 : 1200;
+    b.ball.y = world.groundY - 25; b.ball.vx = 0; b.ball.vy = 400;
     for (let i = 0; i < 10 && b.score[side] === 4; i++) volley.update(world, 1 / 60);
   };
   win(0); win(0); win(1);

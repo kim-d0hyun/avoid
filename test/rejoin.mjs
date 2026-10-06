@@ -142,7 +142,7 @@ const inPlay = (world) => world.state === 'play' && !world.mp.waiting && !world.
 const state = (world) => `${world.state}${world.mp.waiting ? '·구경' : ''}${world.player.dead ? '·죽음' : ''}`;
 
 // 판 도중에 들어오면 **바로 끼는** 게임과, 다음 판까지 구경하는 게임(똥피하기 — 안 보이던 똥에 맞는다).
-const ANYTIME = ['volley', 'ball', 'omok', 'alk', 'yut'];
+const ANYTIME = ['volley', 'ball', 'omok', 'alk', 'yut', 'fence'];
 const ALL = [...ANYTIME, 'dodge'];
 const wait = (r, test, max = 300) => { for (let i = 0; i < max && !test(); i++) r.advance(1); return test(); };
 
@@ -224,7 +224,7 @@ for (const gameId of ALL) {
 }
 
 say('둘이 오래 가만히 있다가 한 사람이 나가면 — 남은 사람이 움직이나');
-for (const gameId of ['volley', 'dodge', 'coop', 'trio']) {
+for (const gameId of ['volley', 'dodge', 'coop', 'trio', 'fence']) {
   for (const who of ['손님이 나감', '방장이 나감']) {
     const r = room(gameId);
     const g = r.join();

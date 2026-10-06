@@ -366,7 +366,7 @@ shell.net.onMessage((from, message) => {
 // 브라우저에서 열어 볼 때와, 혹시 창이 키를 직접 받게 됐을 때의 길.
 const KEYS = {
   ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'jump', ArrowDown: 'duck',
-  KeyR: 'restart', KeyM: 'menu', Space: 'grab', KeyZ: 'grab', KeyX: 'drop',
+  KeyR: 'restart', KeyM: 'menu', Space: 'grab', KeyZ: 'grab', KeyX: 'drop', KeyC: 'guard',
 };
 for (const [type, down] of [['keydown', true], ['keyup', false]]) {
   window.addEventListener(type, (event) => {

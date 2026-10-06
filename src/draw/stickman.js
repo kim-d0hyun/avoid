@@ -125,8 +125,10 @@ export const BLADE_LEN = 44;
 /// 뒷손은 손바닥을 위로 해서 머리 뒤에 든다 — 실루엣만 봐도 펜싱으로 읽히는 그 손이다.
 /// 칼끝은 줄 따라 위·가운데·아래를 겨눈다.
 /// 다리가 짧아서(28px) 각만 벌려서는 발이 안 벌어진다 — 정강이도 바깥으로 벌리고 허리를 낮춘다.
+/// 칼 든 팔은 **팔꿈치를 굽혀** 손을 몸 앞에 둔다 — 그래야 찌를 때 팔이 뻗는 것이 보인다
+/// (팔을 거의 편 채로 두었더니 찌르기 칼끝이 1px 밖에 안 나갔다).
 const FENCE_GUARD = { hipY: HIP_Y + 10, lean: 0.06, legs: [[1.15, 0.35], [-1.00, -0.55]],
-                      arms: [[1.22, 1.66], [-1.75, -3.05]] };
+                      arms: [[0.62, 1.70], [-1.75, -3.05]] };
 const GUARD_BLADE = [1.36, 1.68, 2.02];       // 아래 · 가운데 · 위 줄의 칼끝 각
 /// 찌르기 — 팔을 곧게 뻗어 칼과 한 줄로. 뒷손은 그대로.
 const THRUST_ARMS = (blade) => [[blade - 0.04, blade], [-1.75, -3.05]];
@@ -420,7 +422,7 @@ function fencePose(p, base, time) {
   switch (f.act) {
     case 'thrust': {
       const e = out(0.3);
-      return { ...guard, lean: lerp(guard.lean, 0.10, e),
+      return { ...guard, lean: lerp(guard.lean, 0.20, e),
                arms: mixLimbs(guard.arms, THRUST_ARMS(GUARD_BLADE[li]), e), blade: guard.blade };
     }
     case 'lunge': {

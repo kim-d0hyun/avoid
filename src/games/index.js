@@ -20,8 +20,9 @@ import baseball from './baseball.js';
 import omok from './omok.js';
 import alkkagi from './alkkagi.js';
 import yut from './yut.js';
+import fence from './fence.js';
 
-export const games = [dodge, volley, baseball, omok, alkkagi, yut, coop, trio];
+export const games = [dodge, volley, baseball, omok, alkkagi, yut, fence, coop, trio];
 
 export const DEFAULT_GAME = dodge.id;
 
