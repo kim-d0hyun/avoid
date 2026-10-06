@@ -390,6 +390,8 @@ function chargeGauge(world, toSide) {
     b.gauge.set(id, Math.min(GAUGE_FULL, gaugeOf(world, id) + (side === toSide ? WIN_GAIN : LOSE_GAIN)));
   }
   b.armed?.clear();
+  // 점수가 났다 — 가짜 공도 거둔다. 진짜가 떨어진 뒤 가짜 혼자 날아가면 이상하다.
+  if (b.ghost) b.ghost.t = 0;
 }
 
 const DASH = 120;          // 번개 — 잔상 대시 거리
@@ -400,13 +402,14 @@ const WOBBLE_W = 11;       //   흔들리는 빠르기 (rad/s)
 const HOVER = 0.6;         // 둥실(풍선) — 공중에 멈추는 시간
 const FAKE_WINDOW = 0.14;  // 시간차 — 뜬 뒤 이 안에 ⌥↓
 const NETIN_LAND = 34;     // 네트 인(나비) — 네트에서 이만큼 너머에 떨어진다
-const GHOST_TIME = 0.35;   // 그림자 스파이크(메아리) — 가짜 공이 보이는 시간
+const GHOST_TIME = 0.6;    // 그림자 스파이크(메아리) — 가짜 공이 보이는 시간 (각이 작아 오래 붙어 간다)
 
 /// 가짜 공 — 진짜와 **같은 세기로 각만 비틀어** 같이 띄운다. 둘 다 상대 코트로 가는 그럴듯한 강타여야
 /// 헷갈린다 — 처음엔 「진짜가 수평이면 가짜는 꽂힌다」로 했더니 가짜가 제 코트 바닥에 박혀 굴러갔다.
 /// 비튼 길이 네트를 못 넘으면 반대로 비튼다(flies — 실제 셈대로 날려 본다). 둘 다 안 되면 안 띄운다.
 /// 진짜 공이 히트스톱에 멈춰 있는 동안은 가짜도 기다린다(wait). 바닥에 닿으면 그 자리에서 사라진다.
-const GHOST_TURN = [0.36, -0.36, 0.24, -0.24];
+// 비트는 각 — 크면 한눈에 갈린다(처음 0.36 은 「구분이 너무 쉽다」). 붙어 가다 늦게 갈라지게 작게.
+const GHOST_TURN = [0.15, -0.15, 0.1, -0.1];
 function launchGhost(world, b, ball, vx, vy, away) {
   const sp = Math.hypot(vx, vy), a = Math.atan2(vy, vx);
   for (const d of GHOST_TURN) {
@@ -414,7 +417,7 @@ function launchGhost(world, b, ball, vx, vy, away) {
     if (Math.sign(gvx) !== away) continue;
     if (!flies(world, ball.x, ball.y, gvx, gvy, true, false, false, away)) continue;
     b.ghost = { x: ball.x, y: ball.y, vx: gvx, vy: gvy, t: GHOST_TIME, wait: b.stop ?? 0,
-                seq: ((b.ghost?.seq ?? 0) + 1) % 1000 };
+                seq: ((b.ghost?.seq ?? 0) + 1) % 1000, spin: ball.spin, spinV: ball.spinV, tail: [], tailT: 0 };
     return true;
   }
   return false;
@@ -430,6 +433,11 @@ function stepGhost(world, b, dt) {
   const lose = Math.min(0.5, DRAG * sp * dt * HOT_DRAG);
   g.vx -= g.vx * lose; g.vy -= g.vy * lose;
   g.x += g.vx * dt; g.y += g.vy * dt;
+  // 진짜처럼 돌고 잔상을 남긴다 (trail 과 같은 간격)
+  g.spin = (g.spin ?? 0) + (g.spinV ?? 0) * dt;
+  g.tail ??= [];
+  g.tailT = (g.tailT ?? 0) - dt;
+  if (g.tailT <= 0) { g.tailT = 1 / 90; g.tail.push([g.x, g.y]); while (g.tail.length > TRAIL) g.tail.shift(); }
   if (g.x < BALL_R || g.x > world.w - BALL_R) { g.vx = -g.vx; g.x = Math.max(BALL_R, Math.min(world.w - BALL_R, g.x)); }
   if (g.y + BALL_R >= world.groundY) g.t = 0;          // 바닥 — 사라진다
 }
@@ -625,10 +633,13 @@ function unpackCast(world, d) {
   }
   if (b.ball) b.ball.fire = d?.bf ? FIRE_TIME : 0;
   // 가짜 공 — 새 것이면 받아서 제 화면에서 굴린다.
+  // 방장이 거두었으면(점수 · 사라짐) 손님도 거둔다 — 가짜 공이 있는 동안은 매 꾸러미에 실려 온다.
+  if (d && !d.gh && b.ghost?.t > 0 && !(b.ghost.wait > 0)) b.ghost.t = 0;
   if (Array.isArray(d?.gh) && d.gh.length >= 5 && d.gh.every(Number.isFinite) && d.gh[4] !== b.ghostSeq) {
     b.ghostSeq = d.gh[4];
     b.ghost = { x: d.gh[0], y: d.gh[1], vx: d.gh[2], vy: d.gh[3], seq: d.gh[4],
-                wait: (d.gh[5] ?? 0) / 1000, t: d.gh[6] ? d.gh[6] / 1000 : GHOST_TIME };
+                wait: (d.gh[5] ?? 0) / 1000, t: d.gh[6] ? d.gh[6] / 1000 : GHOST_TIME,
+                spin: b.ball.spin, spinV: b.ball.spinV, tail: [], tailT: 0 };
   }
 }
 
@@ -1985,6 +1996,56 @@ function drawCastCard(ctx, world, id, x, y, h) {
   text(ctx, c.skill.line, fx, fy + 171, { font: `600 10px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
 }
 
+/// 지나온 자리 — 뒤로 갈수록 옅어지고 작아진다. 불꽃(벼락)이면 주황 동그라미.
+function drawTail(ctx, upright, tail, fire, alpha = 1) {
+  (tail ?? []).forEach(([tx, ty], i) => {
+    const k = (i + 1) / TRAIL;
+    upright(tx, ty, () => circle(ctx, tx, ty, BALL_R * (fire ? 0.45 + 0.5 * k : 0.3 + 0.6 * k), {
+      width: 1.6, color: fire ? SKILL_INK : PENCIL, seed: 70 + i, amp: 0.4, halo: false,
+      alpha: (fire ? 0.75 : 0.30) * k * alpha, fill: fire ? (i % 2 ? '#f1a03a' : '#f7d36b') : null,
+    }));
+  });
+}
+
+/// 공 하나 — 속도선(달아오른 강타) · 잉크 동그라미 · 실밥 두 줄. **빠른 공은 가는 쪽으로 늘어난다.**
+/// 진짜 공과 메아리의 가짜 공이 같은 함수로 그려진다 — 모양이 같아야 속는다.
+function drawBall(ctx, upright, bx, by, vx, vy, spin, hot, still, alpha = 1) {
+  const sp = Math.hypot(vx, vy);
+  // **속도선.** 동그라미 하나는 아무리 빨라도 빨라 보이지 않는다 — 지나온 자리에 선을 그어야 속도가 보인다.
+  if (hot && sp > 200 && !still) {
+    const ux = vx / sp, uy = vy / sp;
+    const len = Math.min(95, sp * 0.045);
+    upright(bx, by, () => {
+      for (let i = 0; i < 3; i++) {
+        const off = (i - 1) * BALL_R * 0.66;          // 가운데 선이 제일 길다
+        const grow = 1 - Math.abs(i - 1) * 0.4;
+        const x0 = bx - uy * off - ux * BALL_R * 0.95;
+        const y0 = by + ux * off - uy * BALL_R * 0.95;
+        // **연필로 긋는다.** 빨강은 타격 고리와 「쾅!」이 쓰고 있다.
+        stroke(ctx, [[x0, y0], [x0 - ux * len * grow, y0 - uy * len * grow]],
+               { width: 2.2, color: PENCIL, seed: 95 + i, amp: 0.5, halo: false, alpha: 0.5 * alpha });
+      }
+    });
+  }
+  upright(bx, by, () => {
+    ctx.save();
+    ctx.translate(bx, by);
+    // 멈춰 있는 동안은 안 늘인다. 안 가는 공이 늘어나 있으면 그냥 찌그러진 공이다.
+    if (sp > 600 && !still) {
+      const k = Math.min(0.34, (sp - 600) / 3000);
+      const a = Math.atan2(vy, vx);
+      ctx.rotate(a); ctx.scale(1 + k, 1 - k * 0.55); ctx.rotate(-a);
+    }
+    ctx.rotate(spin);
+    circle(ctx, 0, 0, BALL_R, { width: 3.4, color: INK, seed: 63, amp: 0.7, alpha });
+    stroke(ctx, [[-BALL_R * 0.82, -5], [0, -9], [BALL_R * 0.82, -5]],
+           { width: 2, color: PENCIL, seed: 64, amp: 0.5, halo: false, alpha });
+    stroke(ctx, [[-BALL_R * 0.82, 6], [0, 10], [BALL_R * 0.82, 6]],
+           { width: 2, color: PENCIL, seed: 65, amp: 0.5, halo: false, alpha });
+    ctx.restore();
+  });
+}
+
 export default {
   id: 'volley',
   name: '배구',
@@ -2430,16 +2491,8 @@ export default {
     stroke(ctx, [[netX + half, netTop], [netX + half, world.groundY]], { width: 3.6, color: INK, seed: 64, amp: 1.0 });
     stroke(ctx, [[netX - half - 4, netTop], [netX + half + 4, netTop]], { width: 4.2, color: INK, seed: 62, amp: 0.8 });   // 윗줄(테이프)
 
-    // 지나온 자리. 뒤로 갈수록 옅어지고 작아진다.
-    // 벼락(망치) 맞은 공은 지나온 자리가 불꽃이다.
-    const fire = b.ball.fire > 0;
-    (b.tail ?? []).forEach(([tx, ty], i) => {
-      const k = (i + 1) / TRAIL;
-      upright(tx, ty, () => circle(ctx, tx, ty, BALL_R * (fire ? 0.45 + 0.5 * k : 0.3 + 0.6 * k), {
-        width: 1.6, color: fire ? SKILL_INK : PENCIL, seed: 70 + i, amp: 0.4, halo: false,
-        alpha: (fire ? 0.75 : 0.30) * k, fill: fire ? (i % 2 ? '#f1a03a' : '#f7d36b') : null,
-      }));
-    });
+    // 지나온 자리. 뒤로 갈수록 옅어지고 작아진다. 벼락(망치) 맞은 공은 불꽃이다.
+    drawTail(ctx, upright, b.tail, b.ball.fire > 0);
 
     // 세게 갔다는 표시. 맞은 자리에서 터지듯 번진다 — 원판의 그 번쩍임이다.
     if (b.ball.hit > 0) {
@@ -2472,54 +2525,17 @@ export default {
     // 타격 자국 — 고리·파편·먼지·금은 공 뒤에 깔린다.
     drawFx(ctx, b, upright, false);
 
-    // 그림자 스파이크(메아리)의 가짜 공 — 진짜와 똑같이 그린다. 0.35초 뒤 사라진다.
+    // 그림자 스파이크(메아리)의 가짜 공 — **진짜와 같은 그림**(실밥 · 회전 · 늘어남 · 속도선 · 잔상)으로.
+    // 모양이 다르면 어느 게 가짜인지 바로 보인다. 사라지기 직전 0.08초만 옅어진다.
     if (b.ghost?.t > 0) {
       const g = b.ghost;
-      upright(g.x, g.y, () => circle(ctx, g.x, g.y, BALL_R, { width: 3, color: INK, seed: 91, amp: 0.4,
-        fill: PAPER, alpha: Math.min(1, g.t / 0.08) }));
+      const fade = Math.min(1, g.t / 0.08);
+      drawTail(ctx, upright, g.tail, false, fade);
+      drawBall(ctx, upright, g.x, g.y, g.vx, g.vy, g.spin ?? b.ball.spin, true, g.wait > 0, fade);
     }
     // 공이 그려지는 자리. 맞은 두 프레임 동안 손끝으로 미끄러져 온다.
     const [bx, by] = shownBall(b);
-    const sp = Math.hypot(b.ball.vx, b.ball.vy);
-    // **속도선.** 달아오른 강타 뒤로 선 셋이 흐른다. 동그라미 하나는 아무리 빨라도
-    // 빨라 보이지 않는다 — 지나온 자리에 선을 그어야 속도가 보인다.
-    if (b.ball.hot > 0 && sp > 200 && !(b.stop > STOP_EPS)) {
-      const ux = b.ball.vx / sp;
-      const uy = b.ball.vy / sp;
-      const len = Math.min(95, sp * 0.045);
-      upright(bx, by, () => {
-        for (let i = 0; i < 3; i++) {
-          const off = (i - 1) * BALL_R * 0.66;          // 가운데 선이 제일 길다
-          const grow = 1 - Math.abs(i - 1) * 0.4;
-          const x0 = bx - uy * off - ux * BALL_R * 0.95;
-          const y0 = by + ux * off - uy * BALL_R * 0.95;
-          // **연필로 긋는다.** 빨강은 이미 타격 고리와 「쾅!」이 쓰고 있어서, 속도선까지
-          // 빨가면 셋이 한 덩어리로 뭉쳐 무엇이 무엇인지 안 갈린다.
-          stroke(ctx, [[x0, y0], [x0 - ux * len * grow, y0 - uy * len * grow]],
-                 { width: 2.2, color: PENCIL, seed: 95 + i, amp: 0.5, halo: false, alpha: 0.5 });
-        }
-      });
-    }
-
-    // 공. 잉크 동그라미에 실밥 두 줄. **빠른 공은 가는 쪽으로 늘어난다** — 한 프레임에
-    // 30픽셀을 가는 동그라미는 늘어나 있어야 그 속도로 읽힌다.
-    upright(bx, by, () => {
-      ctx.save();
-      ctx.translate(bx, by);
-      // 멈춰 있는 동안은 안 늘인다. 안 가는 공이 늘어나 있으면 그냥 찌그러진 공이다.
-      if (sp > 600 && !(b.stop > STOP_EPS)) {
-        const k = Math.min(0.34, (sp - 600) / 3000);
-        const a = Math.atan2(b.ball.vy, b.ball.vx);
-        ctx.rotate(a); ctx.scale(1 + k, 1 - k * 0.55); ctx.rotate(-a);
-      }
-      ctx.rotate(b.ball.spin);
-      circle(ctx, 0, 0, BALL_R, { width: 3.4, color: INK, seed: 63, amp: 0.7 });
-      stroke(ctx, [[-BALL_R * 0.82, -5], [0, -9], [BALL_R * 0.82, -5]],
-             { width: 2, color: PENCIL, seed: 64, amp: 0.5, halo: false });
-      stroke(ctx, [[-BALL_R * 0.82, 6], [0, 10], [BALL_R * 0.82, 6]],
-             { width: 2, color: PENCIL, seed: 65, amp: 0.5, halo: false });
-      ctx.restore();
-    });
+    drawBall(ctx, upright, bx, by, b.ball.vx, b.ball.vy, b.ball.spin, b.ball.hot > 0, b.stop > STOP_EPS);
 
     // 손끝에 든 공은 빛난다 — 발밑 고리와 같이 켜지면 정타다.
     drawSweetHalo(ctx, world, upright, bx, by);

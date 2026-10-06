@@ -436,31 +436,48 @@ say('정타 · 드롭 · 스파이크 — 감각(나비) · 네트 인(나비) �
   g.b.gauge.set(g.world.mp.myId, 4); tap(g.world, 'guard');
   spike(g.world);
   ok('가짜 공이 떴다', g.b.ghost?.t > 0);
-  const realDive = g.b.ball.vy, fakeDive = g.b.ghost.vy;
-  ok('가짜는 진짜와 다른 각으로 간다', Math.abs(realDive - fakeDive) > 300);
+  const turn = Math.abs(Math.atan2(g.b.ghost.vy, g.b.ghost.vx) - Math.atan2(g.b.ball.vy, g.b.ball.vx));
+  note(`가짜가 비튼 각 ${(turn * 180 / Math.PI).toFixed(1)}°`);
+  ok('가짜는 진짜와 **조금만** 다른 각 (5~10° — 한눈에 안 갈리게)', turn > 0.08 && turn < 0.17);
   // 진짜가 히트스톱에 멈춘 동안 가짜도 기다린다 — 따로 먼저 날아가면 가짜인 게 티 난다
   const gx0 = g.b.ghost.x;
   g.world.bag.stop > 0 && volley.update(g.world, FR);
   ok('멈춘 동안 가짜도 그 자리', Math.abs(g.b.ghost.x - gx0) < 0.5);
   // **제 코트 바닥에 박히지 않는다** — 네트를 넘어 상대 코트 쪽으로 간다 (예전엔 6프레임 만에 바닥에 박혀 굴렀다)
   const netX = g.world.w / 2;
-  let lowMine = false, crossed = false;
-  run(g.world, 30, () => {
+  let lowMine = false, crossed = false, near = null, far = 0, n = 0;
+  run(g.world, 45, () => {
     const gh = g.b.ghost;
     if (!(gh?.t > 0)) return;
+    if (!(gh.wait > 0)) {
+      n++;
+      const apart = Math.hypot(gh.x - g.b.ball.x, gh.y - g.b.ball.y);
+      if (n === 12) near = apart;                 // 0.2초 뒤
+      far = Math.max(far, apart);
+    }
     if (gh.x < netX && gh.y > g.world.groundY - 60) lowMine = true;
     if (gh.x > netX) crossed = true;
   });
   ok('가짜가 내 코트 바닥 쪽으로 안 꽂힌다', !lowMine);
   ok('가짜도 네트를 넘는다', crossed);
-  ok('0.35초 뒤 사라진다', !(g.b.ghost.t > 0));
+  note(`두 공 사이 — 0.2초 뒤 ${near?.toFixed(0)}px · 가장 멀 때 ${far.toFixed(0)}px`);
+  ok('0.2초 뒤에도 붙어 간다 (80px 안)', near !== null && near < 80);
+  ok('갈수록 벌어진다 (진짜가 떨어지기 전까지)', far > near + 15);
+  ok('가짜도 진짜처럼 돌고 잔상을 남긴다 (같은 그림으로 그린다)', (g.b.ghost.tail?.length ?? 0) > 3 && Number.isFinite(g.b.ghost.spin));
+  ok('0.6초 안팎에 사라진다', !(g.b.ghost.t > 0));
   // 꽂는 스파이크(↓)일 때도
   const g2 = rig('meari', { off: [30, 30], keys: { duck: true } });
   g2.b.gauge.set(g2.world.mp.myId, 4); tap(g2.world, 'guard'); spike(g2.world);
   let low2 = false, cross2 = false;
-  run(g2.world, 30, () => { const gh = g2.b.ghost; if (!(gh?.t > 0)) return;
+  run(g2.world, 45, () => { const gh = g2.b.ghost; if (!(gh?.t > 0)) return;
     if (gh.x < netX && gh.y > g2.world.groundY - 60) low2 = true; if (gh.x > netX) cross2 = true; });
   ok('내리꽂기 때도 가짜가 네트를 넘는다', cross2 && !low2);
+  // 진짜가 떨어져 점수가 나면 가짜도 같이 거둔다
+  const g3 = rig('meari', { off: [30, 30], keys: { duck: true } });
+  g3.b.gauge.set(g3.world.mp.myId, 4); tap(g3.world, 'guard'); spike(g3.world);
+  let left = false;
+  run(g3.world, 45, () => { if (g3.b.score[0] > 0 && g3.b.ghost?.t > 0) left = true; });
+  ok('점수가 나면 가짜 공도 사라진다', g3.b.score[0] > 0 && !left);
 }
 
 say('같이 할 때 — 새 스킬도 방장이 판정 · 가짜 공은 손님 화면에도');
