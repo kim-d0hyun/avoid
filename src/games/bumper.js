@@ -332,7 +332,7 @@ const ring = (cx, cy, r, n = 64) => Array.from({ length: n }, (_, i) => {
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
 /// 뒤 철망 벽 — 판 뒤쪽 반을 두른 녹슨 철망(기둥 · 가로대 · 촘촘한 살). 경기장이 줄어도 벽은 제자리.
-function cageWall(ctx, A) {
+function cageWall(ctx, A, time = 0, excite = 0) {
   const { cx, cy, R } = A;
   const WR = R + 26, WH = Math.min(70, Math.max(24, cy - WR * SQ - 80));   // 위 점수판을 덮지 않을 만큼
   const at = (a, up) => [cx + Math.cos(a) * WR, cy + Math.sin(a) * WR * SQ - up];
@@ -347,6 +347,8 @@ function cageWall(ctx, A) {
   g.addColorStop(0, '#2a1f19'); g.addColorStop(0.5, '#5b3b27'); g.addColorStop(1, '#3a2a20');
   ctx.fillStyle = g; ctx.fill();
   ctx.clip();
+  // 관중 — 철망 너머 계단석에 줄지어 선 사람들. 크게 부딪히거나 떨어지면(화면이 흔들리면) 들썩인다.
+  crowd(ctx, at, WH, time, excite);
   // 촘촘한 철망 살
   ctx.strokeStyle = 'rgba(190,140,95,0.28)'; ctx.lineWidth = 1;
   for (let i = 0; i <= 180; i++) {
@@ -367,12 +369,105 @@ function cageWall(ctx, A) {
     ctx.strokeStyle = '#7d828a'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(x0 - 1, y0); ctx.lineTo(x1 - 1, y1); ctx.stroke();
   }
   ctx.restore();
+  // 현수막 — 철망에 건 네 편 색 천 (기둥 사이 몇 칸). 바람에 살짝 흔들린다
+  const COLS = ['#2f6db0', '#c0392b', '#d9a21b', '#3f8f56'];
+  for (let i = 0; i < 18; i++) {
+    if (i % 3 !== 1) continue;
+    const a0 = Math.PI + (i / 18) * Math.PI + 0.025, a1 = Math.PI + ((i + 1) / 18) * Math.PI - 0.025;
+    const [x0, y0] = at(a0, WH - 2), [x1, y1] = at(a1, WH - 2);
+    const drop = WH * 0.55, sway = Math.sin(time * 1.7 + i) * 1.5;
+    const col = COLS[(i / 3 | 0) % 4];
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+    ctx.lineTo(x1 + sway, y1 + drop); ctx.lineTo((x0 + x1) / 2 + sway, (y0 + y1) / 2 + drop * 1.18); ctx.lineTo(x0 + sway, y0 + drop);
+    ctx.closePath();
+    const bg = ctx.createLinearGradient(x0, 0, x1, 0);
+    bg.addColorStop(0, mix(col, -0.35)); bg.addColorStop(0.5, col); bg.addColorStop(1, mix(col, -0.35));
+    ctx.fillStyle = bg; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x0 + sway * 0.5, y0 + drop * 0.32); ctx.lineTo(x1 + sway * 0.5, y1 + drop * 0.32); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/// 관중 — 철망 뒤 계단석 세 줄. 뒷줄일수록 위에·작게·어둡게. 사람마다 옷 색·키·흔들림이 다르다(결정론).
+function crowd(ctx, at, WH, time, excite) {
+  const SHIRTS = ['#2f6db0', '#c0392b', '#d9a21b', '#3f8f56', '#e6e2d8', '#6b4a8a', '#2b2b2b', '#b5651d'];
+  const SKIN = ['#f1c9a5', '#d9a47c', '#b7825c', '#8d5a3b'];
+  for (let row = 2; row >= 0; row--) {
+    const n = 64 - row * 6, base = WH * (0.12 + row * 0.3), sz = 1 - row * 0.16, dim = row * 0.18;
+    for (let i = 0; i < n; i++) {
+      const id = row * 100 + i;
+      const a = Math.PI + ((i + 0.5 + (row % 2) * 0.5) / n) * Math.PI;
+      const jump = excite > 0.05 ? Math.abs(Math.sin(time * 14 + hash(id) * 6)) * excite * 9 : 0;
+      const bob = Math.sin(time * (1.5 + hash(id + 5)) + hash(id) * 9) * 0.8;
+      const [x, y] = at(a, base + jump + bob);
+      const s = (5.5 + hash(id + 9) * 1.5) * sz;
+      ctx.fillStyle = mix(SHIRTS[(hash(id + 3) * SHIRTS.length) | 0], -0.25 - dim);
+      ctx.beginPath(); ctx.ellipse(x, y, s * 0.95, s * 1.1, 0, Math.PI, 0); ctx.lineTo(x + s * 0.95, y + s); ctx.lineTo(x - s * 0.95, y + s); ctx.fill();
+      ctx.fillStyle = mix(SKIN[(hash(id + 7) * SKIN.length) | 0], -0.2 - dim);
+      ctx.beginPath(); ctx.arc(x, y - s * 1.35, s * 0.55, 0, Math.PI * 2); ctx.fill();
+      // 신나면 팔을 든다
+      if (jump > 2 && hash(id + 11) > 0.4) {
+        ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = Math.max(1, s * 0.3);
+        ctx.beginPath(); ctx.moveTo(x - s * 0.7, y - s * 0.5); ctx.lineTo(x - s * 1.1, y - s * 2); ctx.moveTo(x + s * 0.7, y - s * 0.5); ctx.lineTo(x + s * 1.1, y - s * 2); ctx.stroke();
+      }
+    }
+  }
+  // 위로 갈수록 그늘 — 계단석 뒤쪽은 조명이 덜 닿는다
+  ctx.fillStyle = 'rgba(20,14,10,0.25)';
+  const [, yTop] = at(Math.PI * 1.5, WH);
+  ctx.fillRect(0, yTop - 10, 99999, WH * 0.45);
+}
+
+/// 조명탑 — 판 뒤 양쪽 모서리에 선 기둥과 등 여섯 칸, 판 위로 떨어지는 빛기둥.
+function lightTowers(ctx, A, time) {
+  const { cx, cy, R } = A;
+  const WR = R + 26;
+  for (const side of [-1, 1]) {
+    const a = side < 0 ? Math.PI + 0.34 : Math.PI * 2 - 0.34;
+    const bx = cx + Math.cos(a) * (WR + 14), by = cy + Math.sin(a) * (WR + 14) * SQ;
+    const H = Math.min(150, Math.max(80, by - 90));
+    const tx = bx, ty = by - H;
+    // 빛기둥 — 등에서 판 가운데 쪽으로 퍼진다
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const fx = cx + side * R * 0.15, fy = cy + R * SQ * 0.1;
+    const lg = ctx.createLinearGradient(tx, ty, fx, fy);
+    lg.addColorStop(0, 'rgba(255,244,210,0.16)'); lg.addColorStop(1, 'rgba(255,244,210,0)');
+    ctx.fillStyle = lg;
+    const nx = -(fy - ty), ny = fx - tx, nl = Math.hypot(nx, ny) || 1, w = R * 0.42;
+    ctx.beginPath(); ctx.moveTo(tx - side * 6, ty); ctx.lineTo(fx + (nx / nl) * w, fy + (ny / nl) * w * SQ);
+    ctx.lineTo(fx - (nx / nl) * w, fy - (ny / nl) * w * SQ); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // 기둥 — 격자 철탑
+    ctx.save();
+    ctx.strokeStyle = '#2b2e33'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(bx - 6, by); ctx.lineTo(tx - 3, ty + 8); ctx.moveTo(bx + 6, by); ctx.lineTo(tx + 3, ty + 8); ctx.stroke();
+    ctx.lineWidth = 1.2; ctx.strokeStyle = '#4a4e55';
+    for (let k = 0; k < 8; k++) {
+      const t0 = k / 8, t1 = (k + 1) / 8, w0 = 6 - 3 * t0, w1 = 6 - 3 * t1;
+      const y0 = by - (by - ty - 8) * t0, y1 = by - (by - ty - 8) * t1;
+      ctx.beginPath(); ctx.moveTo(bx - w0, y0); ctx.lineTo(bx + w1, y1); ctx.moveTo(bx + w0, y0); ctx.lineTo(bx - w1, y1); ctx.stroke();
+    }
+    // 등 머리 — 2×3 칸, 하나씩 깜박
+    const hw = 30, hh = 18;
+    ctx.fillStyle = '#25282d'; ctx.fillRect(tx - hw / 2 - 2, ty - hh / 2 - 2, hw + 4, hh + 4);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+      const x = tx - hw / 2 + i * (hw / 3) + 1.5, y = ty - hh / 2 + j * (hh / 2) + 1.5;
+      const flick = 0.85 + 0.15 * Math.sin(time * 9 + i * 3 + j * 5 + side);
+      ctx.save(); ctx.shadowColor = '#fff3c4'; ctx.shadowBlur = 10;
+      ctx.fillStyle = `rgba(255,248,220,${flick})`; ctx.fillRect(x, y, hw / 3 - 3, hh / 2 - 3);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
 }
 
 /// 경기장 — **철판 바닥의 범퍼카장.** 잉크 선 그림체는 그대로, 재료를 그린다:
 /// 판 밑 낭떠러지(어둠) · 철판 옆벽(골) · 이음매로 나뉜 철판과 볼트 · 미끄럼 방지 무늬 · 닳은 자국 ·
 /// 가운데 칠한 원과 바닥 글씨 · 가장자리 경고띠와 테두리 등. 무너지면 바닥이 그 반지름까지만 남는다.
-function drawArena(ctx, A, Rk, time) {
+function drawArena(ctx, A, Rk, time, excite = 0) {
   const { cx, cy, R } = A;
   const r = R * Rk;                                          // 남은 바닥
   const path = (pts) => { ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); };
@@ -388,8 +483,8 @@ function drawArena(ctx, A, Rk, time) {
     stroke(ctx, ring(cx, cy, R), { width: 2, color: PENCIL, close: true, seed: 2, amp: 1.4, halo: false, alpha: 0.6 });
     ctx.restore();
   }
-  // ①½ 뒤 철망 벽 — 원작처럼 판 뒤쪽을 녹슨 철망이 두른다 (앞쪽은 안 그린다 — 차를 가린다)
-  cageWall(ctx, A);
+  // ①½ 뒤 철망 벽 — 원작처럼 판 뒤쪽을 녹슨 철망이 두른다 (앞쪽은 안 그린다 — 차를 가린다). 너머엔 관중.
+  cageWall(ctx, A, time, excite);
   // ② 옆벽 — 두꺼운 철판 원통. 가운데가 밝고 양옆이 어둡다(둥근 면). 세로 골이 진다
   const wall = 34;
   ctx.save();
@@ -780,8 +875,9 @@ export default {
     const fallingBack = all.filter((c) => !c.alive && c.y < 0);
     // **먼 쪽(위) 가장자리로 떨어진 차는 경기장 뒤로** 숨는다 — 바닥을 나중에 그려 가린다.
     for (const car of fallingBack) drawCar(ctx, A, car, colorOf(car.id), { name: b.names.get(car.id) ?? '', time });
-    drawArena(ctx, A, b.Rk ?? 1, time);
+    drawArena(ctx, A, b.Rk ?? 1, time, world.shake ?? 0);
     skidMarks(ctx, A, b, all, time);
+    lightTowers(ctx, A, time);
     // 떨어진 자리 — 가장자리에 흙먼지 고리 (어디서 떨어졌는지 남는다)
     for (const car of all) {
       if (car.alive || car.fallT > 0.6) continue;
