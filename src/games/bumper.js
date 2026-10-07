@@ -764,6 +764,53 @@ function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {})
   }
 }
 
+// ── 카메라 — 내 차를 따라간다 ──
+// 원작(백래쉬)은 내 차 뒤에서 살짝 확대해 따라간다 — 판 전체가 다 보이면 생동감이 없다.
+// 화면을 돌리지는 않는다(방향키가 화면 방향이라 화면이 돌면 키가 헷갈린다). 확대·따라가기만.
+const CAM_ZOOM = 1.7;       // 따라갈 때 확대
+const CAM_LEAD = 0.3;       // 달리는 쪽을 이만큼(초) 앞서 보여 준다 — 어디로 가는지 보이게
+const CAM_EASE = 4.5;       // 따라가는 부드러움 (클수록 바짝)
+function camera(world, A, all, time) {
+  const b = world.bag;
+  const me = all.find((c) => c.id === world.mp.myId);
+  const follow = me && !b.over && (me.alive || me.fallT < 0.8);
+  let x = A.cx, y = A.cy, z = 1;
+  if (follow) {
+    const lead = me.alive ? CAM_LEAD : 0;
+    [x, y] = scr(A, me.x + me.vx * lead, me.y + me.vy * lead);
+    z = CAM_ZOOM;
+  }
+  const ax = world.w / 2, ay = world.h * 0.56;
+  const cam = (b.cam ??= { x, y, z, t: time });
+  const dt = Math.max(0, Math.min(0.1, time - cam.t));
+  cam.t = time;
+  const k = 1 - Math.exp(-CAM_EASE * dt), kz = 1 - Math.exp(-CAM_EASE * 0.6 * dt);
+  cam.x += (x - cam.x) * k; cam.y += (y - cam.y) * k; cam.z += (z - cam.z) * kz;
+  // 기준점(ax, ay)이 경기장 가운데와 같은 자리다 — 판 전체로 돌아가면(z=1, 가운데) 예전 그림 그대로.
+  return { x: cam.x, y: cam.y, z: cam.z, ax, ay };
+}
+/// 화면 밖 차 — 화면 가장자리에 그 차 색 세모와 이름. 확대하면 다 안 보이니 어디서 오는지 알려 준다.
+function offscreenMarks(ctx, world, A, all, cam) {
+  if (cam.z < 1.05) return;
+  const b = world.bag;
+  const M = 26, top = 92;
+  for (const car of all) {
+    if (!car.alive || car.id === world.mp.myId) continue;
+    const [wx, wy] = scr(A, car.x, car.y);
+    const sx = (wx - cam.x) * cam.z + cam.ax, sy = (wy - cam.y) * cam.z + cam.ay;
+    if (sx > M && sx < world.w - M && sy > top && sy < world.h - M) continue;
+    const ex = Math.max(M, Math.min(world.w - M, sx)), ey = Math.max(top, Math.min(world.h - M, sy));
+    const a = Math.atan2(sy - ey || sy - world.h / 2, sx - ex || sx - world.w / 2);
+    const col = colorOf(car.id);
+    ctx.save(); ctx.translate(ex, ey); ctx.rotate(a);
+    ctx.fillStyle = col; ctx.strokeStyle = '#fbfaf6'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-7, -9); ctx.lineTo(-7, 9); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    const tx = ex - Math.cos(a) * 22, ty = ey - Math.sin(a) * 18;
+    text(ctx, b.names.get(car.id) ?? '', tx, ty + 4, { font: `700 11px ${HAN}`, color: col, align: 'center', halo: 3 });
+  }
+}
+
 /// 「쿵」·「쾅!」 — 부딪힌 자리에서 톡 튀어나와 떠오르며 옅어진다.
 function drawPops(ctx, world) {
   const b = world.bag;
@@ -872,6 +919,10 @@ export default {
     if (!b?.cars) return;
     const A = arena(world);
     const all = (world.mp.role === 'guest' ? b.cars.map((c) => predicted(world, c)) : b.cars);
+    // 카메라 — 내 차를 따라 확대한다(원작처럼 3인칭 느낌). 판 밖으로 나가면 다시 판 전체.
+    const cam = camera(world, A, all, time);
+    ctx.save();
+    ctx.translate(cam.ax, cam.ay); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
     const fallingBack = all.filter((c) => !c.alive && c.y < 0);
     // **먼 쪽(위) 가장자리로 떨어진 차는 경기장 뒤로** 숨는다 — 바닥을 나중에 그려 가린다.
     for (const car of fallingBack) drawCar(ctx, A, car, colorOf(car.id), { name: b.names.get(car.id) ?? '', time });
@@ -916,6 +967,8 @@ export default {
       }
     }
     drawPops(ctx, world);
+    ctx.restore();
+    offscreenMarks(ctx, world, A, all, cam);
   },
 
   hud(ctx, world) {
