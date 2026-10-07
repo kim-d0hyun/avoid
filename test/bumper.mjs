@@ -46,21 +46,37 @@ say('혼자면 컴퓨터 셋과 · 구경이면 컴퓨터끼리');
   ok('메뉴 이름', bumper.name === '범퍼카');
 }
 
-say('몰기 — ⌥↑ 가속 · 최고 빠르기 · 손 떼면 선다 · ⌥←→ 방향');
+say('몰기 — 방향키는 화면 방향 그대로 · 최고 빠르기 · 손 떼면 선다');
 {
   const world = mk(); go(world); park(world);
   const me = car(world, world.mp.myId);
-  me.x = 0; me.y = 0; me.h = 0;
-  w.press(world, 'jump', true); run(world, 90); w.press(world, 'jump', false);
+  const A = B.arena(world);
+  for (const c of world.bag.cars) if (c !== me) { c.x = -A.R * 0.6; c.y = A.R * 0.5; }
+  /// 차를 가운데 세우고 h 쪽을 보게 한 뒤, keys 를 frames 동안 누른다. 움직인 방향(화면 기준)을 돌려준다.
+  const drive = (h, keys, frames = 50) => {
+    me.x = 0; me.y = 0; me.vx = 0; me.vy = 0; me.h = h; me.spin = 0;
+    for (const k of keys) w.press(world, k, true);
+    run(world, frames);
+    for (const k of keys) w.press(world, k, false);
+    return Math.atan2(me.y, me.x) * 180 / Math.PI;
+  };
+  const near = (a, b) => Math.abs(((a - b + 540) % 360) - 180) < 25;
+  // 차가 어느 쪽을 보고 있든, 누른 방향으로 간다
+  ok('⌥→ — 화면 오른쪽 (차가 오른쪽을 볼 때)', near(drive(0, ['right']), 0));
+  ok('⌥→ — 화면 오른쪽 (차가 왼쪽을 볼 때도 돌아서)', near(drive(Math.PI, ['right'], 70), 0));
+  ok('⌥→ — 화면 오른쪽 (차가 화면 아래를 볼 때도)', near(drive(Math.PI / 2, ['right'], 60), 0));
+  ok('⌥↑ — 화면 위로', near(drive(0, ['jump']), -90));
+  ok('⌥↓ — 화면 아래로', near(drive(0, ['duck']), 90));
+  ok('⌥← — 화면 왼쪽으로', near(drive(Math.PI / 2, ['left'], 60), 180));
+  ok('⌥↑+→ — 오른쪽 위 대각선', near(drive(0, ['jump', 'right']), -45));
+  // 최고 빠르기 · 손 떼면 선다
+  me.x = 0; me.y = 0; me.vx = 0; me.vy = 0; me.h = 0;
+  w.press(world, 'right', true); run(world, 90); w.press(world, 'right', false);
   const top = Math.hypot(me.vx, me.vy);
   note(`최고 빠르기 ${top.toFixed(0)}px/s`);
   ok('최고 빠르기 근처 (260)', top > 230 && top < 275);
-  ok('앞(오른쪽)으로 갔다', me.x > 100);
   run(world, 120);
   ok('손 떼면 천천히 선다', Math.hypot(me.vx, me.vy) < 60);
-  const h0 = me.h;
-  w.press(world, 'right', true); run(world, 20); w.press(world, 'right', false);
-  ok('⌥→ 로 방향을 튼다', me.h > h0 + 0.5);
 }
 
 say('돌진 > 그냥 차 · 버티기 > 돌진 · 옆구리 > 버티기');

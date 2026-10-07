@@ -58,7 +58,7 @@ const SCENES = [
     title: '살살 부딪히면 살짝 밀린다 — 쿵, 출렁',
     setup(world) { const [b1] = bots(world); place(world, [[me(world), -230, 0, 0], [b1, 0, 0, -Math.PI / 2]]); },
     script(world, f, st) {
-      world.input.jump = f < 40;
+      world.input.right = f < 40;
       st.b ??= bots(world)[0]; st.x0 ??= st.b.x;
       st.wob = Math.max(st.wob ?? 0, st.b.wob ?? 0);
     },
