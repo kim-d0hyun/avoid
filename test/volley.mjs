@@ -1783,6 +1783,32 @@ say('편 바꾸기 — 판이 끝나고 다음 판에도 그대로');
   check('게임을 다시 골라도 파랑', world.team, 1);
 }
 
+say('편 바꾸기는 각자 — 2:1 에서 한 사람이 바꿔도 남은 사람은 제자리');
+{
+  // 고르지 않은 사람끼리 번호 순 0·1·0 을 매번 다시 셌더니, 한 사람이 고르면 뒷사람들 홀짝이 밀려 같이 옮겨졌다.
+  const world = mk(); world.state = 'play';
+  world.mp.on = true; world.mp.role = 'host'; world.mp.myId = 1;
+  for (const [id, name] of [[2, '범창'], [3, '도윤']]) {
+    world.mp.others.set(id, { id, name, x: 1100, air: 0, groundY: world.groundY, dead: false, waiting: false });
+  }
+  volley.update(world, 1 / 60);
+  const sides = () => Object.fromEntries(volley.pack(world).tm);
+  check('처음 — 빨강 둘 · 파랑 하나 (번호 순)', sides(), { 1: 0, 2: 1, 3: 0 });
+  volley.message(world, 2, { t: 'gm', s: 0 });          // 범창이 빨강으로
+  volley.update(world, 1 / 60);
+  check('범창만 빨강으로 — 나와 도윤은 그대로', sides(), { 1: 0, 2: 0, 3: 0 });
+  volley.message(world, 3, { t: 'gm', s: 1 });          // 도윤이 파랑으로
+  volley.update(world, 1 / 60);
+  check('도윤만 파랑으로', sides(), { 1: 0, 2: 0, 3: 1 });
+  volley.swap(world, null, 1);                          // 나도 파랑으로
+  volley.update(world, 1 / 60);
+  check('나만 파랑으로 — 남은 둘은 그대로', sides(), { 1: 1, 2: 0, 3: 1 });
+  // 새로 들어온 사람은 적은 편으로
+  world.mp.others.set(4, { id: 4, name: '서연', x: 300, air: 0, groundY: world.groundY, dead: false, waiting: false });
+  volley.update(world, 1 / 60);
+  check('넷째는 적은 편(빨강)으로 — 남은 셋은 그대로', sides(), { 1: 1, 2: 0, 3: 1, 4: 0 });
+}
+
 say('세트 스코어 — 판이 끝날 때마다 이긴 편에 하나 · 편이 바뀌거나 방이 깨지면 0:0');
 {
   const net = await import(R + 'game/net.js');

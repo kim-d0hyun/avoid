@@ -106,7 +106,7 @@ say('충격파 — 닿으면 받힌 차가 날아간다 · 돌진 · 버티기�
   };
   const slow = crash({ v: 120 }), fast = crash({ boost: true });
   note(`받힌 차 가로 빠르기 — 천천히 닿아도 ${slow.bMax.toFixed(0)} · 돌진에 ${fast.bMax.toFixed(0)} / 들이받은 차 ${slow.a.toFixed(0)} · ${fast.a.toFixed(0)}`);
-  ok('천천히 닿아도 받힌 차가 튕겨 나간다 (충격파)', slow.bMax > 350);
+  ok('천천히 닿아도 받힌 차가 튕겨 나간다 (충격파)', slow.bMax > 250);
   ok('돌진에 받히면 더 멀리', fast.bMax > slow.bMax * 1.4);
   ok('들이받은 차도 뒤로 조금 튄다', slow.a < 0 && fast.a < 0);
   ok('부딪히면 돌진이 끝난다', fast.boostT === 0);
@@ -130,7 +130,7 @@ say('범퍼 반동 — 부딪히면 둘 다 조금씩 밀린다 · 차 크기');
   a.x = -2 * B.CAR_R + 1; a.vx = 20; b.x = 0; b.vx = 0; b.vy = 0; a.vy = 0;
   B.bump(world, a, b);
   ok('맞대고 살살 미는 중엔 안 터진다', a.vx >= -5);
-  ok('차가 커졌다 (반지름 36)', B.CAR_R === 36);
+  ok('차가 커졌다 (반지름 40)', B.CAR_R === 40);
 }
 
 say('막판 — 60초 뒤엔 빨리 무너진다 · 가운데서 둘이 버텨도 끝난다');

@@ -316,11 +316,23 @@ function rosterSides(world) {
     ...[...mp.others.keys()].filter((id) => !mp.others.get(id)?.waiting),
   ].sort((a, b) => a - b);
   const picked = picks(world);
+  // **한 번 정해 준 편은 붙박는다.** 예전엔 고르지 않은 사람끼리 번호 순으로 0·1·0… 을 매번 다시 셌다.
+  // 그러면 한 사람이 편을 고르는 순간 그 사람이 줄에서 빠져 뒷사람들의 홀짝이 밀린다 — 2:1 에서 B 가
+  // 빨강을 고르면 C 가 파랑으로 같이 끌려갔다(「편 바꾸기 하면 같이 이동된다」). 편 바꾸기는 각자다.
+  const fixed = (world.mp.volleyAuto ??= new Map());
   const out = new Map();
-  let auto = 0;
   for (const id of ids) {
     if (picked.has(id)) out.set(id, picked.get(id));
-    else out.set(id, auto++ % 2);       // 고른 사람을 빼고 남은 사람끼리 반씩
+    else if (fixed.has(id)) out.set(id, fixed.get(id));
+  }
+  // 처음 보는 사람 — 적은 편으로 (같으면 빨강 — 예전 0·1·0… 과 같은 순서)
+  for (const id of ids) {
+    if (out.has(id)) continue;
+    const n = [0, 0];
+    for (const v of out.values()) n[v]++;
+    const side = n[0] <= n[1] ? 0 : 1;
+    fixed.set(id, side);
+    out.set(id, side);
   }
   return out;
 }
