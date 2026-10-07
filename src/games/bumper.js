@@ -15,7 +15,7 @@ const WIN_AT = 5;
 
 // ── 경기장 · 차 ──
 const SQ = 0.55;            // 비스듬히 내려다본 눌림 — 판정은 둥근 원, 그림만 눌린다
-const CAR_R = 40;          // 차 반지름 — 26 은 판에 비해 작아 보였다 (32 → 36 → 40)
+const CAR_R = 44;          // 차 반지름 — 26 은 판에 비해 작아 보였다 (32 → 36 → 40 → 44)
 const MAX = 380;            // 최고 빠르기 (px/s) — 원작(백래쉬)은 판을 2~3초에 가로지른다. 260 은 굼떴다
 const ACC = 1400;           // 가속 — 0.3초면 최고 빠르기 (원작처럼 툭 튀어 나간다)
 const BACK = 0.6;           // 후진·브레이크는 이만큼
@@ -52,7 +52,7 @@ const CPU_NAMES = ['빨강봇', '노랑봇', '초록봇'];
 
 /// 경기장 — 화면 가운데, 가로로 긴 화면에 맞춘 원(눌린 채 그린다)의 ARENA_SCALE 배.
 /// 카메라가 내 차를 따라가니 판이 화면보다 커도 된다. 구경할 땐 fit 배로 물러나 판 전체가 들어온다.
-const ARENA_SCALE = 1.3;    // 「맵을 더 키워 줘」 1.5 → 「조금만 줄여 줘」 1.3. 화면에 꼭 맞던 판의 1.3배
+const ARENA_SCALE = 1.1;    // 「맵을 더 키워 줘」 1.5 → 「줄여 줘」 1.3 → 「더 줄여」 1.1. 화면에 꼭 맞던 판의 1.1배
 export function arena(world) {
   const cx = world.w / 2, cy = world.h * 0.56;
   const R = Math.max(160, Math.min(world.w / 2 - 50, (world.h * 0.8) / (2 * SQ))) * ARENA_SCALE;
@@ -803,7 +803,7 @@ function camera(world, A, all, time) {
 function offscreenMarks(ctx, world, A, all, cam) {
   if (cam.z < 1) return;                 // 판 전체를 보는 중 (fit)
   const b = world.bag;
-  const M = 26, top = 92;
+  const M = 26, top = 30;                 // 점수판 밑이 아니라 화면 끝 — 위에 걸쳐 보이는 차엔 세모를 안 붙인다
   for (const car of all) {
     if (!car.alive || car.id === world.mp.myId) continue;
     const [wx, wy] = scr(A, car.x, car.y);
