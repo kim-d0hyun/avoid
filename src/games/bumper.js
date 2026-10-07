@@ -777,7 +777,7 @@ function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {})
 // ── 카메라 — 내 차를 따라간다 ──
 // 원작(백래쉬)은 내 차 뒤에서 살짝 확대해 따라간다 — 판 전체가 다 보이면 생동감이 없다.
 // 화면을 돌리지는 않는다(방향키가 화면 방향이라 화면이 돌면 키가 헷갈린다). 확대·따라가기만.
-const CAM_ZOOM = 1.7;       // 따라갈 때 확대
+const CAM_ZOOM = 1.35;      // 따라갈 때 확대 — 1.7 은 「너무 가깝다」
 const CAM_LEAD = 0.3;       // 달리는 쪽을 이만큼(초) 앞서 보여 준다 — 어디로 가는지 보이게
 const CAM_EASE = 4.5;       // 따라가는 부드러움 (클수록 바짝)
 function camera(world, A, all, time) {
