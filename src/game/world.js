@@ -666,7 +666,7 @@ export function menuItems(world) {
       const now = game.castNow?.(world);
       // 지금 입은 것은 「지금」으로 적는다 (점 표시는 긴 스킬 이름과 겹친다).
       return (game.cast ?? []).map((c) => ({ id: `cast:${c.id}`, label: c.name,
-                                             note: c.id === now ? `지금 · ${c.skill.name}` : c.skill.name }));
+                                             note: c.id === now ? `지금 · ${c.skill?.name ?? '옛날 그대로'}` : (c.skill?.name ?? '옛날 그대로') }));
     }
     case 'together': return togetherItems(world);
     // **같은 와이파이에 열려 있는 방들.** 코드를 받아 적지 않아도 골라서 들어간다.

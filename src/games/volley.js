@@ -494,6 +494,7 @@ function skillWord(world, p, word) {
 function spendSkill(world, id) {
   const b = world.bag;
   const sk = castOf(activeOf(world, id)).skill;
+  if (!sk) return false;                               // 기본 — 스킬 없음
   if (gaugeOf(world, id) < GAUGE_FULL) return false;
   if (sk.kind === 'arm' && b.armed?.has(id)) return false;
   b.gauge.set(id, 0);
@@ -510,7 +511,7 @@ export function skillState(world) {
   const p = world.player;
   const id = world.mp.myId;
   const sk = castOf(activeOf(world, id)).skill;
-  if (world.state !== 'play' || p.dead || world.mp.waiting || !b?.ball) return { sk, ready: false, why: '' };
+  if (!sk || world.state !== 'play' || p.dead || world.mp.waiting || !b?.ball) return { sk, ready: false, why: '' };
   if (sk.kind === 'arm' && b.armed?.has(id)) return { sk, ready: false, why: '켬' };
   const have = gaugeOf(world, id);
   if (have < GAUGE_FULL) return { sk, ready: false, why: `기세 ${have}/${GAUGE_FULL}` };
@@ -660,7 +661,7 @@ function unpackCast(world, d) {
     const id = d.cu[1];
     if (!first && id !== me) {
       const who = world.mp.others.get(id);
-      skillWord(world, who, d.cu[2] === 'rescued' ? '건졌다!' : castOf(activeOf(world, id)).skill.name);
+      skillWord(world, who, d.cu[2] === 'rescued' ? '건졌다!' : castOf(activeOf(world, id)).skill?.name);
     }
   }
   if (b.ball) b.ball.fire = d?.bf ? FIRE_TIME : 0;
@@ -1945,6 +1946,7 @@ function drawCastMarks(ctx, world, upright, time) {
   const rows = [[world.player, world.mp.myId], ...[...world.mp.others.values()].map((o) => [o, o.id])];
   for (const [p, id] of rows) {
     if (!p || p.dead || p.waiting || (p === world.player && world.mp.waiting)) continue;
+    if (!castOf(activeOf(world, id)).skill) continue;    // 기본 — 기세도 스킬도 없다 (옛날처럼)
     const g = gaugeOf(world, id);
     const full = g >= GAUGE_FULL;
     const blink = full ? 0.55 + 0.45 * Math.sin(time * 9) : 1;
@@ -2030,8 +2032,13 @@ function drawCastCard(ctx, world, id, x, y, h) {
     text(ctx, `특성 ${c.trait.name} — ${c.trait.line}`, fx, fy + 132,
          { font: `700 10px ${HAN}`, color: INK, align: 'center', halo: 0, alpha: 0.8 });
   }
-  text(ctx, `⌥C  ${c.skill.name}`, fx, fy + 154, { font: `800 12px ${HAN}`, color: SKILL_INK, align: 'center', halo: 0 });
-  text(ctx, c.skill.line, fx, fy + 171, { font: `600 10px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
+  if (c.skill) {
+    text(ctx, `⌥C  ${c.skill.name}`, fx, fy + 154, { font: `800 12px ${HAN}`, color: SKILL_INK, align: 'center', halo: 0 });
+    text(ctx, c.skill.line, fx, fy + 171, { font: `600 10px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
+  } else {
+    text(ctx, '스킬 없음 · 기세 없음', fx, fy + 154, { font: `800 12px ${HAN}`, color: INK, align: 'center', halo: 0 });
+    text(ctx, '능력치 모두 보통 — 예전 배구 그대로', fx, fy + 171, { font: `600 10px ${HAN}`, color: PENCIL, align: 'center', halo: 0 });
+  }
 }
 
 /// 지나온 자리 — 뒤로 갈수록 옅어지고 작아진다. 불꽃(벼락)이면 주황 동그라미.
@@ -2676,7 +2683,7 @@ export default {
     if (typeof msg.c === 'string' && isCast(msg.c)) castPicks(world).set(from, msg.c);
     if (msg.k === 'skill' && world.state === 'play' && spendSkill(world, from)) {
       const other = world.mp.others.get(from);
-      skillWord(world, other, castOf(activeOf(world, from)).skill.name);
+      skillWord(world, other, castOf(activeOf(world, from)).skill?.name);
       world.bag.seenUse = world.bag.used?.[0];
     }
   },

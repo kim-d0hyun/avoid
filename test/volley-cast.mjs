@@ -39,18 +39,22 @@ function rally(world) {
 const run = (world, n, each) => { for (let i = 0; i < n; i++) { each?.(i); w.update(world, FR); } };
 const tap = (world, a) => { w.press(world, a, true); w.press(world, a, false); };
 
-say('표 — 열 명, 능력치 여섯의 합은 모두 18, 스파이크는 2 이상(1:1 이라 누구나 때려야 한다)');
+say('표 — 기본 + 열 명, 능력치 여섯의 합은 모두 18, 스파이크는 2 이상(1:1 이라 누구나 때려야 한다)');
 {
-  check('열 명', C.CAST.map((c) => c.name), ['두부', '깡총', '망치', '번개', '문어', '콩떡', '벽돌', '풍선', '나비', '메아리']);
+  check('기본이 맨 위 + 열 명', C.CAST.map((c) => c.name), ['기본', '두부', '깡총', '망치', '번개', '문어', '콩떡', '벽돌', '풍선', '나비', '메아리']);
   for (const c of C.CAST) {
     const sum = Object.values(c.st).reduce((a, v) => a + v, 0);
     ok(`${c.name} — 능력치 여섯 · 합 18 (${Object.values(c.st).join('/')})`, sum === 18 && Object.keys(c.st).length === 6);
     ok(`${c.name} — 스파이크 ${c.st.spike} ≥ 2`, c.st.spike >= 2);
-    ok(`${c.name} — 스킬 ${c.skill.name}`, ['arm', 'now'].includes(c.skill.kind));
+    if (c.id !== 'basic') ok(`${c.name} — 스킬 ${c.skill.name}`, ['arm', 'now'].includes(c.skill.kind));
   }
   check('두부는 지금 게임 그대로 (전부 3)', C.statsOf('dubu'),
         { run: 1, jumpH: 65, jump: 1, spike: 1, reach: 1, serve: 1, block: 1, fall: 1, sense: 1 });
-  ok('스킬 아이디가 다 다르다', new Set(C.CAST.map((c) => c.skill.id)).size === C.CAST.length);
+  const skilled = C.CAST.filter((c) => c.skill);
+  ok('스킬 아이디가 다 다르다', new Set(skilled.map((c) => c.skill.id)).size === skilled.length);
+  check('기본 — 예전 배구 그대로 (전부 3 · 특성 없음)', C.statsOf('basic'),
+        { run: 1, jumpH: 65, jump: 1, spike: 1, reach: 1, serve: 1, block: 1, fall: 1, sense: 1 });
+  check('기본 — 스킬 없음', C.castOf('basic').skill, null);
   check('모르는 이름은 두부', C.castOf('없는애').id, 'dubu');
 }
 
@@ -555,13 +559,30 @@ say('그림 — 열 명 모두 그린다 (덧그림 · 긴 팔)');
     ok(`${c.name} 그린다`, fine);
   }
   const world = mk('mangchi'); w.press(world, 'menu', true);
-  world.menu.path = ['cast']; world.menu.index = 2;
+  world.menu.path = ['cast']; world.menu.index = 3;
   const { drawMenu } = await import(R + 'draw/hud.js');
   let fine = true;
   try { drawMenu(createCanvas(1512, 944).getContext('2d'), world); } catch (e) { fine = false; note(e.message); }
   ok('캐릭터 메뉴 + 카드를 그린다', fine);
-  check('지금 캐릭터에 「지금」', w.menuItems(world).findIndex((i) => i.note.startsWith('지금')), 2);
-  check('메뉴에 열 명', w.menuItems(world).length, 10);
+  check('지금 캐릭터에 「지금」', w.menuItems(world).findIndex((i) => i.note.startsWith('지금')), 3);
+  check('메뉴에 열하나 — 맨 위가 기본', [w.menuItems(world).length, w.menuItems(world)[0].label], [11, '기본']);
+  // 기본 카드도 그린다 (스킬 칸 대신 「스킬 없음」)
+  let card = true;
+  try { volley.castCard(createCanvas(400, 500).getContext('2d'), world, 'basic', 10, 10, 340); } catch (e) { card = false; note(e.message); }
+  ok('기본 카드를 그린다', card);
+}
+
+say('기본 — ⌥C 를 눌러도 아무 일 없다 · 기세 칸도 없다');
+{
+  const { skillState } = await import(R + 'games/volley.js');
+  const world = mk('basic'); rally(world);
+  world.bag.gauge.set(world.mp.myId, C.GAUGE_FULL);
+  const st = skillState(world);
+  ok('기세가 차도 쓸 수 없다', !st.ready && st.sk === null);
+  let fine = true;
+  try { tap(world, 'guard'); volley.update(world, 1 / 60); } catch (e) { fine = false; note(e.message); }
+  ok('⌥C 를 눌러도 안 넘어진다', fine);
+  check('켜진 스킬 없음', world.bag.armed?.size ?? 0, 0);
 }
 
 done('배구 캐릭터');
