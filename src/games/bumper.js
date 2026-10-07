@@ -15,18 +15,19 @@ const WIN_AT = 5;
 
 // ── 경기장 · 차 ──
 const SQ = 0.55;            // 비스듬히 내려다본 눌림 — 판정은 둥근 원, 그림만 눌린다
-const CAR_R = 32;          // 차 반지름 — 26 은 판에 비해 작아 보였다
-const MAX = 260;            // 최고 빠르기 (px/s)
-const ACC = 620;            // 가속
+const CAR_R = 36;          // 차 반지름 — 26 은 판에 비해 작아 보였다 (32 → 36)
+const MAX = 380;            // 최고 빠르기 (px/s) — 원작(백래쉬)은 판을 2~3초에 가로지른다. 260 은 굼떴다
+const ACC = 1400;           // 가속 — 0.3초면 최고 빠르기 (원작처럼 툭 튀어 나간다)
 const BACK = 0.6;           // 후진·브레이크는 이만큼
 const TURN = 3.4;           // 방향 틀기 (rad/s) — 빠를수록 덜 돈다 (컴퓨터)
 const SCREEN_TURN = 7;      // 사람 — 누른 화면 방향으로 차가 도는 빠르기 (반 바퀴에 0.45초)
-const FRIC = 1.1;           // 앞뒤 마찰 (손 떼면 천천히 선다)
-const GRIP = 5.5;           // 옆 미끄러짐 마찰 — 차처럼 앞으로만 간다
-const BOUNCE = 0.9;         // 범퍼 탄성
-const RECOIL = 0.5;         // 범퍼 반동 — 부딪힌 세기의 이만큼 **둘 다** 서로 밀려난다 (들이받은 차도 뒤로 튄다)
+const FRIC = 1.3;           // 앞뒤 마찰 (손 떼면 천천히 선다)
+const GRIP = 4.2;           // 옆 미끄러짐 마찰 — 차처럼 앞으로 가되, 빠르게 돌면 살짝 미끄러지며 둥글게 돈다
+const BOUNCE = 1.0;         // 범퍼 탄성 — 고무 범퍼라 힘을 안 잃고 튄다
+const RECOIL = 0.7;         // 범퍼 반동 — 부딪힌 세기의 이만큼 **둘 다** 서로 밀려난다 (들이받은 차도 뒤로 튄다)
 const RECOIL_MIN = 30;      //   이보다 살살 닿으면(맞대고 미는 중) 반동 없음
-const BOOST = 2.2;          // 돌진 — 최고 빠르기의 이만큼
+const POP_APART = 170;      // 부딪히면 적어도 이 빠르기로 떨어진다 — 살짝 받아도 「팡」 튄다
+const BOOST = 1.9;          // 돌진 — 최고 빠르기의 이만큼
 const BOOST_T = 0.25, BOOST_COOL = 1.5;
 const BRACE_T = 0.6, BRACE_COOL = 2.0;
 const BRACE_MASS = 3;       // 버티기 — 앞에서 받는 힘
@@ -203,7 +204,9 @@ function bump(world, a, c) {
   // 범퍼 반동 — 같은 무게면 들이받은 차는 거의 서 버리고 받힌 차만 나간다. 범퍼카는 둘 다 튄다.
   // 가벼운 쪽(버티지 않는 쪽)이 더 밀린다.
   if (-rel > RECOIL_MIN) {
-    const kick = RECOIL * -rel;
+    // 「팡」 — 살살 받아도 POP_APART 만큼은 떨어진다 (원작처럼 닿자마자 튕겨 난다)
+    const after = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
+    const kick = Math.max(RECOIL * -rel, POP_APART - after);
     a.vx -= nx * kick * (mc / (ma + mc)); a.vy -= ny * kick * (mc / (ma + mc));
     c.vx += nx * kick * (ma / (ma + mc)); c.vy += ny * kick * (ma / (ma + mc));
   }
@@ -221,21 +224,22 @@ function bump(world, a, c) {
   const capSpin = (v) => Math.max(-SPIN_MAX, Math.min(SPIN_MAX, v));   // 돌진에 받혀도 한 바퀴씩 돌지는 않게
   c.spin = capSpin((c.spin ?? 0) + SPIN * ((j / mc) / MAX) * sideOf(c, nx, ny));
   a.spin = capSpin((a.spin ?? 0) + SPIN * ((j / ma) / MAX) * sideOf(a, -nx, -ny));
-  for (const car of [a, c]) { car.wob = Math.max(car.wob ?? 0, Math.min(1, hit / 420)); car.wobT = 0; }
+  for (const car of [a, c]) { car.wob = Math.max(car.wob ?? 0, Math.min(1, hit / 600)); car.wobT = 0; }
   const b = world.bag;
   const mx = (a.x + c.x) / 2, my = (a.y + c.y) / 2;
-  if (hit > 150) {
+  if (hit > 200) {
     b.popSeq = ((b.popSeq ?? 0) + 1) % 1000;
-    (b.pops ??= []).push({ x: mx, y: my, t: 0, word: hit > 380 ? '쾅!' : '쿵', seq: b.popSeq });
+    (b.pops ??= []).push({ x: mx, y: my, t: 0, word: hit > 550 ? '쾅!' : '쿵', seq: b.popSeq });
   }
-  if (hit > 300) world.shake = Math.max(world.shake ?? 0, Math.min(0.8, hit / 700));
+  if (hit > 440) world.shake = Math.max(world.shake ?? 0, Math.min(0.8, hit / 1000));
   // 세게 부딪혔으면 **받힌 차에** 민 차를 적어 둔다. 둘 다에 적었더니, 들이받고 제 힘에 판 밖으로 나간 차가
   // 「받힌 차가 밀었다」로 나왔다.
-  if (hit > 120) {
+  if (hit > 170) {
     if (aIn >= cIn) c.lastHit = { id: a.id, at: b.clock };
     else a.lastHit = { id: c.id, at: b.clock };
   }
-  if (hit > 260) (b.sparks ??= []).push({ x: mx, y: my, t: 0 });
+  // 충격 고리 — 원작의 반투명 충격파처럼 맞닿은 자리에서 퍼진다. 세면 빨간 빛살도.
+  if (hit > 60) (b.sparks ??= []).push({ x: mx, y: my, t: 0, k: Math.min(1, hit / 600) });
   return true;
 }
 
@@ -554,8 +558,8 @@ function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {})
       ctx.fillStyle = f >= 1 ? col : PENCIL; ctx.fillRect(sx - w / 2, y, w * f, 3);
       if (f >= 1) text(ctx, label, sx + w / 2 + 3, y + 4, { font: `700 8px ${HAN}`, color: col, halo: 2 });
     };
-    bar(sy + 24, car.boostCool, BOOST_COOL, INK, '돌진');
-    bar(sy + 30, car.braceCool, BRACE_COOL, RED, '버팀');
+    bar(sy + r * SQ + 14, car.boostCool, BOOST_COOL, INK, '돌진');
+    bar(sy + r * SQ + 20, car.braceCool, BRACE_COOL, RED, '버팀');
   }
 }
 
@@ -694,6 +698,17 @@ export default {
     }
     for (const sp of b.sparks ?? []) {
       const [x, y] = scr(A, sp.x, sp.y);
+      const k = sp.k ?? 1, g = sp.t / 0.3;
+      // 퍼지는 충격 고리 — 빠르게 커지며 옅어진다
+      const rr = CAR_R * (0.6 + (1.2 + k * 1.6) * (1 - (1 - g) * (1 - g)));
+      ctx.save();
+      ctx.globalAlpha = (1 - g) * (0.35 + 0.4 * k);
+      ctx.strokeStyle = '#7fd4c4'; ctx.lineWidth = 3 + 5 * k * (1 - g);
+      ctx.beginPath(); ctx.ellipse(x, y, rr, rr * SQ, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#bff0e6'; ctx.globalAlpha *= 0.35;
+      ctx.beginPath(); ctx.ellipse(x, y, rr, rr * SQ, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      if (k < 0.5) continue;
       for (let i = 0; i < 7; i++) {
         const a = (i / 7) * Math.PI * 2, r0 = 8 + sp.t * 40;
         stroke(ctx, [[x + Math.cos(a) * r0, y + Math.sin(a) * r0 * 0.7], [x + Math.cos(a) * (r0 + 9), y + Math.sin(a) * (r0 + 9) * 0.7]],
@@ -759,7 +774,7 @@ export default {
       po: (b.pops ?? []).map((p) => [p.seq, Math.round(p.x), Math.round(p.y), p.word]),
       s: [...b.score.entries()], n: [...b.names.entries()], ph: b.phase, tm: Math.round(b.timer * 100),
       ck: Math.round(b.clock * 100), rk: Math.round(b.Rk * 1000), rd: b.round,
-      w: b.words.map((w) => [w.seq, w.word, w.color]), sp: (b.sparks ?? []).map((s) => [Math.round(s.x), Math.round(s.y), Math.round(s.t * 100)]),
+      w: b.words.map((w) => [w.seq, w.word, w.color]), sp: (b.sparks ?? []).map((s) => [Math.round(s.x), Math.round(s.y), Math.round(s.t * 100), Math.round((s.k ?? 1) * 100)]),
       ov: b.over ? 1 : 0, wn: b.winner,
     };
   },
@@ -802,7 +817,7 @@ export default {
         if (r[3] === '쾅!') world.shake = Math.max(world.shake ?? 0, 0.6);
       }
     }
-    if (Array.isArray(d.sp)) b.sparks = d.sp.filter((r) => Array.isArray(r) && r.length === 3).map(([x, y, t]) => ({ x, y, t: t / 100 }));
+    if (Array.isArray(d.sp)) b.sparks = d.sp.filter((r) => Array.isArray(r) && r.length >= 3).map(([x, y, t, k]) => ({ x, y, t: t / 100, k: Number.isFinite(k) ? k / 100 : 1 }));
     b.over = !!d.ov; b.winner = d.wn ?? null;
   },
 };

@@ -80,11 +80,12 @@ say('몰기 — 방향키는 화면 방향 그대로 · 최고 빠르기 · 손 
   check('여덟 방향 × 네 쪽 — 모두 누른 방향으로', miss, []);
   // 최고 빠르기 · 손 떼면 선다
   me.x = 0; me.y = 0; me.vx = 0; me.vy = 0; me.h = 0;
-  w.press(world, 'right', true); run(world, 90); w.press(world, 'right', false);
+  w.press(world, 'right', true); run(world, 50); w.press(world, 'right', false);
   const top = Math.hypot(me.vx, me.vy);
   note(`최고 빠르기 ${top.toFixed(0)}px/s`);
-  ok('최고 빠르기 근처 (260)', top > 230 && top < 275);
+  ok(`최고 빠르기 근처 (${B.MAX})`, top > B.MAX * 0.9 && top < B.MAX * 1.05);
   run(world, 120);
+  ok('달리다 손 떼도 판 안', me.alive);
   ok('손 떼면 천천히 선다', Math.hypot(me.vx, me.vy) < 60);
 }
 
@@ -136,7 +137,7 @@ say('범퍼 반동 — 부딪히면 둘 다 조금씩 밀린다 · 차 크기');
   a.x = -2 * B.CAR_R + 1; a.vx = 20; b.x = 0; b.vx = 0; b.vy = 0; a.vy = 0;
   B.bump(world, a, b);
   ok('살살 닿으면 반동 없음', a.vx >= -5);
-  ok('차가 커졌다 (반지름 32)', B.CAR_R === 32);
+  ok('차가 커졌다 (반지름 36)', B.CAR_R === 36);
 }
 
 say('막판 — 60초 뒤엔 빨리 무너진다 · 가운데서 둘이 버텨도 끝난다');
@@ -166,7 +167,7 @@ say('범퍼카 손맛 — 옆을 맞으면 빙글 · 출렁 · 쿵/쾅 · 화면
       pop ??= world.bag.pops?.[0]?.word; shake = Math.max(shake, world.shake ?? 0); });
     return { spin, wob, pop, shake };
   };
-  const side = hitAt(Math.PI / 2, 300), front = hitAt(Math.PI, 300), soft = hitAt(Math.PI / 2, 90), hard = hitAt(Math.PI / 2, 560);
+  const side = hitAt(Math.PI / 2, 440), front = hitAt(Math.PI, 440), soft = hitAt(Math.PI / 2, 130), hard = hitAt(Math.PI / 2, 800);
   note(`도는 세기 — 옆구리 ${side.spin.toFixed(2)} · 정면 ${front.spin.toFixed(2)} rad/s`);
   ok('옆구리를 맞으면 빙글 돈다', side.spin > 1);
   ok('정면으로 맞으면 거의 안 돈다', front.spin < side.spin * 0.2);
@@ -230,7 +231,9 @@ say('떨어짐 · 한 판 · 좁아지기 · 5점');
   const w3 = mk({ watch: true }); go(w3);
   const win = w3.bag.cars[0];
   w3.bag.score.set(win.id, 4);
-  for (const c of w3.bag.cars) if (c !== win) { c.x = B.arena(w3).R + 30; c.y = 0; }
+  // 판 밖 서로 다른 자리 — 한 자리에 겹쳐 두면 서로 밀어내다 하나가 판 안으로 돌아온다
+  let k = 0;
+  for (const c of w3.bag.cars) if (c !== win) { const ang = k++ * 2; c.x = Math.cos(ang) * (B.arena(w3).R + 60); c.y = Math.sin(ang) * (B.arena(w3).R + 60); }
   run(w3, 140);
   ok('5점이면 게임이 끝난다', !!w3.ended);
 }
