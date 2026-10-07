@@ -19,7 +19,7 @@ const CAR_R = 40;          // 차 반지름 — 26 은 판에 비해 작아 보�
 const MAX = 380;            // 최고 빠르기 (px/s) — 원작(백래쉬)은 판을 2~3초에 가로지른다. 260 은 굼떴다
 const ACC = 1400;           // 가속 — 0.3초면 최고 빠르기 (원작처럼 툭 튀어 나간다)
 const BACK = 0.6;           // 후진·브레이크는 이만큼
-const TURN = 3.4;           // 방향 틀기 (rad/s) — 빠를수록 덜 돈다 (컴퓨터)
+const TURN = 4.6;           // 방향 틀기 (rad/s) — 빠를수록 덜 돈다 (컴퓨터). 최고 빠르기 380 에 3.4 면 둘이 서로를 쫓아 빙빙 돌기만 했다
 const SCREEN_TURN = 7;      // 사람 — 누른 화면 방향으로 차가 도는 빠르기 (반 바퀴에 0.45초)
 const FRIC = 1.3;           // 앞뒤 마찰 (손 떼면 천천히 선다)
 const GRIP = 4.2;           // 옆 미끄러짐 마찰 — 차처럼 앞으로 가되, 빠르게 돌면 살짝 미끄러지며 둥글게 돈다
@@ -267,6 +267,8 @@ function cpuDrive(world, car, dt) {
       > Math.hypot(p.x, p.y) - Math.hypot(p.x - car.x, p.y - car.y) * 0.4 ? o : p));
     const err = steerTo(t.x, t.y);
     input.u = err < 0.9;
+    // 크게 돌아야 하면 브레이크 — 빠른 채로 돌면 반지름이 커서 상대 둘레를 맴돌기만 한다
+    input.d = err > 1.3 && Math.hypot(car.vx, car.vy) > 200;
     const dist = Math.hypot(t.x - car.x, t.y - car.y);
     if (car.think <= 0) {
       car.think = 0.12 + Math.random() * 0.12;
