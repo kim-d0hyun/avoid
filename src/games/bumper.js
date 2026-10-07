@@ -1,8 +1,8 @@
 // 범퍼카 — 둥근 경기장에서 서로 밀어 떨어뜨린다. 마지막에 남은 사람이 한 판, 5점 먼저.
 // 몰겜에서 처음으로 **위에서 내려다보는** 게임이다. 기획: claude.ai 「몰겜 범퍼카」.
 //
-// 세 수가 물린다 — 돌진은 그냥 차를 이기고, 버티기는 돌진을 이기고(앞에서 받는 힘에 무게 3배),
-// 옆으로 돌아 들어가기는 버티기를 이긴다(버티는 동안은 못 움직이고, 옆구리엔 무게가 덜 실린다).
+// 원작(백래쉬)처럼 **닿으면 충격파가 터진다** — 받힌 차는 날아가고 들이받은 차는 조금 튄다. 따로 키는 돌진(⌥Space) 하나.
+// (버티기 ⌥C 는 v3.41.0 에 뺐다 — 원작처럼 키 없이 부딪히는 맛만 남긴다.)
 //
 // **방장이 모든 차를 굴린다** — 부딪힘은 모두가 같은 값을 봐야 공정하다. 손님은 키를 보내고,
 // 방장이 계산한 자리를 받아 그린다. 내 차만은 받은 자리에서 내 키로 조금 앞질러 그린다(손맛).
@@ -24,14 +24,16 @@ const SCREEN_TURN = 7;      // 사람 — 누른 화면 방향으로 차가 도�
 const FRIC = 1.3;           // 앞뒤 마찰 (손 떼면 천천히 선다)
 const GRIP = 4.2;           // 옆 미끄러짐 마찰 — 차처럼 앞으로 가되, 빠르게 돌면 살짝 미끄러지며 둥글게 돈다
 const BOUNCE = 1.0;         // 범퍼 탄성 — 고무 범퍼라 힘을 안 잃고 튄다
-const RECOIL = 0.7;         // 범퍼 반동 — 부딪힌 세기의 이만큼 **둘 다** 서로 밀려난다 (들이받은 차도 뒤로 튄다)
-const RECOIL_MIN = 30;      //   이보다 살살 닿으면(맞대고 미는 중) 반동 없음
-const POP_APART = 170;      // 부딪히면 적어도 이 빠르기로 떨어진다 — 살짝 받아도 「팡」 튄다
+// 충격파 — 원작(백래쉬)처럼 **닿으면 터진다**(따로 키 없음). 받힌 차는 날아가고 들이받은 차는 조금 튄다.
+const SHOCK = 520;          // 두 차가 서로 떨어지는 빠르기 — 살살 닿아도 이만큼 (원작은 천천히 닿아도 차 두세 대를 날린다)
+const SHOCK_MUL = 1.3;      //   세게 받으면 부딪힌 빠르기의 이만큼
+const SHOCK_MIN = 30;       // 이보다 살살 닿으면(맞대고 미는 중) 안 터진다
+const SHOCK_HIT = 0.8;      // 들이받은 쪽이 분명하면 받힌 차가 이만큼, 들이받은 차가 나머지를 가져간다
+const SHOCK_BACK = 0.15;    // 들이받은 차도 적어도 이만큼 뒤로 튄다 (「서로 밀린다」)
+const SLIDE_T = 0.7;        // 충격파를 맞으면 이 동안 바퀴가 미끄러진다 — 옆구리로 날아가도 바로 안 선다
+const SLIDE_GRIP = 1.0;     //   그동안의 옆 마찰 (평소 GRIP). 이게 없으면 옆으로 날아간 차가 차 세 대 거리에서 섰다
 const BOOST = 1.9;          // 돌진 — 최고 빠르기의 이만큼
 const BOOST_T = 0.25, BOOST_COOL = 1.5;
-const BRACE_T = 0.6, BRACE_COOL = 2.0;
-const BRACE_MASS = 3;       // 버티기 — 앞에서 받는 힘
-const BRACE_SIDE = 1.4;     //            옆·뒤에서 받는 힘
 const ROUND = 60;           // 한 판
 const SHRINK_AT = 40;       // 이때부터 가장자리가 무너진다
 const SHRINK_TO = 0.4;      // 60초에 반지름이 이만큼까지
@@ -87,7 +89,7 @@ function newRound(world) {
     const a = (i / ids.length) * Math.PI * 2 + Math.PI / 2 + b.round * 0.7;
     const r = A.R * 0.55;
     return { id, x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0, h: a + Math.PI,
-             boostT: 0, boostCool: 0, braceT: 0, braceCool: 0, alive: true, fallT: 0, lastHit: null, think: 0,
+             boostT: 0, boostCool: 0, slideT: 0, alive: true, fallT: 0, lastHit: null, think: 0,
              spin: 0, wob: 0, wobT: 0 };
   });
   for (const id of ids) { if (!b.score.has(id)) b.score.set(id, 0); b.names.set(id, nameOf(world, id)); }
@@ -116,31 +118,18 @@ function inputOf(world, car) {
 }
 
 function boost(car) {
-  if (!car.alive || car.boostCool > 0 || car.braceT > 0) return false;
+  if (!car.alive || car.boostCool > 0) return false;
   car.boostT = BOOST_T; car.boostCool = BOOST_COOL;
-  return true;
-}
-function brace(car) {
-  if (!car.alive || car.braceCool > 0 || car.boostT > 0) return false;
-  car.braceT = BRACE_T; car.braceCool = BRACE_COOL;
   return true;
 }
 
 // ── 물리 (방장 — 그리고 손님이 제 차를 앞질러 그릴 때) ──
-/// 한 대를 dt 만큼 — 키 · 돌진 · 버티기 · 마찰. 부딪힘과 떨어짐은 따로.
+/// 한 대를 dt 만큼 — 키 · 돌진 · 마찰. 부딪힘과 떨어짐은 따로.
 export function drive(car, input, dt) {
   car.boostCool = Math.max(0, car.boostCool - dt);
-  car.braceCool = Math.max(0, car.braceCool - dt);
-  // 옆을 맞아 빙글 — 돌진 중이든 버티는 중이든 돈다 (범퍼카다)
+  // 옆을 맞아 빙글 — 돌진 중에도 돈다 (범퍼카다)
   if (car.spin) { car.h += car.spin * dt; car.spin *= Math.exp(-SPIN_DECAY * dt); if (Math.abs(car.spin) < 0.02) car.spin = 0; }
   const fx = Math.cos(car.h), fy = Math.sin(car.h);
-  if (car.braceT > 0) {
-    // 버티기 — 바퀴를 박고 선다. 키를 안 듣는다.
-    car.braceT = Math.max(0, car.braceT - dt);
-    const k = Math.exp(-8 * dt);
-    car.vx *= k; car.vy *= k;
-    return;
-  }
   if (car.boostT > 0) {
     // 돌진 — 그동안은 방향도 못 튼다. 앞으로 최고 빠르기의 BOOST 배.
     car.boostT = Math.max(0, car.boostT - dt);
@@ -171,25 +160,21 @@ export function drive(car, input, dt) {
   let along = car.vx * nx + car.vy * ny;
   let side = -car.vx * ny + car.vy * nx;
   along *= Math.exp(-FRIC * dt);
-  side *= Math.exp(-GRIP * dt);
+  car.slideT = Math.max(0, (car.slideT ?? 0) - dt);
+  side *= Math.exp(-(car.slideT > 0 ? SLIDE_GRIP : GRIP) * dt);
   // 최고 빠르기 — 돌진에 밀려 빨라진 것은 마찰로 천천히 잦아든다(바로 깎지 않는다)
   if (Math.abs(along) > MAX && go !== 0 && Math.sign(go) === Math.sign(along)) along = Math.sign(along) * Math.max(MAX, Math.abs(along) * Math.exp(-3 * dt));
   car.vx = along * nx - side * ny;
   car.vy = along * ny + side * nx;
 }
 
-/// 부딪힘 — 겹친 두 원을 맞닿은 방향으로 튕긴다. 버티는 차는 **앞에서 받으면** 무게 3배.
+/// 부딪힘 — 겹친 두 원을 맞닿은 방향으로 튕기고 충격파를 터뜨린다. 차 무게는 모두 같다.
 function bump(world, a, c) {
   const dx = c.x - a.x, dy = c.y - a.y;
   const d = Math.hypot(dx, dy);
   if (d >= CAR_R * 2 || d < 1e-6) return false;
   const nx = dx / d, ny = dy / d;
-  const mass = (car, towardX, towardY) => {
-    if (!(car.braceT > 0)) return 1;
-    const front = Math.cos(car.h) * towardX + Math.sin(car.h) * towardY;   // 부딪힌 쪽이 앞인가
-    return front > 0.5 ? BRACE_MASS : BRACE_SIDE;
-  };
-  const ma = mass(a, nx, ny), mc = mass(c, -nx, -ny);
+  const ma = 1, mc = 1;
   // 겹친 만큼 무게에 맞춰 밀어낸다
   const push = CAR_R * 2 - d;
   a.x -= nx * push * (mc / (ma + mc)); a.y -= ny * push * (mc / (ma + mc));
@@ -201,22 +186,24 @@ function bump(world, a, c) {
   const j = -(1 + BOUNCE) * rel / (1 / ma + 1 / mc);
   a.vx -= (j / ma) * nx; a.vy -= (j / ma) * ny;
   c.vx += (j / mc) * nx; c.vy += (j / mc) * ny;
-  // 범퍼 반동 — 같은 무게면 들이받은 차는 거의 서 버리고 받힌 차만 나간다. 범퍼카는 둘 다 튄다.
-  // 가벼운 쪽(버티지 않는 쪽)이 더 밀린다.
-  if (-rel > RECOIL_MIN) {
-    // 「팡」 — 살살 받아도 POP_APART 만큼은 떨어진다 (원작처럼 닿자마자 튕겨 난다)
-    const after = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
-    const kick = Math.max(RECOIL * -rel, POP_APART - after);
-    a.vx -= nx * kick * (mc / (ma + mc)); a.vy -= ny * kick * (mc / (ma + mc));
-    c.vx += nx * kick * (ma / (ma + mc)); c.vy += ny * kick * (ma / (ma + mc));
+  // **충격파** — 원작 영상: 천천히 다가가 닿기만 해도 반투명 돔이 터지며 받힌 차가 0.2초 만에 차 두세 대 거리를
+  // 날아가고, 들이받은 차는 거의 그 자리. 맞닿은 방향 빠르기만 바꾼다(옆으로 미끄러지던 건 그대로).
+  // 누가 받혔나는 상대 쪽으로 다가가던 빠르기로 나눈다 — 정면으로 둘 다 오면 반반.
+  let S = 0;
+  if (-rel > SHOCK_MIN) {
+    S = Math.max(SHOCK, SHOCK_MUL * -rel);
+    const wa = Math.max(0, aIn), wc = Math.max(0, cIn);
+    let fc = wa + wc > 0 ? wa / (wa + wc) : 0.5;                 // c 가 가져갈 몫
+    fc = Math.max(1 - SHOCK_HIT, Math.min(SHOCK_HIT, fc));
+    const com = ((a.vx * nx + a.vy * ny) * ma + (c.vx * nx + c.vy * ny) * mc) / (ma + mc);
+    const an = a.vx * nx + a.vy * ny, cn = c.vx * nx + c.vy * ny;
+    const cWant = Math.max(cn, com + (S * fc) / mc);
+    const aWant = Math.min(an, com - (S * (1 - fc)) / ma, -(S * SHOCK_BACK) / ma);
+    a.vx += (aWant - an) * nx; a.vy += (aWant - an) * ny;
+    c.vx += (cWant - cn) * nx; c.vy += (cWant - cn) * ny;
   }
-  // 돌진이 버티기에 정면으로 막혔다 — 돌진한 쪽이 제 힘에 더 튕기고 돌진이 끊긴다
-  for (const [x, y, s] of [[a, c, 1], [c, a, -1]]) {
-    if (x.boostT > 0 && y.braceT > 0 && mass(y, -nx * s, -ny * s) === BRACE_MASS) {
-      x.boostT = 0;
-      x.vx -= nx * s * MAX * 0.6; x.vy -= ny * s * MAX * 0.6;
-    }
-  }
+  // 돌진 중에 터지면 돌진은 끝난다 — 안 그러면 돌진이 빠르기를 계속 덮어써 받힌 차를 따라가 몇 번이고 다시 터진다
+  if (S > 0) for (const x of [a, c]) { x.boostT = 0; x.slideT = SLIDE_T; }
   // **범퍼카의 손맛** — 옆을 맞으면 빙글 돌고, 몸통이 출렁이고, 「쿵」.
   // 맞은 방향이 차가 보는 쪽과 어긋날수록(옆구리) 많이 돈다. 정면·뒤로 맞으면 거의 안 돈다.
   const hit = -rel;
@@ -224,22 +211,23 @@ function bump(world, a, c) {
   const capSpin = (v) => Math.max(-SPIN_MAX, Math.min(SPIN_MAX, v));   // 돌진에 받혀도 한 바퀴씩 돌지는 않게
   c.spin = capSpin((c.spin ?? 0) + SPIN * ((j / mc) / MAX) * sideOf(c, nx, ny));
   a.spin = capSpin((a.spin ?? 0) + SPIN * ((j / ma) / MAX) * sideOf(a, -nx, -ny));
-  for (const car of [a, c]) { car.wob = Math.max(car.wob ?? 0, Math.min(1, hit / 600)); car.wobT = 0; }
+  const boom = Math.max(hit, S * 0.6);                           // 손맛 세기 — 살살 닿아도 충격파가 터지면 「쿵」
+  for (const car of [a, c]) { car.wob = Math.max(car.wob ?? 0, Math.min(1, boom / 600)); car.wobT = 0; }
   const b = world.bag;
   const mx = (a.x + c.x) / 2, my = (a.y + c.y) / 2;
-  if (hit > 200) {
+  if (boom > 200) {
     b.popSeq = ((b.popSeq ?? 0) + 1) % 1000;
-    (b.pops ??= []).push({ x: mx, y: my, t: 0, word: hit > 550 ? '쾅!' : '쿵', seq: b.popSeq });
+    (b.pops ??= []).push({ x: mx, y: my, t: 0, word: boom > 550 ? '쾅!' : '쿵', seq: b.popSeq });
   }
-  if (hit > 440) world.shake = Math.max(world.shake ?? 0, Math.min(0.8, hit / 1000));
+  if (boom > 440) world.shake = Math.max(world.shake ?? 0, Math.min(0.8, boom / 1000));
   // 세게 부딪혔으면 **받힌 차에** 민 차를 적어 둔다. 둘 다에 적었더니, 들이받고 제 힘에 판 밖으로 나간 차가
   // 「받힌 차가 밀었다」로 나왔다.
-  if (hit > 170) {
+  if (S > 0 || hit > 170) {
     if (aIn >= cIn) c.lastHit = { id: a.id, at: b.clock };
     else a.lastHit = { id: c.id, at: b.clock };
   }
   // 충격 고리 — 원작의 반투명 충격파처럼 맞닿은 자리에서 퍼진다. 세면 빨간 빛살도.
-  if (hit > 60) (b.sparks ??= []).push({ x: mx, y: my, t: 0, k: Math.min(1, hit / 600) });
+  if (S > 0) (b.sparks ??= []).push({ x: mx, y: my, t: 0, k: Math.min(1, boom / 600) });
   return true;
 }
 
@@ -283,17 +271,6 @@ function cpuDrive(world, car, dt) {
     if (car.think <= 0) {
       car.think = 0.12 + Math.random() * 0.12;
       if (err < 0.3 && dist < 230 && Math.random() < 0.7) boost(car);
-      // 나를 향해 오는 돌진 — 반쯤은 버틴다
-      for (const o of foes) {
-        if (!(o.boostT > 0)) continue;
-        const ax = car.x - o.x, ay = car.y - o.y, ad = Math.hypot(ax, ay);
-        const aim = (Math.cos(o.h) * ax + Math.sin(o.h) * ay) / (ad || 1);
-        if (ad < 200 && aim > 0.9 && Math.random() < 0.5) {
-          // 앞으로 받아야 세다 — 돌아서 버틴다(완벽히는 못 돈다)
-          car.h = Math.atan2(-ay, -ax) + (Math.random() - 0.5) * 0.6;
-          brace(car);
-        }
-      }
     }
   }
   return input;
@@ -354,6 +331,44 @@ const ring = (cx, cy, r, n = 64) => Array.from({ length: n }, (_, i) => {
 // 결정론 난수 — 그림의 흠집·볼트 자리가 프레임마다 바뀌면 바닥이 떤다.
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
+/// 뒤 철망 벽 — 판 뒤쪽 반을 두른 녹슨 철망(기둥 · 가로대 · 촘촘한 살). 경기장이 줄어도 벽은 제자리.
+function cageWall(ctx, A) {
+  const { cx, cy, R } = A;
+  const WR = R + 26, WH = Math.min(70, Math.max(24, cy - WR * SQ - 80));   // 위 점수판을 덮지 않을 만큼
+  const at = (a, up) => [cx + Math.cos(a) * WR, cy + Math.sin(a) * WR * SQ - up];
+  const N = 72;
+  ctx.save();
+  // 벽 판 — 위로 갈수록 어둡다
+  ctx.beginPath();
+  for (let i = 0; i <= N; i++) { const [x, y] = at(Math.PI + (i / N) * Math.PI, 0); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  for (let i = N; i >= 0; i--) { const [x, y] = at(Math.PI + (i / N) * Math.PI, WH); ctx.lineTo(x, y); }
+  ctx.closePath();
+  const g = ctx.createLinearGradient(0, cy - WR * SQ - WH, 0, cy);
+  g.addColorStop(0, '#2a1f19'); g.addColorStop(0.5, '#5b3b27'); g.addColorStop(1, '#3a2a20');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.clip();
+  // 촘촘한 철망 살
+  ctx.strokeStyle = 'rgba(190,140,95,0.28)'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 180; i++) {
+    const a = Math.PI + (i / 180) * Math.PI, [x0, y0] = at(a, 0), [x1, y1] = at(a, WH);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  }
+  ctx.restore();
+  // 가로대 셋 · 기둥
+  ctx.save(); ctx.lineCap = 'round';
+  for (const [up, w, col] of [[WH, 3, '#8a8f96'], [WH * 0.5, 2, '#6d6258'], [4, 2.5, '#4a4d52']]) {
+    ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath();
+    for (let i = 0; i <= N; i++) { const [x, y] = at(Math.PI + (i / N) * Math.PI, up); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+  }
+  for (let i = 0; i <= 18; i++) {
+    const a = Math.PI + (i / 18) * Math.PI, [x0, y0] = at(a, 0), [x1, y1] = at(a, WH + 4);
+    ctx.strokeStyle = '#25272b'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.strokeStyle = '#7d828a'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(x0 - 1, y0); ctx.lineTo(x1 - 1, y1); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /// 경기장 — **철판 바닥의 범퍼카장.** 잉크 선 그림체는 그대로, 재료를 그린다:
 /// 판 밑 낭떠러지(어둠) · 철판 옆벽(골) · 이음매로 나뉜 철판과 볼트 · 미끄럼 방지 무늬 · 닳은 자국 ·
 /// 가운데 칠한 원과 바닥 글씨 · 가장자리 경고띠와 테두리 등. 무너지면 바닥이 그 반지름까지만 남는다.
@@ -364,7 +379,7 @@ function drawArena(ctx, A, Rk, time) {
   // ① 밑 — 판 아래 낭떠러지. 가장자리 밖으로 갈수록 어둡다 (떨어지면 저 아래로)
   ctx.save();
   const pit = ctx.createRadialGradient(cx, cy + 60, R * 0.3, cx, cy + 60, R * 1.25);
-  pit.addColorStop(0, 'rgba(30,27,23,0.55)'); pit.addColorStop(0.75, 'rgba(30,27,23,0.25)'); pit.addColorStop(1, 'rgba(30,27,23,0)');
+  pit.addColorStop(0, 'rgba(14,16,20,0.75)'); pit.addColorStop(0.75, 'rgba(14,16,20,0.35)'); pit.addColorStop(1, 'rgba(14,16,20,0)');
   ctx.fillStyle = pit; ctx.beginPath(); ctx.ellipse(cx, cy + 60, R * 1.25, R * 1.25 * SQ, 0, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
   // 무너진 자리 — 원래 테두리만 끊긴 철골처럼 남는다
@@ -373,10 +388,17 @@ function drawArena(ctx, A, Rk, time) {
     stroke(ctx, ring(cx, cy, R), { width: 2, color: PENCIL, close: true, seed: 2, amp: 1.4, halo: false, alpha: 0.6 });
     ctx.restore();
   }
-  // ② 옆벽 — 철판 두께. 세로 골이 진다
-  const wall = 22;
-  ctx.save(); path(ring(cx, cy + wall, r)); ctx.fillStyle = '#8f8a80'; ctx.fill(); ctx.restore();
-  ctx.save(); ctx.strokeStyle = 'rgba(30,27,23,0.35)'; ctx.lineWidth = 1.2;
+  // ①½ 뒤 철망 벽 — 원작처럼 판 뒤쪽을 녹슨 철망이 두른다 (앞쪽은 안 그린다 — 차를 가린다)
+  cageWall(ctx, A);
+  // ② 옆벽 — 두꺼운 철판 원통. 가운데가 밝고 양옆이 어둡다(둥근 면). 세로 골이 진다
+  const wall = 34;
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(cx, cy + wall, r, r * SQ, 0, 0, Math.PI); ctx.lineTo(cx - r, cy); ctx.ellipse(cx, cy, r, r * SQ, 0, Math.PI, 0, true); ctx.closePath();
+  const wg = ctx.createLinearGradient(cx - r, 0, cx + r, 0);
+  wg.addColorStop(0, '#2c2f34'); wg.addColorStop(0.4, '#7a7f86'); wg.addColorStop(0.55, '#8d9197'); wg.addColorStop(1, '#25282d');
+  ctx.fillStyle = wg; ctx.fill();
+  ctx.restore();
+  ctx.save(); ctx.strokeStyle = 'rgba(15,16,18,0.45)'; ctx.lineWidth = 1.2;
   for (let i = 0; i < 72; i++) {
     const a = (i / 72) * Math.PI * 2;
     if (Math.sin(a) < -0.05) continue;                       // 뒤쪽 벽은 안 보인다
@@ -388,12 +410,12 @@ function drawArena(ctx, A, Rk, time) {
   // ③ 바닥 — 철판. 가운데가 밝고(조명) 가장자리로 갈수록 그늘
   ctx.save(); path(ring(cx, cy, r));
   const floor = ctx.createRadialGradient(cx, cy - r * 0.15 * SQ, r * 0.1, cx, cy, r);
-  floor.addColorStop(0, '#ebe8e0'); floor.addColorStop(0.7, '#dcd8cf'); floor.addColorStop(1, '#c9c5bb');
+  floor.addColorStop(0, '#b4b7bb'); floor.addColorStop(0.6, '#94989d'); floor.addColorStop(1, '#6c7075');
   ctx.fillStyle = floor; ctx.fill();
   ctx.clip();
   // 철판 이음매 — 큰 판을 격자로 깔았다 (경기장 좌표에서 110px 칸)
   const T = 110;
-  ctx.strokeStyle = 'rgba(60,55,48,0.32)'; ctx.lineWidth = 1.3;
+  ctx.strokeStyle = 'rgba(30,32,36,0.45)'; ctx.lineWidth = 1.4;
   for (let gx = -Math.ceil(R / T) * T; gx <= R; gx += T) {
     ctx.beginPath(); ctx.moveTo(cx + gx, cy - R * SQ); ctx.lineTo(cx + gx, cy + R * SQ); ctx.stroke();
   }
@@ -401,7 +423,7 @@ function drawArena(ctx, A, Rk, time) {
     ctx.beginPath(); ctx.moveTo(cx - R, cy + gy * SQ); ctx.lineTo(cx + R, cy + gy * SQ); ctx.stroke();
   }
   // 볼트 — 이음매가 만나는 자리마다 넷
-  ctx.fillStyle = 'rgba(60,55,48,0.45)';
+  ctx.fillStyle = 'rgba(30,32,36,0.6)';
   for (let gx = -Math.ceil(R / T) * T; gx <= R; gx += T) {
     for (let gy = -Math.ceil(R / T) * T; gy <= R; gy += T) {
       if (Math.hypot(gx, gy) > r) continue;
@@ -411,7 +433,7 @@ function drawArena(ctx, A, Rk, time) {
     }
   }
   // 미끄럼 방지 무늬 — 판마다 짧은 빗금 몇 개 (철판의 돌기)
-  ctx.strokeStyle = 'rgba(90,84,74,0.22)'; ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(235,238,242,0.22)'; ctx.lineWidth = 1;
   for (let n = 0; n < 260; n++) {
     const x = (hash(n) * 2 - 1) * R, y = (hash(n + 999) * 2 - 1) * R;
     if (Math.hypot(x, y) > r) continue;
@@ -423,9 +445,15 @@ function drawArena(ctx, A, Rk, time) {
     const a = hash(n + 50) * Math.PI * 2, d = (0.25 + hash(n + 70) * 0.6) * r;
     const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d * SQ;
     const g = ctx.createRadialGradient(x, y, 0, x, y, 40 + hash(n) * 50);
-    g.addColorStop(0, 'rgba(40,36,30,0.055)'); g.addColorStop(1, 'rgba(40,36,30,0)');
+    g.addColorStop(0, 'rgba(20,22,26,0.12)'); g.addColorStop(1, 'rgba(20,22,26,0)');
     ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y, 90, 90 * SQ, 0, 0, Math.PI * 2); ctx.fill();
   }
+  ctx.restore();
+  // 위 조명 — 판 가운데 위쪽이 번들거린다
+  ctx.save(); path(ring(cx, cy, r)); ctx.clip();
+  const spot = ctx.createRadialGradient(cx - r * 0.15, cy - r * SQ * 0.35, 0, cx - r * 0.15, cy - r * SQ * 0.35, r * 0.9);
+  spot.addColorStop(0, 'rgba(255,255,255,0.22)'); spot.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = spot; ctx.fillRect(cx - r, cy - r * SQ, r * 2, r * 2 * SQ);
   ctx.restore();
   // ④ 가운데 — 칠한 노란 원(군데군데 벗겨졌다)과 바닥 글씨
   const cr = R * 0.26 * Math.min(1, Rk / 0.5);
@@ -433,7 +461,7 @@ function drawArena(ctx, A, Rk, time) {
   stroke(ctx, ring(cx, cy, cr), { width: 4, color: '#d9a21b', close: true, seed: 6, amp: 0.6, halo: false, alpha: 0.9 });
   ctx.restore();
   ctx.save(); ctx.translate(cx, cy); ctx.scale(1, SQ);
-  text(ctx, '몰겜', 0, 14, { font: `900 ${Math.round(cr * 0.62)}px ${HAN}`, color: INK, align: 'center', halo: 0, alpha: 0.08 });
+  text(ctx, '몰겜', 0, 14, { font: `900 ${Math.round(cr * 0.62)}px ${HAN}`, color: '#202226', align: 'center', halo: 0, alpha: 0.14 });
   ctx.restore();
   // ⑤ 가장자리 경고띠 — 노랑·검정 (떨어지기 직전 칸)
   const band = 16;
@@ -480,7 +508,7 @@ function skidMarks(ctx, A, b, cars, time) {
     const side = Math.abs(-c.vx * Math.sin(c.h) + c.vy * Math.cos(c.h));
     if (!(side > 90 || c.boostT > 0 || (c.spin && Math.abs(c.spin) > 1.5))) continue;
     for (const s of [-1, 1]) {
-      const ox = -Math.sin(c.h) * s * 14, oy = Math.cos(c.h) * s * 14;
+      const ox = -Math.sin(c.h) * s * CAR_R * 0.55, oy = Math.cos(c.h) * s * CAR_R * 0.55;
       b.skids.push([last.x + ox, last.y + oy, c.x + ox, c.y + oy, time]);
     }
   }
@@ -489,10 +517,106 @@ function skidMarks(ctx, A, b, cars, time) {
   ctx.save(); ctx.lineCap = 'round'; ctx.lineWidth = 3;
   for (const [x0, y0, x1, y1, t] of b.skids) {
     const [a, c0] = scr(A, x0, y0), [d, e] = scr(A, x1, y1);
-    ctx.strokeStyle = `rgba(30,27,23,${0.22 * (1 - (time - t) / SKID_LIFE)})`;
+    ctx.strokeStyle = `rgba(20,22,26,${0.16 * (1 - (time - t) / SKID_LIFE)})`;
     ctx.beginPath(); ctx.moveTo(a, c0); ctx.lineTo(d, e); ctx.stroke();
   }
   ctx.restore();
+}
+
+// ── 차 (3D) — 원작(백래쉬)의 범퍼카: 두툼한 고무 범퍼 치마 위에 색 몸통, 가운데 흰 줄, 뒤쪽 유리 덮개와 손잡이 고리.
+// 위에서 비스듬히 본 원기둥 두 단을 그림자·빛으로 세운다(옆면은 가운데가 밝은 원통 빛, 윗면은 왼쪽 위 빛).
+const mix = (hex, t) => {           // t>0 이면 흰색 쪽, t<0 이면 검정 쪽
+  const n = parseInt(hex.slice(1), 16), c = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const m = c.map((v) => Math.round(t > 0 ? v + (255 - v) * t : v * (1 + t)));
+  return `rgb(${m[0]},${m[1]},${m[2]})`;
+};
+/// 원뿔대 한 단 — 바닥 높이 y0 (반지름 rx) 에서 위로 h (반지름 rt). 옆면(원통 빛) 다음 윗면.
+function drum(ctx, x, y0, rx, rt, h, side, top) {
+  ctx.beginPath();
+  ctx.ellipse(x, y0, rx, rx * SQ, 0, 0, Math.PI);               // 아래 반원(앞쪽)
+  ctx.lineTo(x - rt, y0 - h);
+  ctx.ellipse(x, y0 - h, rt, rt * SQ, 0, Math.PI, 0, true);     // 윗면 앞 가장자리
+  ctx.closePath();
+  const g = ctx.createLinearGradient(x - rx, 0, x + rx, 0);
+  g.addColorStop(0, side[0]); g.addColorStop(0.38, side[1]); g.addColorStop(1, side[2]);
+  ctx.fillStyle = g; ctx.fill();
+  const ry = rt * SQ;
+  ctx.beginPath(); ctx.ellipse(x, y0 - h, rt, ry, 0, 0, Math.PI * 2);
+  const t = ctx.createRadialGradient(x - rt * 0.35, y0 - h - ry * 0.4, rt * 0.05, x, y0 - h, rt);
+  t.addColorStop(0, top[0]); t.addColorStop(0.55, top[1]); t.addColorStop(1, top[2]);
+  ctx.fillStyle = t; ctx.fill();
+}
+function carBody(ctx, sx, sy, r, color, h, alpha) {
+  const hx = Math.cos(h), hy = Math.sin(h);
+  const skirtH = r * 0.26, bodyH = r * 0.42;
+  const rs = r * 0.9;                // 범퍼 치마 윗면
+  const rb = r * 0.86, rt = r * 0.62; // 몸통 아래 · 윗면 — 위로 갈수록 좁아지는 종 모양
+  const topY = sy - skirtH - bodyH;
+  // 바닥 그림자 — 차 밑이 가장 진하다
+  const sh = ctx.createRadialGradient(sx + 4, sy + 3, r * 0.2, sx + 4, sy + 3, r * 1.25);
+  sh.addColorStop(0, 'rgba(10,10,12,0.45)'); sh.addColorStop(1, 'rgba(10,10,12,0)');
+  ctx.fillStyle = sh; ctx.beginPath(); ctx.ellipse(sx + 4, sy + 3, r * 1.25, r * 1.25 * SQ, 0, 0, Math.PI * 2); ctx.fill();
+  // 고무 범퍼 치마 — 흰 회색 두툼한 고리
+  drum(ctx, sx, sy, r, rs, skirtH, ['#8e9196', '#f3f3f1', '#7d8085'], ['#ffffff', '#e4e5e3', '#b9bbbd']);
+  // 몸통 — 사람 색
+  drum(ctx, sx, sy - skirtH, rb, rt, bodyH, [mix(color, -0.5), mix(color, 0.12), mix(color, -0.55)], [mix(color, 0.5), color, mix(color, -0.3)]);
+  // 윗면 흰 줄 — 앞뒤로 (바라보는 쪽)
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(sx, topY, rt, rt * SQ, 0, 0, Math.PI * 2); ctx.clip();
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = rt * 0.36;
+  ctx.beginPath(); ctx.moveTo(sx - hx * rt, topY - hy * rt * SQ); ctx.lineTo(sx + hx * rt, topY + hy * rt * SQ); ctx.stroke();
+  ctx.strokeStyle = mix(color, -0.15); ctx.lineWidth = rt * 0.09;
+  ctx.beginPath(); ctx.moveTo(sx - hx * rt, topY - hy * rt * SQ); ctx.lineTo(sx + hx * rt, topY + hy * rt * SQ); ctx.stroke();
+  ctx.restore();
+  // 옆면 흰 줄 — 윗면 줄이 앞뒤로 흘러내린다 (보이는 쪽만)
+  for (const phi of [h, h + Math.PI]) {
+    if (Math.sin(phi) < -0.05) continue;
+    const w = 0.2;
+    const at = (rr, y, d) => [sx + Math.cos(phi + d) * rr, y + Math.sin(phi + d) * rr * SQ];
+    ctx.beginPath();
+    [at(rb, sy - skirtH, -w), at(rt, topY, -w * 1.2), at(rt, topY, w * 1.2), at(rb, sy - skirtH, w)].forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath(); ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
+  }
+  // 뒷등 둘 — 빨강 (등을 보이면 어느 쪽을 보는지 안다)
+  for (const s of [-0.5, 0.5]) {
+    const a = h + Math.PI + s;
+    if (Math.sin(a) < -0.15) continue;
+    const lr = (rb + rt) / 2;
+    const lx = sx + Math.cos(a) * lr, ly = sy - skirtH - bodyH * 0.5 + Math.sin(a) * lr * SQ;
+    ctx.fillStyle = '#d6332a'; ctx.beginPath(); ctx.ellipse(lx, ly, r * 0.09, r * 0.07, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(30,30,34,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  // 전조등 둘 — 앞쪽 몸통 가장자리 (앞이 보이는 쪽이면 옆면, 아니면 윗면 가장자리)
+  for (const s of [-0.42, 0.42]) {
+    const a = h + s, front = Math.sin(a) > -0.15;
+    const lr = front ? (rb + rt) / 2 : rt;
+    const lx = sx + Math.cos(a) * lr * 0.98, ly = (front ? sy - skirtH - bodyH * 0.5 : topY) + Math.sin(a) * lr * SQ * 0.98;
+    const lg = ctx.createRadialGradient(lx - 1, ly - 1, 0.5, lx, ly, r * 0.13);
+    lg.addColorStop(0, '#ffffff'); lg.addColorStop(0.6, '#fff1b0'); lg.addColorStop(1, '#b59b45');
+    ctx.fillStyle = lg; ctx.beginPath(); ctx.ellipse(lx, ly, r * 0.12, r * 0.12 * (front ? 0.95 : SQ), 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(30,30,34,0.55)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  // 유리 덮개 — 몸통 가운데에서 조금 뒤, 둥근 회색 돔
+  const dx = sx - hx * rt * 0.1, dy = topY - hy * rt * 0.1 * SQ;
+  const dr = rt * 0.72, dh = dr * 0.6;
+  ctx.beginPath();
+  ctx.ellipse(dx, dy, dr, dr * SQ, 0, 0, Math.PI);
+  ctx.ellipse(dx, dy - dh * 0.15, dr, dh + dr * SQ * 0.4, 0, Math.PI, 0);
+  ctx.closePath();
+  const dg = ctx.createRadialGradient(dx - dr * 0.35, dy - dh, dr * 0.05, dx, dy - dh * 0.3, dr * 1.1);
+  dg.addColorStop(0, '#f3f5f7'); dg.addColorStop(0.35, '#9aa1a9'); dg.addColorStop(1, '#3b4047');
+  ctx.fillStyle = dg; ctx.fill();
+  ctx.strokeStyle = 'rgba(20,20,24,0.5)'; ctx.lineWidth = 1.2; ctx.stroke();
+  // 손잡이 고리 — 덮개 위로 솟은 은색 아치. 원작처럼 앞뒤로 (다리미 손잡이)
+  const px = hx, py = hy;
+  const ax = dx + px * dr * 0.85, ay = dy + py * dr * 0.85 * SQ, bx = dx - px * dr * 0.85, by = dy - py * dr * 0.85 * SQ;
+  const top = dy - dh - dr * 0.75;
+  ctx.lineCap = 'round';
+  for (const [w, col] of [[5, 'rgba(25,25,30,0.6)'], [3, '#e9ecef'], [1.2, '#ffffff']]) {
+    ctx.strokeStyle = col; ctx.lineWidth = w;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(dx, top, bx, by); ctx.stroke();
+  }
 }
 
 function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {}) {
@@ -505,7 +629,7 @@ function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {})
   const [sx, sy0] = scr(A, car.x + (car.x / d) * out, car.y + (car.y / d) * out);
   const sy = sy0 + FALL_DROP * fall * fall;
   const k = 1 - fall * 0.45;
-  const r = CAR_R * k;
+  const r = CAR_R * k * (1 + 0.08 * Math.max(-1, Math.min(1, car.y / A.R)));   // 가까운(아래) 차가 조금 크다
   const alpha = fall < 0.7 ? 1 : 1 - (fall - 0.7) / 0.3;
   if (fall > 0) {
     // 떨어지는 길 — 차 위로 속도선
@@ -522,36 +646,19 @@ function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {})
     const q = car.wob * Math.sin((car.wobT ?? 0) * 30) * 0.2;
     ctx.translate(sx, sy); ctx.scale(1 + q, 1 - q); ctx.translate(-sx, -sy);
   }
-  ctx.fillStyle = 'rgba(20,18,16,0.18)'; ctx.beginPath(); ctx.ellipse(sx + 3, sy + 9, r * 1.05, r * SQ + 4, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = color; ctx.globalAlpha = alpha * 0.75;
-  ctx.beginPath(); ctx.ellipse(sx, sy + 7, r, r * SQ + 3, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = alpha;
-  stroke(ctx, ring(sx, sy + 3, r + 3, 32), { width: 5, color: '#fbfaf6', close: true, seed: 11, amp: 0.3, halo: false, alpha });
-  stroke(ctx, ring(sx, sy + 3, r + 6, 32), { width: 2, color: INK, close: true, seed: 12, amp: 0.4, halo: false, alpha });
-  ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(sx, sy, r, r * SQ, 0, 0, Math.PI * 2); ctx.fill();
-  stroke(ctx, ring(sx, sy, r, 32), { width: 2.4, color: INK, close: true, seed: 13, amp: 0.4, halo: false, alpha });
   const hx = Math.cos(car.h), hy = Math.sin(car.h);
-  for (const s of [-0.35, 0.35]) {
-    const a = car.h + s;
-    circle(ctx, sx + Math.cos(a) * r * 0.82, sy + Math.sin(a) * r * 0.82 * SQ, 2.4, { width: 1.4, color: INK, fill: '#fff6c8', halo: false, alpha });
-  }
-  // 운전수 — 핸들 쥔 팔 · 머리 · 눈
-  const dx = sx - hx * r * 0.2, dy = sy - hy * r * 0.2 * SQ - 10 * k;
-  stroke(ctx, [[dx, dy + 4], [dx + hx * 9, dy + hy * 9 * SQ + 8]], { width: 2.6, color: INK, seed: 14, amp: 0.3, halo: false, alpha });
-  circle(ctx, dx + hx * 12, dy + hy * 12 * SQ + 9, 4.5, { width: 2, color: INK, halo: false, alpha });
-  circle(ctx, dx, dy - 4, 7.5 * k, { width: 2.6, color: INK, fill: '#fbfaf6', seed: 15, amp: 0.4, halo: true, alpha });
-  for (const e of [-1, 1]) circle(ctx, dx + hx * 2.5 - hy * e * 2.6, dy - 5 + hy * 1.5 + hx * e * 1.2, 0.9, { width: 1.4, color: INK, fill: INK, halo: false, alpha });
+  carBody(ctx, sx, sy, r, color, car.h, alpha);
   if (car.boostT > 0) for (let i = -1; i <= 1; i++) {
     const ox = -hy * i * 12, oy = hx * i * 12 * SQ;
     stroke(ctx, [[sx - hx * r * 1.2 + ox, sy - hy * r * 1.2 * SQ + oy], [sx - hx * r * 2.8 + ox, sy - hy * r * 2.8 * SQ + oy]],
            { width: 2.2, color: PENCIL, seed: 20 + i, amp: 0.4, halo: false, alpha });
   }
-  if (car.braceT > 0) stroke(ctx, ring(sx, sy + 3, r + 11, 32), { width: 3, color: RED, close: true, seed: 16, amp: 0.8, halo: false, alpha });
   ctx.restore();
   if (fall > 0) return;
-  // 이름표 · 내 차는 밑줄과 돌진·버티기 막대
-  text(ctx, name, sx, sy - 34, { font: `700 11px ${HAN}`, color, align: 'center', halo: 3 });
+  // 이름표 · 내 차는 밑줄과 돌진 막대
+  text(ctx, name, sx, sy - r * 1.35 - 6, { font: `700 11px ${HAN}`, color, align: 'center', halo: 3 });
   if (mine) {
-    stroke(ctx, [[sx - 14, sy - 30], [sx + 14, sy - 30]], { width: 2, color: RED, seed: 17, amp: 0.3, halo: false });
+    stroke(ctx, [[sx - 14, sy - r * 1.35 - 2], [sx + 14, sy - r * 1.35 - 2]], { width: 2, color: RED, seed: 17, amp: 0.3, halo: false });
     const bar = (y, left, total, col, label) => {
       const w = 28, f = 1 - Math.min(1, left / total);
       ctx.fillStyle = 'rgba(107,102,92,0.3)'; ctx.fillRect(sx - w / 2, y, w, 3);
@@ -559,7 +666,6 @@ function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {})
       if (f >= 1) text(ctx, label, sx + w / 2 + 3, y + 4, { font: `700 8px ${HAN}`, color: col, halo: 2 });
     };
     bar(sy + r * SQ + 14, car.boostCool, BOOST_COOL, INK, '돌진');
-    bar(sy + r * SQ + 20, car.braceCool, BRACE_COOL, RED, '버팀');
   }
 }
 
@@ -581,7 +687,6 @@ const KEY_ROWS = [
   ['⌥ 방향키', '그쪽으로 간다 — 차가 돌아서 간다 (대각선도)'],
   ['손 떼기', '천천히 선다'],
   ['⌥ Space', '돌진 — 그냥 차를 멀리 민다'],
-  ['⌥ C', '버티기 — 앞에서 오는 돌진을 튕겨 낸다 (못 움직인다)'],
 ];
 
 /// 손님 — 받은 차 자리를 다음 꾸러미까지 이어 그린다. 내 차는 내 키로 앞질러 굴린다.
@@ -600,7 +705,7 @@ function predicted(world, car) {
 export default {
   id: 'bumper',
   name: '범퍼카',
-  line: '둥근 경기장에서 서로 밀어 떨어뜨린다. 마지막에 남으면 한 판, 5점 먼저. 돌진은 버티기에 튕기고, 버티기는 옆구리에 약하다.',
+  line: '둥근 경기장에서 서로 밀어 떨어뜨린다. 마지막에 남으면 한 판, 5점 먼저. 닿으면 충격파가 터져 받힌 차가 날아간다.',
   keys: KEY_ROWS,
   tally: (world) => [...(world.bag?.score ?? new Map()).values()].join(' : '),
   noGrab: true,
@@ -617,11 +722,10 @@ export default {
   /// 내 사람은 판 위에 없다 — 엔진의 달리기·점프를 끈다(위아래 키는 가속·브레이크다).
   move(world) { const p = world.player; p.air = 0; p.vx = 0; p.vy = 0; p.groundY = world.groundY; },
 
-  /// ⌥Space — 돌진. ⌥C — 버티기. 손님은 방장에게 부탁하고, 제 화면에서도 바로 건다(손맛).
+  /// ⌥Space — 돌진. 손님은 방장에게 부탁하고, 제 화면에서도 바로 건다(손맛).
   action(world) { act(world, 'boost'); },
   release() {},
   drop() {},
-  guard(world) { act(world, 'brace'); },
   tap(world) { sendKeys(world); },
 
   update(world, dt) {
@@ -759,7 +863,7 @@ export default {
     if (msg.k === 'in') { b.inputs.set(from, { u: !!msg.u, d: !!msg.d, l: !!msg.l, r: !!msg.r }); return; }
     if (msg.k === 'act' && b.phase === 'go') {
       const car = b.cars.find((c) => c.id === from);
-      if (car) (msg.a === 'brace' ? brace : boost)(car);
+      if (car && msg.a === 'boost') boost(car);
     }
   },
 
@@ -768,9 +872,9 @@ export default {
     const r = (v) => Math.round(v * 10) / 10;
     return {
       c: b.cars.map((c) => [c.id, r(c.x), r(c.y), Math.round(c.vx), Math.round(c.vy), Math.round(c.h * 1000) / 1000,
-        c.alive ? 1 : 0, Math.round(c.fallT * 100), Math.round(c.boostT * 100), Math.round(c.braceT * 100),
-        Math.round(c.boostCool * 100), Math.round(c.braceCool * 100),
-        Math.round((c.wob ?? 0) * 100), Math.round((c.spin ?? 0) * 100)]),
+        c.alive ? 1 : 0, Math.round(c.fallT * 100), Math.round(c.boostT * 100), 0,
+        Math.round(c.boostCool * 100), 0,                    // 9·11 은 버티기 자리였다 (뺐다 — 자리만 둔다)
+        Math.round((c.wob ?? 0) * 100), Math.round((c.spin ?? 0) * 100), Math.round((c.slideT ?? 0) * 100)]),
       po: (b.pops ?? []).map((p) => [p.seq, Math.round(p.x), Math.round(p.y), p.word]),
       s: [...b.score.entries()], n: [...b.names.entries()], ph: b.phase, tm: Math.round(b.timer * 100),
       ck: Math.round(b.clock * 100), rk: Math.round(b.Rk * 1000), rd: b.round,
@@ -787,7 +891,8 @@ export default {
       const prev = b.cars ?? [];
       b.cars = d.c.filter((r) => Array.isArray(r) && r.length >= 12 && r.every(Number.isFinite)).map((r) => ({
         id: r[0], x: r[1], y: r[2], vx: r[3], vy: r[4], h: r[5], alive: !!r[6], fallT: r[7] / 100,
-        boostT: r[8] / 100, braceT: r[9] / 100, boostCool: r[10] / 100, braceCool: r[11] / 100, lastHit: null, think: 0,
+        boostT: r[8] / 100, boostCool: r[10] / 100, lastHit: null, think: 0,
+        slideT: Number.isFinite(r[14]) ? r[14] / 100 : 0,
         wob: Number.isFinite(r[12]) ? r[12] / 100 : 0, spin: Number.isFinite(r[13]) ? r[13] / 100 : 0,
         wobT: b.cars.find((o) => o.id === r[0])?.wobT ?? 0,
       }));
@@ -840,10 +945,10 @@ function act(world, kind) {
   if (!car || !car.alive) return;
   if (world.mp.role === 'guest') {
     world.send?.({ t: 'gm', k: 'act', a: kind });
-    (kind === 'brace' ? brace : boost)(car);              // 제 화면에서 바로 (방장 값이 곧 덮는다)
+    boost(car);                                           // 제 화면에서 바로 (방장 값이 곧 덮는다)
     return;
   }
-  (kind === 'brace' ? brace : boost)(car);
+  boost(car);
 }
 
-export { WIN_AT, MAX, BOOST, CAR_R, step, newRound, roster, boost, brace, bump, colorOf };
+export { WIN_AT, MAX, BOOST, CAR_R, step, newRound, roster, boost, bump, colorOf };

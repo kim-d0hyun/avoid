@@ -1,4 +1,4 @@
-// 범퍼카 — 몰기 · 돌진 > 그냥 차 · 버티기 > 돌진 · 옆구리 > 버티기 · 떨어짐 · 좁아지기 · 5점 · 혼자면 컴퓨터 셋 ·
+// 범퍼카 — 몰기 · 닿으면 충격파 · 돌진 · 떨어짐 · 좁아지기 · 5점 · 혼자면 컴퓨터 셋 ·
 // 같이 하기(방장이 굴린다 · 손님은 키) · 꾸러미 · 그림.
 //
 // 고칠 때마다 `npm test` 로 전부 돌린다. 결과는 test/결과.md 에 남는다.
@@ -89,38 +89,31 @@ say('몰기 — 방향키는 화면 방향 그대로 · 최고 빠르기 · 손 
   ok('손 떼면 천천히 선다', Math.hypot(me.vx, me.vy) < 60);
 }
 
-say('돌진 > 그냥 차 · 버티기 > 돌진 · 옆구리 > 버티기');
+say('충격파 — 닿으면 받힌 차가 날아간다 · 돌진 · 버티기는 없다');
 {
-  /// a 가 왼쪽에서 오른쪽 b 를 향해 돌진한다. b 는 pose 대로. 부딪힌 뒤 둘의 가로 빠르기.
-  const crash = (pose) => {
+  /// a 가 왼쪽에서 오른쪽 b 를 향해 간다(돌진하거나 빠르기 v 로). 부딪힌 뒤 둘의 가로 빠르기.
+  const crash = ({ boost = false, v = 0 } = {}) => {
     const world = mk(); go(world); park(world);
     const [a, b] = world.bag.cars.filter((c) => c.id < 0);
     // 둘만 남긴다 (나머지는 판 밖 멀리 — 셋 이상이 살아 있어야 판이 안 끝난다)
     for (const c of world.bag.cars) if (c !== a && c !== b) { c.x = 0; c.y = 400; c.vx = 0; c.vy = 0; c.still = true; }
     world.bag.cars.find((c) => c.id === world.mp.myId).y = -400;
-    a.x = -100; a.y = 0; a.h = 0; b.x = 0; b.y = 0; b.h = pose === 'side' ? Math.PI / 2 : Math.PI;
-    if (pose === 'brace' || pose === 'side') B.brace(b);
-    B.boost(a);
-    run(world, 12);
-    return { a: a.vx, b: b.vx, bx: b.x, ax: a.x };
+    a.x = -100; a.y = 0; a.h = 0; a.vx = v; b.x = 0; b.y = 0; b.h = Math.PI / 2;
+    if (boost) B.boost(a);
+    let bMax = 0;
+    run(world, boost ? 12 : 30, () => { bMax = Math.max(bMax, b.vx); });
+    return { a: a.vx, b: b.vx, bMax, boostT: a.boostT };
   };
-  const plain = crash('plain'), braced = crash('brace'), side = crash('side');
-  note(`돌진에 받힌 쪽 가로 빠르기 — 그냥 ${plain.b.toFixed(0)} · 버티기 ${braced.b.toFixed(0)} · 옆구리로 버티기 ${side.b.toFixed(0)}`);
-  note(`돌진한 쪽 — 그냥 ${plain.a.toFixed(0)} · 버티기에 막힘 ${braced.a.toFixed(0)}`);
-  ok('돌진에 받힌 그냥 차는 세게 밀려난다', plain.b > 300);
-  ok('버티면 거의 안 밀린다', braced.b < plain.b * 0.5);
-  ok('버티기에 막힌 돌진은 거꾸로 튕긴다', braced.a < -100);
-  ok('옆구리로 받은 버티기는 더 밀린다', side.b > braced.b * 1.4);
-  // 버티는 동안은 키를 안 듣는다
+  const slow = crash({ v: 120 }), fast = crash({ boost: true });
+  note(`받힌 차 가로 빠르기 — 천천히 닿아도 ${slow.bMax.toFixed(0)} · 돌진에 ${fast.bMax.toFixed(0)} / 들이받은 차 ${slow.a.toFixed(0)} · ${fast.a.toFixed(0)}`);
+  ok('천천히 닿아도 받힌 차가 튕겨 나간다 (충격파)', slow.bMax > 350);
+  ok('돌진에 받히면 더 멀리', fast.bMax > slow.bMax * 1.4);
+  ok('들이받은 차도 뒤로 조금 튄다', slow.a < 0 && fast.a < 0);
+  ok('부딪히면 돌진이 끝난다', fast.boostT === 0);
+  ok('버티기는 없다', B.brace === undefined && bumper.guard === undefined && !bumper.keys.some(([k]) => k.includes('C')));
   const world = mk(); go(world); park(world);
-  const me = car(world, world.mp.myId); me.x = 0; me.y = 0; me.vx = 0; me.vy = 0;
-  B.brace(me);
-  w.press(world, 'jump', true); run(world, 20); w.press(world, 'jump', false);
-  ok('버티는 동안은 못 움직인다', Math.hypot(me.vx, me.vy) < 20);
-  // 다시 쓰기까지
-  ok('버티기 쿨다운 중엔 또 못 버틴다', !B.brace(me));
-  const me2 = car(world, world.mp.myId); me2.braceT = 0; me2.braceCool = 0;
-  ok('돌진 · 쿨다운', B.boost(me2) && !B.boost(me2));
+  const me = car(world, world.mp.myId);
+  ok('돌진 · 쿨다운', B.boost(me) && !B.boost(me));
 }
 
 say('범퍼 반동 — 부딪히면 둘 다 조금씩 밀린다 · 차 크기');
@@ -136,7 +129,7 @@ say('범퍼 반동 — 부딪히면 둘 다 조금씩 밀린다 · 차 크기');
   // 맞대고 살살 미는 중엔 튀지 않는다 (붙어서 덜덜 떨지 않게)
   a.x = -2 * B.CAR_R + 1; a.vx = 20; b.x = 0; b.vx = 0; b.vy = 0; a.vy = 0;
   B.bump(world, a, b);
-  ok('살살 닿으면 반동 없음', a.vx >= -5);
+  ok('맞대고 살살 미는 중엔 안 터진다', a.vx >= -5);
   ok('차가 커졌다 (반지름 36)', B.CAR_R === 36);
 }
 
@@ -148,7 +141,7 @@ say('막판 — 60초 뒤엔 빨리 무너진다 · 가운데서 둘이 버텨�
   me.x = -40; me.y = 0; b1.x = 40; b1.y = 0;
   const r0 = world.bag.round;
   let t = 0;
-  while (world.bag.round === r0 && world.bag.phase !== 'end' && t < 120) { B.brace(me); run(world, 1); t += FR; }
+  while (world.bag.round === r0 && world.bag.phase !== 'end' && t < 120) { run(world, 1); t += FR; }
   note(`가운데서 버티기만 — ${world.bag.clock.toFixed(1)}초에 판이 끝났다`);
   ok('65초 안에 판이 끝난다', world.bag.phase === 'end' && world.bag.clock < 65);
 }
@@ -172,10 +165,10 @@ say('범퍼카 손맛 — 옆을 맞으면 빙글 · 출렁 · 쿵/쾅 · 화면
   ok('옆구리를 맞으면 빙글 돈다', side.spin > 1);
   ok('정면으로 맞으면 거의 안 돈다', front.spin < side.spin * 0.2);
   ok('부딪히면 출렁인다', side.wob > 0.4);
-  check('살살 닿으면 글자는 없다', soft.pop ?? null, null);
+  check('살살 닿아도 충격파가 터지면 「쿵」', soft.pop, '쿵');
   check('보통으로 받으면 「쿵」', side.pop, '쿵');
   check('세게 받으면 「쾅!」', hard.pop, '쾅!');
-  ok('세게 받으면 화면이 흔들린다', hard.shake > 0.4 && soft.shake === 0);
+  ok('세게 받으면 화면이 흔들린다', hard.shake > 0.4 && soft.shake < 0.01);
   // 손님 화면에도 쿵 · 출렁 · 흔들림
   const host = mk(); go(host); run(host, 1);
   host.bag.popSeq = 3; host.bag.pops = [{ seq: 3, x: 0, y: 0, t: 0, word: '쾅!' }];

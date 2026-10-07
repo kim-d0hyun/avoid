@@ -46,7 +46,7 @@ function place(world, list) {
   const used = new Set(list.map(([c]) => c));
   let k = 0;
   for (const c of world.bag.cars) {
-    c.vx = 0; c.vy = 0; c.spin = 0; c.boostCool = 0; c.braceCool = 0;
+    c.vx = 0; c.vy = 0; c.spin = 0; c.boostCool = 0;
     if (c.id < 0) c.still = true;
     if (!used.has(c)) { c.x = -A.R * 0.55 + k * 70; c.y = A.R * 0.62; c.h = -Math.PI / 2; k++; }
   }
@@ -84,27 +84,26 @@ const SCENES = [
     check(world, st) { return `${st.b.alive ? '안 떨어졌다' : '떨어뜨렸다'} · 외침 「${st.said.join(' / ')}」`; },
   },
   {
-    title: '버티기 — 돌진해 온 차가 거꾸로 튕겨 나간다',
-    setup(world) { const [b1] = bots(world); place(world, [[me(world), 60, 0, Math.PI], [b1, -120, 0, 0]]); },
+    title: '돌진 — 받힌 차는 날아가고 나는 조금 튄다',
+    setup(world) { const [b1] = bots(world); place(world, [[me(world), -220, 0, 0], [b1, 0, 0, -Math.PI / 2]]); },
     script(world, f, st) {
-      st.b ??= bots(world)[0];
-      if (f === 14) B.boost(st.b);
-      if (f === 18) tap(world, 'guard');
-      st.minVx = Math.min(st.minVx ?? 0, st.b.vx);
-      st.myMax = Math.max(st.myMax ?? 0, Math.abs(me(world).vx));
+      st.b ??= bots(world)[0]; st.x0 ??= st.b.x;
+      if (f === 6) tap(world, 'grab');
+      st.far = Math.max(st.far ?? 0, st.b.x - st.x0);
+      st.back = Math.min(st.back ?? 0, me(world).vx);
     },
-    check(world, st) { return `돌진한 차 가로 빠르기 최저 ${Math.round(st.minVx)} (음수면 튕겨 나감) · 내 차 최대 ${Math.round(st.myMax)}`; },
+    check(world, st) { return `받힌 차 ${Math.round(st.far)}px 날아감 · 내 차 뒤로 ${Math.round(-st.back)}px/s`; },
   },
   {
-    title: '버티는 차는 옆구리가 약하다 — 돌아 들어가 민다',
-    setup(world) { const [b1] = bots(world); place(world, [[me(world), 0, 150, -Math.PI / 2], [b1, 0, 0, Math.PI]]); },
+    title: '정면으로 마주 달려 부딪히면 둘 다 팡',
+    setup(world) { const [b1] = bots(world); place(world, [[me(world), -200, 0, 0], [b1, 200, 0, Math.PI]]); },
     script(world, f, st) {
       st.b ??= bots(world)[0];
-      if (f === 4) B.brace(st.b);
-      if (f === 8) tap(world, 'grab');
-      st.y0 ??= st.b.y; st.moved = Math.max(st.moved ?? 0, Math.abs(st.b.y - st.y0));
+      world.input.right = f < 40;
+      if (f < 14) st.b.vx = -300;
+      st.min = Math.min(st.min ?? 0, me(world).vx); st.max = Math.max(st.max ?? 0, st.b.vx);
     },
-    check(world, st) { return `버티던 차가 ${Math.round(st.moved)}px 밀렸다`; },
+    check(world, st) { return `내 차 ${Math.round(st.min)} · 상대 ${Math.round(st.max)} px/s 로 서로 튕김`; },
   },
   {
     title: '40초 — 가장자리가 무너진다',
