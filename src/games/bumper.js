@@ -15,7 +15,7 @@ const WIN_AT = 5;
 
 // ── 경기장 · 차 ──
 const SQ = 0.55;            // 비스듬히 내려다본 눌림 — 판정은 둥근 원, 그림만 눌린다
-const CAR_R = 26;
+const CAR_R = 32;          // 차 반지름 — 26 은 판에 비해 작아 보였다
 const MAX = 260;            // 최고 빠르기 (px/s)
 const ACC = 620;            // 가속
 const BACK = 0.6;           // 후진·브레이크는 이만큼
@@ -24,6 +24,8 @@ const SCREEN_TURN = 7;      // 사람 — 누른 화면 방향으로 차가 도�
 const FRIC = 1.1;           // 앞뒤 마찰 (손 떼면 천천히 선다)
 const GRIP = 5.5;           // 옆 미끄러짐 마찰 — 차처럼 앞으로만 간다
 const BOUNCE = 0.9;         // 범퍼 탄성
+const RECOIL = 0.5;         // 범퍼 반동 — 부딪힌 세기의 이만큼 **둘 다** 서로 밀려난다 (들이받은 차도 뒤로 튄다)
+const RECOIL_MIN = 30;      //   이보다 살살 닿으면(맞대고 미는 중) 반동 없음
 const BOOST = 2.2;          // 돌진 — 최고 빠르기의 이만큼
 const BOOST_T = 0.25, BOOST_COOL = 1.5;
 const BRACE_T = 0.6, BRACE_COOL = 2.0;
@@ -32,6 +34,7 @@ const BRACE_SIDE = 1.4;     //            옆·뒤에서 받는 힘
 const ROUND = 60;           // 한 판
 const SHRINK_AT = 40;       // 이때부터 가장자리가 무너진다
 const SHRINK_TO = 0.4;      // 60초에 반지름이 이만큼까지
+const OVERTIME = 4;         // 60초 뒤엔 이만큼 빨리 무너진다 — 가운데서 둘이 버티기만 하면 판이 10초 넘게 늘어졌다
 const COUNT = 1.6;          // 판 시작 전 셋·둘·하나
 const END_WAIT = 1.8;       // 판이 끝나고 다음 판까지
 const FALL_T = 1.0;         // 떨어지는 데 걸리는 시간 — 짧으면 「사라졌다」로만 보인다
@@ -197,6 +200,13 @@ function bump(world, a, c) {
   const j = -(1 + BOUNCE) * rel / (1 / ma + 1 / mc);
   a.vx -= (j / ma) * nx; a.vy -= (j / ma) * ny;
   c.vx += (j / mc) * nx; c.vy += (j / mc) * ny;
+  // 범퍼 반동 — 같은 무게면 들이받은 차는 거의 서 버리고 받힌 차만 나간다. 범퍼카는 둘 다 튄다.
+  // 가벼운 쪽(버티지 않는 쪽)이 더 밀린다.
+  if (-rel > RECOIL_MIN) {
+    const kick = RECOIL * -rel;
+    a.vx -= nx * kick * (mc / (ma + mc)); a.vy -= ny * kick * (mc / (ma + mc));
+    c.vx += nx * kick * (ma / (ma + mc)); c.vy += ny * kick * (ma / (ma + mc));
+  }
   // 돌진이 버티기에 정면으로 막혔다 — 돌진한 쪽이 제 힘에 더 튕기고 돌진이 끊긴다
   for (const [x, y, s] of [[a, c, 1], [c, a, -1]]) {
     if (x.boostT > 0 && y.braceT > 0 && mass(y, -nx * s, -ny * s) === BRACE_MASS) {
@@ -292,7 +302,11 @@ function step(world, dt) {
   b.clock += dt;
   // 가장자리가 무너진다
   // 60초가 넘어도 계속 무너진다 — 멈추면 좁은 원에 둘이 끼어 판이 영영 안 끝난다.
-  if (b.clock > SHRINK_AT) b.Rk = Math.max(0.02, 1 - (1 - SHRINK_TO) * (b.clock - SHRINK_AT) / (ROUND - SHRINK_AT));
+  // 60초 뒤엔 OVERTIME 배로 — 가운데서 둘이 버티면 차 두 대가 못 들어갈 만큼 금방 좁아진다.
+  if (b.clock > SHRINK_AT) {
+    const t = Math.min(b.clock, ROUND) - SHRINK_AT + Math.max(0, b.clock - ROUND) * OVERTIME;
+    b.Rk = Math.max(0.02, 1 - (1 - SHRINK_TO) * t / (ROUND - SHRINK_AT));
+  }
   const R = A.R * b.Rk;
   for (const car of b.cars) {
     if (!car.alive) { car.fallT += dt; continue; }
@@ -710,8 +724,8 @@ export default {
     // 시계 — 남은 시간, 40초부터는 「무너진다」
     if (b.phase === 'go') {
       const left = Math.max(0, Math.ceil(ROUND - b.clock));
-      text(ctx, String(left), world.w - 60, 52, { font: `800 30px ${HAN}`, color: b.clock > SHRINK_AT ? RED : INK, align: 'center', halo: 3 });
-      if (b.clock > SHRINK_AT) text(ctx, '가장자리가 무너진다', world.w - 60, 72, { font: `700 10px ${HAN}`, color: RED, align: 'center', halo: 2 });
+      text(ctx, left > 0 ? String(left) : '막판', world.w - 60, 52, { font: `800 30px ${HAN}`, color: b.clock > SHRINK_AT ? RED : INK, align: 'center', halo: 3 });
+      if (b.clock > SHRINK_AT) text(ctx, left > 0 ? '가장자리가 무너진다' : '빨리 무너진다', world.w - 60, 72, { font: `700 10px ${HAN}`, color: RED, align: 'center', halo: 2 });
     }
     if (b.phase === 'count') {
       text(ctx, String(Math.ceil(b.timer / (COUNT / 3))), mid, world.h * 0.3, { font: `800 46px ${HAN}`, color: INK, align: 'center', halo: 5 });

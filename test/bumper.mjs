@@ -69,6 +69,15 @@ say('몰기 — 방향키는 화면 방향 그대로 · 최고 빠르기 · 손 
   ok('⌥↓ — 화면 아래로', near(drive(0, ['duck']), 90));
   ok('⌥← — 화면 왼쪽으로', near(drive(Math.PI / 2, ['left'], 60), 180));
   ok('⌥↑+→ — 오른쪽 위 대각선', near(drive(0, ['jump', 'right']), -45));
+  // 여덟 방향 × 차가 보는 네 쪽 — 전부 누른 쪽으로
+  const DIRS = [[['right'], 0], [['right', 'duck'], 45], [['duck'], 90], [['duck', 'left'], 135],
+                [['left'], 180], [['left', 'jump'], -135], [['jump'], -90], [['jump', 'right'], -45]];
+  const miss = [];
+  for (const h of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) for (const [keys, want] of DIRS) {
+    const got = drive(h, keys, 70);
+    if (!near(got, want)) miss.push(`${keys.join('+')} h${Math.round(h * 180 / Math.PI)} → ${Math.round(got)}°`);
+  }
+  check('여덟 방향 × 네 쪽 — 모두 누른 방향으로', miss, []);
   // 최고 빠르기 · 손 떼면 선다
   me.x = 0; me.y = 0; me.vx = 0; me.vy = 0; me.h = 0;
   w.press(world, 'right', true); run(world, 90); w.press(world, 'right', false);
@@ -111,6 +120,36 @@ say('돌진 > 그냥 차 · 버티기 > 돌진 · 옆구리 > 버티기');
   ok('버티기 쿨다운 중엔 또 못 버틴다', !B.brace(me));
   const me2 = car(world, world.mp.myId); me2.braceT = 0; me2.braceCool = 0;
   ok('돌진 · 쿨다운', B.boost(me2) && !B.boost(me2));
+}
+
+say('범퍼 반동 — 부딪히면 둘 다 조금씩 밀린다 · 차 크기');
+{
+  const world = mk(); go(world); park(world);
+  const [a, b] = world.bag.cars.filter((c) => c.id < 0);
+  for (const c of world.bag.cars) if (c !== a && c !== b) { c.x = 0; c.y = 400; c.vx = 0; c.vy = 0; }
+  a.x = -2 * B.CAR_R - 3; a.y = 0; a.h = 0; a.vx = 240; b.x = 0; b.y = 0; b.h = Math.PI / 2;
+  run(world, 3);
+  note(`들이받은 차 ${a.vx.toFixed(0)} · 받힌 차 ${b.vx.toFixed(0)}`);
+  ok('들이받은 차도 뒤로 튄다', a.vx < -20);
+  ok('받힌 차는 더 크게 밀린다', b.vx > 200);
+  // 맞대고 살살 미는 중엔 튀지 않는다 (붙어서 덜덜 떨지 않게)
+  a.x = -2 * B.CAR_R + 1; a.vx = 20; b.x = 0; b.vx = 0; b.vy = 0; a.vy = 0;
+  B.bump(world, a, b);
+  ok('살살 닿으면 반동 없음', a.vx >= -5);
+  ok('차가 커졌다 (반지름 32)', B.CAR_R === 32);
+}
+
+say('막판 — 60초 뒤엔 빨리 무너진다 · 가운데서 둘이 버텨도 끝난다');
+{
+  const world = mk(); go(world); park(world);
+  const [me, b1, b2, b3] = world.bag.cars;
+  for (const c of [b2, b3]) { c.alive = false; c.fallT = 9; }
+  me.x = -40; me.y = 0; b1.x = 40; b1.y = 0;
+  const r0 = world.bag.round;
+  let t = 0;
+  while (world.bag.round === r0 && world.bag.phase !== 'end' && t < 120) { B.brace(me); run(world, 1); t += FR; }
+  note(`가운데서 버티기만 — ${world.bag.clock.toFixed(1)}초에 판이 끝났다`);
+  ok('65초 안에 판이 끝난다', world.bag.phase === 'end' && world.bag.clock < 65);
 }
 
 say('범퍼카 손맛 — 옆을 맞으면 빙글 · 출렁 · 쿵/쾅 · 화면 흔들림');
