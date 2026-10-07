@@ -52,7 +52,7 @@ const CPU_NAMES = ['빨강봇', '노랑봇', '초록봇'];
 
 /// 경기장 — 화면 가운데, 가로로 긴 화면에 맞춘 원(눌린 채 그린다)의 ARENA_SCALE 배.
 /// 카메라가 내 차를 따라가니 판이 화면보다 커도 된다. 구경할 땐 fit 배로 물러나 판 전체가 들어온다.
-const ARENA_SCALE = 1.5;    // 「맵을 더 키워 줘」 — 화면에 꼭 맞던 판의 1.5배
+const ARENA_SCALE = 1.3;    // 「맵을 더 키워 줘」 1.5 → 「조금만 줄여 줘」 1.3. 화면에 꼭 맞던 판의 1.3배
 export function arena(world) {
   const cx = world.w / 2, cy = world.h * 0.56;
   const R = Math.max(160, Math.min(world.w / 2 - 50, (world.h * 0.8) / (2 * SQ))) * ARENA_SCALE;
