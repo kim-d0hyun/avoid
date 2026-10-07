@@ -55,6 +55,7 @@ say('몰기 — 방향키는 화면 방향 그대로 · 최고 빠르기 · 손 
   /// 차를 가운데 세우고 h 쪽을 보게 한 뒤, keys 를 frames 동안 누른다. 움직인 방향(화면 기준)을 돌려준다.
   const drive = (h, keys, frames = 50) => {
     me.x = 0; me.y = 0; me.vx = 0; me.vy = 0; me.h = h; me.spin = 0;
+    world.bag.clock = 0;                               // 판이 좁아져 세워 둔 차가 떨어지면 판이 다시 시작된다
     for (const k of keys) w.press(world, k, true);
     run(world, frames);
     for (const k of keys) w.press(world, k, false);
@@ -79,7 +80,7 @@ say('몰기 — 방향키는 화면 방향 그대로 · 최고 빠르기 · 손 
   }
   check('여덟 방향 × 네 쪽 — 모두 누른 방향으로', miss, []);
   // 최고 빠르기 · 손 떼면 선다
-  me.x = 0; me.y = 0; me.vx = 0; me.vy = 0; me.h = 0;
+  me.x = 0; me.y = 0; me.vx = 0; me.vy = 0; me.h = 0; world.bag.clock = 0;
   w.press(world, 'right', true); run(world, 50); w.press(world, 'right', false);
   const top = Math.hypot(me.vx, me.vy);
   note(`최고 빠르기 ${top.toFixed(0)}px/s`);

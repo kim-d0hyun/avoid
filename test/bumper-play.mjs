@@ -3,6 +3,8 @@
 // 연출이 아니다. 판정·득점등·심판 소리가 다 게임이 낸 것이다. 버그를 눈으로 잡으려고 둔다.
 //
 //   node test/bumper-play.mjs       # ~/Downloads/몰겜-범퍼카-실전.mp4   (OUT=... · SEED=... · MAX=초)
+//   FOLLOW=-1 node test/bumper-play.mjs   # 빨강봇(-1)을 「나」로 보고 카메라가 따라간다 — 사람이 하는 화면
+//   W=1512 H=944 — 화면 크기
 
 import './dom-stub.mjs';
 import { createCanvas, registerFont } from 'canvas';
@@ -22,7 +24,7 @@ const w = await import(R + 'game/world.js');
 const { games } = await import(R + 'games/index.js');
 const game = games.find((g) => g.id === 'bumper');
 
-const W = 1280, H = 600, FPS = 30, SIM = 60;
+const W = Number(process.env.W ?? 1280), H = Number(process.env.H ?? 600), FPS = 30, SIM = 60;
 const OUT = process.env.OUT || `${homedir()}/Downloads/몰겜-범퍼카-실전.mp4`;
 const MAX = Number(process.env.MAX ?? 400);
 const DIR = `${tmpdir()}/molgem-bumper-play`;
@@ -32,6 +34,8 @@ world.onRecord = () => {}; world.onMenu = () => {};
 world.onGameOver = (r) => { world.ended = r; };
 w.resize(world, W, H); w.pickGame(world, 'bumper');
 world.mp.waiting = true;                 // 나는 구경 — 두 편 다 컴퓨터
+// 컴퓨터 하나를 「나」로 — 카메라가 그 차를 따라간다 (모는 건 그대로 컴퓨터)
+if (process.env.FOLLOW) world.mp.myId = Number(process.env.FOLLOW);
 world.state = 'play';
 
 rmSync(DIR, { recursive: true, force: true });
