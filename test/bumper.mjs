@@ -114,7 +114,31 @@ say('충격파 — 닿으면 받힌 차가 날아간다 · 돌진 · 버티기�
   ok('버티기는 없다', B.brace === undefined && bumper.guard === undefined && !bumper.keys.some(([k]) => k.includes('C')));
   const world = mk(); go(world); park(world);
   const me = car(world, world.mp.myId);
-  ok('돌진 · 쿨다운', B.boost(me) && !B.boost(me));
+  ok('돌진하는 동안엔 또 못 쓴다', B.boost(me) && !B.boost(me));
+}
+
+say('돌진 두 칸 — 두 번 잇달아 · 셋째는 안 된다 · 1.5초에 한 칸씩 다시 찬다');
+{
+  const world = mk(); go(world); park(world);
+  const me = car(world, world.mp.myId);
+  me.x = 0; me.y = 0; me.vx = 0; me.vy = 0;
+  check('처음엔 두 칸', me.boosts, B.BOOST_MAX);
+  ok('첫 돌진', B.boost(me));
+  run(world, 18);                                    // 돌진(0.25초)이 끝나고
+  ok('바로 한 번 더', B.boost(me));
+  run(world, 18);
+  ok('셋째는 안 된다 (칸이 비었다)', !B.boost(me) && me.boosts === 0);
+  run(world, Math.round(60 * (B.BOOST_COOL - 0.5)));   // 첫 돌진에서 1.6초
+  check('1.5초쯤 — 한 칸 찼다', me.boosts, 1);
+  run(world, Math.round(60 * B.BOOST_COOL) + 2);
+  check('3초쯤 — 두 칸 다 찼다', me.boosts, 2);
+  run(world, 200);
+  check('두 칸보다 더 모이지 않는다', me.boosts, 2);
+  // 손님에게도 칸 수가 간다
+  const d = bumper.pack(world);
+  const g = mk(); g.mp.role = 'guest'; g.mp.on = true; g.mp.myId = 99;
+  bumper.unpack(g, d);
+  check('손님 화면에도 칸 수', g.bag.cars.find((c) => c.id === me.id).boosts, 2);
 }
 
 say('범퍼 반동 — 부딪히면 둘 다 조금씩 밀린다 · 차 크기');

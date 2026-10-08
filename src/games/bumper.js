@@ -33,9 +33,10 @@ const SHOCK_BACK = 0.15;    // 들이받은 차도 적어도 이만큼 뒤로 �
 const SLIDE_T = 0.45;       // 충격파를 맞으면 이 동안 바퀴가 미끄러진다 — 옆구리로 날아가도 바로 안 선다
 const SLIDE_GRIP = 1.0;     //   그동안의 옆 마찰 (평소 GRIP). 이게 없으면 옆으로 날아간 차가 차 세 대 거리에서 섰다
 const BOOST = 1.9;          // 돌진 — 최고 빠르기의 이만큼
-const BOOST_T = 0.25, BOOST_COOL = 1.5;
+const BOOST_T = 0.25, BOOST_COOL = 1.5;   // 돌진 한 번 · 한 칸이 다시 차는 데
+const BOOST_MAX = 2;        // 돌진을 이만큼까지 모아 둔다 — 두 번 잇달아 쓸 수 있다
 const ROUND = 60;           // 한 판
-const SHRINK_AT = 15;       // 이때부터 가장자리가 무너진다 — 판을 1.5배로 키운 뒤 40초면 판 절반이 끝까지 갔다
+const SHRINK_AT = 40;       // 이때부터 가장자리가 무너진다 — 판을 1.5배로 키울 때 15초로 당겼다가, 1.1배로 줄인 뒤 다시 40초(사용자)
 const SHRINK_TO = 0.3;      // 60초에 반지름이 이만큼까지 (40초에 예전 판 크기쯤)
 const OVERTIME = 4;         // 60초 뒤엔 이만큼 빨리 무너진다 — 가운데서 둘이 버티기만 하면 판이 10초 넘게 늘어졌다
 const COUNT = 1.6;          // 판 시작 전 셋·둘·하나
@@ -91,7 +92,7 @@ function newRound(world) {
     const a = (i / ids.length) * Math.PI * 2 + Math.PI / 2 + b.round * 0.7;
     const r = A.R * 0.55;
     return { id, x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0, h: a + Math.PI,
-             boostT: 0, boostCool: 0, slideT: 0, alive: true, fallT: 0, lastHit: null, think: 0,
+             boostT: 0, boostCool: 0, boosts: BOOST_MAX, slideT: 0, alive: true, fallT: 0, lastHit: null, think: 0,
              spin: 0, wob: 0, wobT: 0 };
   });
   for (const id of ids) { if (!b.score.has(id)) b.score.set(id, 0); b.names.set(id, nameOf(world, id)); }
@@ -119,16 +120,24 @@ function inputOf(world, car) {
   return { ...got, screen: true };
 }
 
+/// 돌진 — 모아 둔 칸(boosts)에서 하나 쓴다. 돌진하는 동안엔 또 못 쓴다(다 끝나고 바로 한 번 더는 된다).
 function boost(car) {
-  if (!car.alive || car.boostCool > 0) return false;
-  car.boostT = BOOST_T; car.boostCool = BOOST_COOL;
+  if (!car.alive || car.boostT > 0 || (car.boosts ?? 0) < 1) return false;
+  car.boosts -= 1;
+  if (car.boostCool <= 0) car.boostCool = BOOST_COOL;           // 다시 차기 시작
+  car.boostT = BOOST_T;
   return true;
 }
 
 // ── 물리 (방장 — 그리고 손님이 제 차를 앞질러 그릴 때) ──
 /// 한 대를 dt 만큼 — 키 · 돌진 · 마찰. 부딪힘과 떨어짐은 따로.
 export function drive(car, input, dt) {
-  car.boostCool = Math.max(0, car.boostCool - dt);
+  // 돌진 칸 — 모자라면 BOOST_COOL 마다 하나씩 다시 찬다 (BOOST_MAX 까지)
+  car.boosts ??= BOOST_MAX;
+  if (car.boosts < BOOST_MAX) {
+    car.boostCool -= dt;
+    if (car.boostCool <= 0) { car.boosts += 1; car.boostCool = car.boosts < BOOST_MAX ? car.boostCool + BOOST_COOL : 0; }
+  } else car.boostCool = 0;
   // 옆을 맞아 빙글 — 돌진 중에도 돈다 (범퍼카다)
   if (car.spin) { car.h += car.spin * dt; car.spin *= Math.exp(-SPIN_DECAY * dt); if (Math.abs(car.spin) < 0.02) car.spin = 0; }
   const fx = Math.cos(car.h), fy = Math.sin(car.h);
@@ -764,13 +773,16 @@ function drawCar(ctx, A, car, color, { mine = false, name = '', time = 0 } = {})
   text(ctx, name, sx, sy - r * 2.05 - 6, { font: `700 11px ${HAN}`, color, align: 'center', halo: 3 });
   if (mine) {
     stroke(ctx, [[sx - 14, sy - r * 2.05 - 2], [sx + 14, sy - r * 2.05 - 2]], { width: 2, color: RED, seed: 17, amp: 0.3, halo: false });
-    const bar = (y, left, total, col, label) => {
-      const w = 28, f = 1 - Math.min(1, left / total);
-      ctx.fillStyle = 'rgba(107,102,92,0.3)'; ctx.fillRect(sx - w / 2, y, w, 3);
-      ctx.fillStyle = f >= 1 ? col : PENCIL; ctx.fillRect(sx - w / 2, y, w * f, 3);
-      if (f >= 1) text(ctx, label, sx + w / 2 + 3, y + 4, { font: `700 8px ${HAN}`, color: col, halo: 2 });
-    };
-    bar(sy + r * SQ + 14, car.boostCool, BOOST_COOL, INK, '돌진');
+    // 돌진 칸 둘 — 찬 칸은 진하게, 차오르는 칸은 차는 만큼
+    const y = sy + r * SQ + 14, w = 16, gap = 4, n = car.boosts ?? BOOST_MAX;
+    const x0 = sx - (BOOST_MAX * w + (BOOST_MAX - 1) * gap) / 2;
+    for (let k = 0; k < BOOST_MAX; k++) {
+      const x = x0 + k * (w + gap);
+      const f = k < n ? 1 : k === n ? 1 - Math.min(1, (car.boostCool ?? 0) / BOOST_COOL) : 0;
+      ctx.fillStyle = 'rgba(107,102,92,0.3)'; ctx.fillRect(x, y, w, 4);
+      ctx.fillStyle = f >= 1 ? INK : PENCIL; ctx.fillRect(x, y, w * f, 4);
+    }
+    text(ctx, `돌진 ${n}`, x0 + BOOST_MAX * (w + gap) + 2, y + 5, { font: `700 9px ${HAN}`, color: n ? INK : PENCIL, halo: 2 });
   }
 }
 
@@ -838,7 +850,7 @@ function drawPops(ctx, world) {
 const KEY_ROWS = [
   ['⌥ 방향키', '그쪽으로 간다 — 차가 돌아서 간다 (대각선도)'],
   ['손 떼기', '천천히 선다'],
-  ['⌥ Space', '돌진 — 그냥 차를 멀리 민다'],
+  ['⌥ Space', '돌진 — 그냥 차를 멀리 민다 · 두 번까지 모아 둔다'],
 ];
 
 /// 손님 — 받은 차 자리를 다음 꾸러미까지 이어 그린다. 내 차는 내 키로 앞질러 굴린다.
@@ -1032,7 +1044,7 @@ export default {
       c: b.cars.map((c) => [c.id, r(c.x), r(c.y), Math.round(c.vx), Math.round(c.vy), Math.round(c.h * 1000) / 1000,
         c.alive ? 1 : 0, Math.round(c.fallT * 100), Math.round(c.boostT * 100), 0,
         Math.round(c.boostCool * 100), 0,                    // 9·11 은 버티기 자리였다 (뺐다 — 자리만 둔다)
-        Math.round((c.wob ?? 0) * 100), Math.round((c.spin ?? 0) * 100), Math.round((c.slideT ?? 0) * 100)]),
+        Math.round((c.wob ?? 0) * 100), Math.round((c.spin ?? 0) * 100), Math.round((c.slideT ?? 0) * 100), c.boosts ?? BOOST_MAX]),
       po: (b.pops ?? []).map((p) => [p.seq, Math.round(p.x), Math.round(p.y), p.word]),
       s: [...b.score.entries()], n: [...b.names.entries()], ph: b.phase, tm: Math.round(b.timer * 100),
       ck: Math.round(b.clock * 100), rk: Math.round(b.Rk * 1000), rd: b.round,
@@ -1051,6 +1063,7 @@ export default {
         id: r[0], x: r[1], y: r[2], vx: r[3], vy: r[4], h: r[5], alive: !!r[6], fallT: r[7] / 100,
         boostT: r[8] / 100, boostCool: r[10] / 100, lastHit: null, think: 0,
         slideT: Number.isFinite(r[14]) ? r[14] / 100 : 0,
+        boosts: Number.isFinite(r[15]) ? r[15] : (r[10] > 0 ? 0 : BOOST_MAX),
         wob: Number.isFinite(r[12]) ? r[12] / 100 : 0, spin: Number.isFinite(r[13]) ? r[13] / 100 : 0,
         wobT: b.cars.find((o) => o.id === r[0])?.wobT ?? 0,
       }));
@@ -1109,4 +1122,4 @@ function act(world, kind) {
   boost(car);
 }
 
-export { WIN_AT, MAX, BOOST, CAR_R, step, newRound, roster, boost, bump, colorOf };
+export { WIN_AT, MAX, BOOST, BOOST_MAX, BOOST_COOL, CAR_R, step, newRound, roster, boost, bump, colorOf };

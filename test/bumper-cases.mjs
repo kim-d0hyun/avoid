@@ -46,7 +46,7 @@ function place(world, list) {
   const used = new Set(list.map(([c]) => c));
   let k = 0;
   for (const c of world.bag.cars) {
-    c.vx = 0; c.vy = 0; c.spin = 0; c.boostCool = 0;
+    c.vx = 0; c.vy = 0; c.spin = 0; c.boostCool = 0; c.boosts = B.BOOST_MAX;
     if (c.id < 0) c.still = true;
     if (!used.has(c)) { c.x = -A.R * 0.55 + k * 70; c.y = A.R * 0.62; c.h = -Math.PI / 2; k++; }
   }
